@@ -6,27 +6,41 @@ use super::{
 const HEADER_LENGTH: usize = 10;
 const FOOTER_LENGTH: usize = 10;
 
+/// The flags of an ID3v2 tag header.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Id3v2Flags {
+    /// Unsynchronisation is applied to the whole tag (ID3v2.2 and ID3v2.3) or to every frame (ID3v2.4).
     pub unsynchronisation: bool,
+    /// An extended header follows the tag header; the frame cursor skips it.
     pub extended_header: bool,
+    /// The tag is marked as experimental.
     pub experimental: bool,
+    /// A 10-byte footer ends the tag (ID3v2.4).
     pub footer: bool,
+    /// The whole tag is compressed (ID3v2.2), which is not supported.
     pub compression: bool,
 }
 
+/// The header of an ID3v2.2, ID3v2.3 or ID3v2.4 tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Id3v2Tag {
+    /// Major version: 2, 3 or 4.
     pub major_version: u8,
+    /// Revision number.
     pub revision: u8,
+    /// Tag flags.
     pub flags: Id3v2Flags,
+    /// The whole tag in the file, header and footer included.
     pub location: Location,
 }
 
 impl Id3v2Tag {
+    /// Length of the tag header in bytes.
     pub const HEADER_LENGTH: usize = HEADER_LENGTH;
+    /// Length of the ID3v2.4 footer in bytes.
     pub const FOOTER_LENGTH: usize = FOOTER_LENGTH;
 
+    /// Parses the 10-byte tag header at file offset `offset`, which is also where `bytes` starts.
     pub fn parse(bytes: &[u8], offset: usize) -> Result<Self> {
         let header = Window::new(bytes, offset).array::<HEADER_LENGTH>(offset)?;
 
@@ -37,6 +51,9 @@ impl Id3v2Tag {
         Self::from_header(&header, offset)
     }
 
+    /// Parses an ID3v2.4 footer at file offset `offset`, to find a tag appended at the end of a file.
+    ///
+    /// `bytes` starts at `offset`, and the returned [`location`](Self::location) points to the start of the tag.
     pub fn parse_footer(bytes: &[u8], offset: usize) -> Result<Self> {
         let footer = Window::new(bytes, offset).array::<FOOTER_LENGTH>(offset)?;
 
@@ -79,14 +96,17 @@ impl Id3v2Tag {
         })
     }
 
+    /// Returns the length of the whole tag in bytes, header and footer included.
     pub const fn size(&self) -> usize {
         self.location.length
     }
 
+    /// Returns the file offset of the first byte after the tag, where the audio usually starts.
     pub const fn end(&self) -> usize {
         self.location.end()
     }
 
+    /// Returns where the frames are in the file, between the header and the footer, extended header and padding included.
     pub fn frames_location(&self) -> Location {
         let footer = if self.flags.footer { FOOTER_LENGTH } else { 0 };
 
@@ -99,6 +119,7 @@ impl Id3v2Tag {
         )
     }
 
+    /// Returns a cursor over the frames of the tag.
     pub fn frames(&self) -> Id3v2Frames {
         let frames = self.frames_location();
 
@@ -117,6 +138,9 @@ fn syncsafe(bytes: &[u8]) -> Option<u32> {
     })
 }
 
+/// A [`Cursor`] over the frames of an ID3v2 tag, returned by [`Id3v2Tag::frames`].
+///
+/// It skips the extended header and padding, and with whole-tag unsynchronisation (ID3v2.2 and ID3v2.3) it reads frame headers through it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Id3v2Frames {
     tag: Id3v2Tag,
@@ -126,10 +150,12 @@ pub struct Id3v2Frames {
 }
 
 impl Id3v2Frames {
+    /// Returns the file offset of the next frame header.
     pub const fn position(&self) -> usize {
         self.position
     }
 
+    /// Returns the tag being walked.
     pub const fn tag(&self) -> &Id3v2Tag {
         &self.tag
     }
@@ -319,13 +345,20 @@ impl Cursor for Id3v2Frames {
     }
 }
 
+/// The flags of an ID3v2 frame.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct FrameFlags {
+    /// The frame data is compressed with zlib, which is not supported.
     pub compressed: bool,
+    /// The frame data is encrypted, which is not supported.
     pub encrypted: bool,
+    /// The frame belongs to a group, and a group identifier byte precedes the data.
     pub grouped: bool,
+    /// Unsynchronisation is applied to the frame, by the frame flag or the tag flag; read the frame with [`Frame::decode`].
     pub unsynchronised: bool,
+    /// A 4-byte data length precedes the data (ID3v2.4).
     pub data_length_indicator: bool,
+    /// The two flag bytes as stored, zero in ID3v2.2.
     pub raw: [u8; 2],
 }
 
@@ -359,60 +392,89 @@ impl FrameFlags {
     }
 }
 
+/// An ID3v2 frame, with as much of its data as the buffer given to the cursor held.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Frame<'a> {
     identifier: [u8; 4],
     identifier_length: u8,
     major_version: u8,
+    /// Frame flags.
     pub flags: FrameFlags,
+    /// Where the frame data is in the file, frame header excluded, as stored (still unsynchronised if it is).
     pub location: Location,
+    /// The part of the frame data found in the buffer, which can be empty or partial.
     pub data: &'a [u8],
 }
 
+/// The parsed content of an ID3v2 frame, returned by [`Frame::content`] and [`Frame::parse`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Content<'a> {
+    /// A text frame (`T***`, such as `TIT2`), possibly holding several values; see [`Text::values`].
     Text(Text<'a>),
+    /// A user-defined text frame (`TXXX`).
     UserText {
+        /// What the value is.
         description: Text<'a>,
+        /// The value.
         value: Text<'a>,
     },
+    /// A comment (`COMM`) or unsynchronised lyrics (`USLT`) frame.
     Comment {
+        /// ISO 639-2 language code, such as `eng`.
         language: [u8; 3],
+        /// Short description.
         description: Text<'a>,
+        /// The comment or lyrics.
         text: Text<'a>,
     },
+    /// A URL frame (`W***`, such as `WOAR`).
     Url(Text<'a>),
+    /// A user-defined URL frame (`WXXX`).
     UserUrl {
+        /// What the URL is.
         description: Text<'a>,
+        /// The URL.
         url: Text<'a>,
     },
+    /// An attached picture (`APIC`, or `PIC` in ID3v2.2).
     Picture(Picture<'a>),
+    /// Any other frame, as raw data.
     Other(&'a [u8]),
+    /// The frame is unsynchronised: decode it with [`Frame::decode`], then parse the result with [`Frame::parse`].
     Unsynchronised,
+    /// The frame is compressed, which is not supported.
     Compressed,
+    /// The frame is encrypted, which is not supported.
     Encrypted,
 }
 
 impl<'a> Frame<'a> {
+    /// Returns the same frame with its data taken from `bytes`, a part of the file that starts at file offset `offset`.
+    ///
+    /// Use it after reading [`location`](Self::location) into a buffer of its own.
     pub fn within<'b>(&self, bytes: &'b [u8], offset: usize) -> Frame<'b> {
         Frame {
             data: Window::new(bytes, offset).available(self.location),
             ..*self
         }
     }
+    /// Returns the frame identifier: three characters in ID3v2.2, four otherwise.
     pub fn identifier(&self) -> &[u8] {
         &self.identifier[..self.identifier_length as usize]
     }
 
+    /// Returns the major version of the tag holding the frame.
     pub const fn major_version(&self) -> u8 {
         self.major_version
     }
 
+    /// Returns the common field for this frame, if it maps to one.
     pub fn field(&self) -> Option<Field> {
         Field::from_id3v2(self.identifier())
     }
 
+    /// Returns `true` when [`data`](Self::data) holds the whole frame.
     pub fn is_complete(&self) -> bool {
         self.data.len() == self.location.length
     }
@@ -431,6 +493,9 @@ impl<'a> Frame<'a> {
         }
     }
 
+    /// Returns where the frame payload is in the file, after the group identifier, encryption method and data length when present.
+    ///
+    /// Returns [`Error::Unsupported`] for an ID3v2.2 or ID3v2.3 frame under whole-tag unsynchronisation, where file offsets do not match payload offsets.
     pub fn payload_location(&self) -> Result<Location> {
         let prefix = self.prefix_length();
 
@@ -448,6 +513,13 @@ impl<'a> Frame<'a> {
         ))
     }
 
+    /// Parses the frame content from [`data`](Self::data).
+    ///
+    /// Unsynchronised, compressed and encrypted frames return the matching [`Content`] variant instead. A picture only needs its header to be in `data`, not the image.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Needs`] when `data` is partial, and [`Error::Invalid`] when the frame is malformed.
     pub fn content(&self) -> Result<Content<'a>> {
         if self.flags.encrypted {
             return Ok(Content::Encrypted);
@@ -472,6 +544,13 @@ impl<'a> Frame<'a> {
         )
     }
 
+    /// Copies the frame payload into `output`, removing unsynchronisation, and returns it.
+    ///
+    /// Pass the result to [`parse`](Self::parse). `output` needs at most the length of [`location`](Self::location).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Needs`] when [`data`](Self::data) is partial, and [`Error::BufferTooSmall`] when `output` is too short.
     pub fn decode<'b>(&self, output: &'b mut [u8]) -> Result<&'b [u8]> {
         if !self.is_complete() {
             return Err(Error::Needs(self.location));
@@ -499,6 +578,9 @@ impl<'a> Frame<'a> {
         Ok(&output[..length])
     }
 
+    /// Parses the content of this frame from `payload`, a payload returned by [`decode`](Self::decode).
+    ///
+    /// `offset` is the position given to `payload[0]` in the locations of the result, such as picture data; pass 0 to get positions in `payload`.
     pub fn parse<'b>(&self, payload: &'b [u8], offset: usize) -> Result<Content<'b>> {
         if self.flags.encrypted {
             return Ok(Content::Encrypted);
@@ -526,6 +608,7 @@ fn copy(input: &[u8], output: &mut [u8]) -> Result<usize> {
     Ok(input.len())
 }
 
+/// Removes ID3v2 unsynchronisation from `input`, dropping each zero byte that follows `0xFF`, and returns the number of bytes written to `output`.
 pub fn decode_unsynchronisation(input: &[u8], output: &mut [u8]) -> Result<usize> {
     let mut previous = 0;
     let mut length = 0;

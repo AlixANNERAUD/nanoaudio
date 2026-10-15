@@ -1,19 +1,31 @@
 use super::{Encoding, Location, Text};
 
+/// An ID3v1 or ID3v1.1 tag, the 128 bytes at the end of a file that start with `TAG`.
+///
+/// Text fields are Latin-1, trimmed of padding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Id3v1<'a> {
+    /// Title, up to 30 bytes.
     pub title: Text<'a>,
+    /// Artist, up to 30 bytes.
     pub artist: Text<'a>,
+    /// Album, up to 30 bytes.
     pub album: Text<'a>,
+    /// Year, up to 4 bytes.
     pub year: Text<'a>,
+    /// Comment, up to 30 bytes, or 28 in ID3v1.1.
     pub comment: Text<'a>,
+    /// Track number, only present in ID3v1.1.
     pub track: Option<u8>,
+    /// Genre index, `None` when unset (255). [`genre_name`](Self::genre_name) gives its name.
     pub genre: Option<u8>,
 }
 
 impl<'a> Id3v1<'a> {
+    /// Length of the tag in bytes.
     pub const LENGTH: usize = 128;
 
+    /// Returns where the tag would be in a file of `file_length` bytes, or `None` when the file is shorter than a tag.
     pub const fn location(file_length: usize) -> Option<Location> {
         match file_length.checked_sub(Self::LENGTH) {
             Some(offset) => Some(Location::new(offset, Self::LENGTH)),
@@ -21,6 +33,9 @@ impl<'a> Id3v1<'a> {
         }
     }
 
+    /// Parses the tag from the last 128 bytes of `bytes`, which must end where the file ends.
+    ///
+    /// Returns `None` when `bytes` is too short or does not end with a tag.
     pub fn parse(bytes: &'a [u8]) -> Option<Self> {
         let start = bytes.len().checked_sub(Self::LENGTH)?;
         let tag = &bytes[start..];
@@ -50,6 +65,7 @@ impl<'a> Id3v1<'a> {
         })
     }
 
+    /// Returns the name of the genre, such as `Rock`.
     pub fn genre_name(&self) -> Option<&'static str> {
         genre(self.genre?)
     }
@@ -64,6 +80,7 @@ fn field(bytes: &[u8]) -> Text<'_> {
     Text::new(Encoding::Latin1, bytes[..end].trim_ascii())
 }
 
+/// Returns the name of an ID3v1 genre index, including the Winamp extensions up to 191.
 pub fn genre(index: u8) -> Option<&'static str> {
     GENRES.get(index as usize).copied()
 }

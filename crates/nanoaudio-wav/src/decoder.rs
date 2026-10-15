@@ -15,6 +15,11 @@ enum Codec {
     MsAdpcm(MsAdpcm),
 }
 
+/// A decoder for the sound data of a WAV file, producing interleaved samples of type `S`.
+///
+/// Feed it the bytes that follow [`WavHeader::data_offset`]. Any [`Sample`] type works as output: PCM is converted from the format in the file, and the compressed encodings are decoded to 16-bit and then converted.
+///
+/// With [`Seek`], the returned [`SeekRequest::byte_offset`] counts from `data_offset`, not from the start of the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WavDecoder<S: Sample = i16> {
     codec: Codec,
@@ -25,6 +30,7 @@ pub struct WavDecoder<S: Sample = i16> {
 }
 
 impl<S: Sample> WavDecoder<S> {
+    /// Creates a decoder for the encoding described by `header`.
     pub fn new(header: &WavHeader) -> Result<Self> {
         let Configuration {
             sample_rate,

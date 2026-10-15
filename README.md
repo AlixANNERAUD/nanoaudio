@@ -126,7 +126,7 @@ fn decode_wav(file: &[u8]) -> Result<Vec<i16>, Error> {
 
 | Codec               | Type                  | Feature | Memory                                                    | Notes                                                              |
 | ------------------- | --------------------- | ------- | --------------------------------------------------------- | ------------------------------------------------------------------ |
-| PCM WAV             | `WavDecoder`          |         | a few bytes                                               | 8, 16 and 32-bit integer and 32-bit float                          |
+| PCM WAV             | `WavDecoder`          |         | a few bytes                                               | 8, 16, 24 and 32-bit integer and 32-bit float                      |
 | G.711 A-law / µ-law | `G711`, `WavDecoder`  |         | a few bytes                                               | Encoder and decoder, bit-exact with the reference implementation  |
 | IMA ADPCM           | `ImaAdpcm`, `WavDecoder` |      | 40 bytes                                                  | Encoder and decoder, WAV block layout, bit-exact sample codec     |
 | MP3                 | `Mp3Decoder`          | `mp3`   | ~23 KiB, plus 16 KiB of input and one frame of output     | MPEG-1/2/2.5 Layer III, decodes in floating point                  |

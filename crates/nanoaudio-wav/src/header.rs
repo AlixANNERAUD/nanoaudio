@@ -16,31 +16,64 @@ const FORMAT_MU_LAW: u16 = 0x0007;
 const FORMAT_IMA_ADPCM: u16 = 0x0011;
 const FORMAT_EXTENSIBLE: u16 = 0xFFFE;
 
+/// How the sound data of a WAV file is encoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Encoding {
+    /// Uncompressed samples: unsigned 8-bit, signed 16, 24 or 32-bit integer, or 32-bit float, little-endian.
     Pcm,
+    /// G.711 A-law, one byte per sample.
     ALaw,
+    /// G.711 µ-law, one byte per sample.
     MuLaw,
+    /// IMA ADPCM, 4 bits per sample, in blocks.
     ImaAdpcm {
+        /// Size of a block in bytes, for all channels.
         block_align: u16,
     },
+    /// Microsoft ADPCM, 4 bits per sample, in blocks.
     MsAdpcm {
+        /// Size of a block in bytes, for all channels.
         block_align: u16,
+        /// Frames in each block.
         samples_per_block: u16,
+        /// Predictor coefficient pairs from the `fmt ` chunk.
         coefficients: MsAdpcmCoefficients,
     },
 }
 
+/// The format and the location of the sound data of a WAV file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WavHeader {
+    /// Sample rate and channel count, with the sample format stored in the file for PCM, or `I16` for the compressed encodings.
     pub configuration: Configuration,
+    /// How the sound data is encoded.
     pub encoding: Encoding,
+    /// Offset in bytes of the first byte of sound data, from the start of the file.
     pub data_offset: usize,
+    /// Size in bytes of the sound data, as declared by the `data` chunk.
+    ///
+    /// It can be larger than what is left in the file, for example when the file was cut or is still being written.
     pub data_size: u32,
 }
 
 impl WavHeader {
+    /// Parses the RIFF header and the `fmt ` chunk, and stops at the start of the `data` chunk.
+    ///
+    /// `bytes` is the start of the file and does not need to hold the whole of it: chunks before `data` are skipped, so a file with large chunks first may need more bytes.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Incomplete`] when `bytes` ends before the `data` chunk, [`Error::InvalidHeader`] when the file is not a valid WAV file, and [`Error::UnsupportedFormat`] for an encoding or bit depth the decoder does not handle.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use nanoaudio_core::Error;
+    /// use nanoaudio_wav::WavHeader;
+    ///
+    /// assert_eq!(WavHeader::parse(b"RIFF\0\0\0\0WA"), Err(Error::Incomplete));
+    /// ```
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let header = bytes.get(..RIFF_HEADER_SIZE).ok_or(Error::Incomplete)?;
 
@@ -88,6 +121,7 @@ impl WavHeader {
         }
     }
 
+    /// Returns the number of frames in the sound data, computed from [`data_size`](Self::data_size).
     pub fn frames(&self) -> usize {
         let size = self.data_size as usize;
         let channels = self.configuration.channels as usize;

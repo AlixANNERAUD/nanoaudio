@@ -1,7 +1,12 @@
 #![no_std]
+#![warn(missing_docs)]
 #![cfg_attr(
     all(feature = "buffer", feature = "dsp", feature = "wav"),
     doc = include_str!("../README.md")
+)]
+#![cfg_attr(
+    not(all(feature = "buffer", feature = "dsp", feature = "wav")),
+    doc = "Allocation-free, `no_std` audio for embedded Rust."
 )]
 
 pub use nanoaudio_core::*;
@@ -17,6 +22,7 @@ pub use nanoaudio_metadata as metadata;
 #[cfg(feature = "wav")]
 pub use nanoaudio_wav::{Encoding, WavHeader};
 
+/// The [`Decoder`](codec::Decoder), [`Encoder`](codec::Encoder) and [`Seek`](codec::Seek) traits, and the codecs enabled by features.
 pub mod codec {
     pub use nanoaudio_core::codec::*;
 

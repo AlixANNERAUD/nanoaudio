@@ -1,15 +1,21 @@
 use super::{Error, Result};
 
+/// The character encoding of a [`Text`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Encoding {
+    /// ISO-8859-1, one byte per character.
     Latin1,
+    /// UTF-16 with a byte order mark, read as little-endian when the mark is missing.
     Utf16,
+    /// UTF-16 big-endian, without a byte order mark.
     Utf16BigEndian,
+    /// UTF-8.
     Utf8,
 }
 
 impl Encoding {
+    /// Returns the encoding for an ID3v2 text encoding byte, from 0 to 3.
     pub const fn from_id3(byte: u8) -> Option<Self> {
         match byte {
             0 => Some(Encoding::Latin1),
@@ -20,6 +26,7 @@ impl Encoding {
         }
     }
 
+    /// Returns the length in bytes of the null terminator: 2 for UTF-16, 1 otherwise.
     pub const fn terminator_length(self) -> usize {
         match self {
             Encoding::Latin1 | Encoding::Utf8 => 1,
@@ -59,13 +66,19 @@ impl Encoding {
     }
 }
 
+/// Text as stored in the file, borrowed and not yet decoded.
+///
+/// Decoding is lossy and never allocates: iterate over [`chars`](Self::chars), compare with [`eq_str`](Self::eq_str), or write UTF-8 into a buffer of your own with [`decode`](Self::decode). Invalid sequences become U+FFFD.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Text<'a> {
+    /// The character encoding of [`bytes`](Self::bytes).
     pub encoding: Encoding,
+    /// The encoded bytes. Parsers drop the trailing null terminators.
     pub bytes: &'a [u8],
 }
 
 impl<'a> Text<'a> {
+    /// Creates a text from encoded bytes.
     pub const fn new(encoding: Encoding, bytes: &'a [u8]) -> Self {
         Self { encoding, bytes }
     }
@@ -74,10 +87,12 @@ impl<'a> Text<'a> {
         Self::new(encoding, encoding.trim_terminators(bytes))
     }
 
+    /// Returns `true` when the text has no bytes.
     pub const fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
 
+    /// Returns an iterator over the decoded characters.
     pub fn chars(&self) -> Chars<'a> {
         Chars {
             encoding: self.encoding,
@@ -87,6 +102,9 @@ impl<'a> Text<'a> {
         }
     }
 
+    /// Returns an iterator over the values of a text holding several, separated by null terminators as in ID3v2.4.
+    ///
+    /// A text with a single value yields itself.
     pub fn values(&self) -> Values<'a> {
         Values {
             encoding: self.encoding,
@@ -94,10 +112,26 @@ impl<'a> Text<'a> {
         }
     }
 
+    /// Returns the length in bytes of the text once decoded to UTF-8, to size the buffer given to [`decode`](Self::decode).
     pub fn decoded_length(&self) -> usize {
         self.chars().map(char::len_utf8).sum()
     }
 
+    /// Decodes the text to UTF-8 into `output`, and returns the decoded part.
+    ///
+    /// Returns [`Error::BufferTooSmall`] when `output` is shorter than [`decoded_length`](Self::decoded_length).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use nanoaudio_metadata::{Encoding, Text};
+    ///
+    /// let text = Text::new(Encoding::Latin1, b"Caf\xE9");
+    /// let mut buffer = [0; 16];
+    ///
+    /// assert_eq!(text.decode(&mut buffer), Ok("Café"));
+    /// assert!(text.eq_str("Café"));
+    /// ```
     pub fn decode<'b>(&self, output: &'b mut [u8]) -> Result<&'b str> {
         let mut length = 0;
 
@@ -113,11 +147,13 @@ impl<'a> Text<'a> {
         core::str::from_utf8(&output[..length]).map_err(|_| Error::Invalid)
     }
 
+    /// Returns `true` when the decoded text equals `text`, without decoding it into a buffer.
     pub fn eq_str(&self, text: &str) -> bool {
         self.chars().eq(text.chars())
     }
 }
 
+/// An iterator over the decoded characters of a [`Text`], returned by [`Text::chars`].
 #[derive(Debug, Clone)]
 pub struct Chars<'a> {
     encoding: Encoding,
@@ -235,6 +271,7 @@ impl Iterator for Chars<'_> {
     }
 }
 
+/// An iterator over the values of a [`Text`], returned by [`Text::values`].
 #[derive(Debug, Clone)]
 pub struct Values<'a> {
     encoding: Encoding,
