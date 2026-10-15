@@ -1,6 +1,16 @@
 use nanoaudio_core::{Format, I24, Sample};
 
 use crate::bytes::{Bytes, pairs, read};
+use crate::representation::sample_from_f32;
+
+#[inline]
+fn convert_sample<I: Sample, O: Sample>(sample: I) -> O {
+    if const { matches!(I::FORMAT, Format::F32) || matches!(O::FORMAT, Format::F32) } {
+        sample_from_f32(sample.to_f32())
+    } else {
+        sample.convert()
+    }
+}
 
 /// Converts samples to another sample type, and returns the number of samples converted.
 ///
@@ -9,7 +19,7 @@ pub fn convert<I: Sample, O: Sample>(input: &[I], output: &mut [O]) -> usize {
     let count = input.len().min(output.len());
 
     for (output, input) in output.iter_mut().zip(input) {
-        *output = input.convert();
+        *output = convert_sample(*input);
     }
 
     count
@@ -57,7 +67,7 @@ fn convert_bytes_typed<
     output: &mut [u8],
 ) -> usize {
     pairs::<INPUT, OUTPUT>(input, output, |input, output| {
-        read::<I, INPUT, OUTPUT>(input).convert::<O>().store(output);
+        convert_sample::<I, O>(read::<I, INPUT, OUTPUT>(input)).store(output);
     })
 }
 

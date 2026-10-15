@@ -121,6 +121,21 @@ fn from_integer<S: Sample>(value: i32) -> S {
     }
 }
 
+const F32_SCALE: f32 = 2_147_483_648.0;
+
+#[inline]
+pub(crate) fn sample_from_f32<S: Sample>(value: f32) -> S {
+    match S::FORMAT {
+        Format::U8 | Format::I16 | Format::I24 if cfg!(nanoaudio_hard_float) => {
+            let shift = const { padding(S::FORMAT) };
+            let value = (value * F32_SCALE) as i32;
+
+            from_integer((value.saturating_add(1 << (shift - 1)) + (value >> 31)) >> shift)
+        }
+        _ => S::from_f32(value),
+    }
+}
+
 #[inline]
 fn saturate<S: Sample>(value: i32) -> i32 {
     value.clamp(const { minimum(S::FORMAT) }, const { maximum(S::FORMAT) })
@@ -266,7 +281,7 @@ impl Representation for Float {
 
     #[inline]
     fn to_sample<S: Sample>(value: f32) -> S {
-        S::from_f32(value)
+        sample_from_f32(value)
     }
 
     #[inline]
@@ -407,6 +422,65 @@ mod tests {
             Fixed::from_sample(output),
             Fixed::amplify(Fixed::from_sample(input), gain),
         ))
+    }
+
+    fn float_conversion_matches_core<S: Sample>(value: f32) {
+        let mut actual = [0u8; 4];
+        let mut expected = [0u8; 4];
+        sample_from_f32::<S>(value).write_le(&mut actual);
+        S::from_f32(value).write_le(&mut expected);
+
+        assert_eq!(actual, expected, "{value:e}");
+    }
+
+    #[test]
+    fn float_conversions_match_core() {
+        let count = if cfg!(miri) { 1 << 10 } else { 1 << 20 };
+        let mut state = 0x2545_F491u32;
+        let edges = [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            0.5,
+            -0.5,
+            1.0 + f32::EPSILON,
+            -1.0 - f32::EPSILON,
+            f32::MIN_POSITIVE,
+            f32::MAX,
+            f32::MIN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+            -f32::NAN,
+        ];
+        let boundaries = (-260i32..=260).flat_map(|step| {
+            [-(1 << 7), -(1 << 15), -(1 << 23)].map(|scale| (step as f32 + 0.5) / scale as f32)
+        });
+        let random = (0..count).map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            if state & 1 == 0 {
+                f32::from_bits(state)
+            } else {
+                (state as i32) as f32 / 1_073_741_824.0
+            }
+        });
+
+        for value in edges.into_iter().chain(boundaries).chain(random) {
+            for value in [
+                value,
+                f32::from_bits(value.to_bits() + 1),
+                f32::from_bits(value.to_bits().wrapping_sub(1)),
+            ] {
+                float_conversion_matches_core::<u8>(value);
+                float_conversion_matches_core::<i16>(value);
+                float_conversion_matches_core::<I24>(value);
+                float_conversion_matches_core::<i32>(value);
+                float_conversion_matches_core::<f32>(value);
+            }
+        }
     }
 
     #[test]

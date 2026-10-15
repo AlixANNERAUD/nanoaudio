@@ -48,6 +48,18 @@ HELIUM = [
     "probe_float_convert_i16",
 ]
 
+HARD_FLOAT = ("m4", "m55")
+
+FLOAT_CALL_FREE = [
+    "probe_float_volume_i16",
+    "probe_float_mix_i16",
+    "probe_float_convert_i16",
+]
+
+FLOAT_STAGES = [
+    "probe_float_stream_i16",
+]
+
 FLAT = [
     "probe_g711_encode_mu_law",
     "probe_g711_encode_a_law",
@@ -72,6 +84,7 @@ SCALAR = [
     "probe_qoa_encode_stereo",
 ]
 
+SAMPLE_CONVERSION = re.compile(r"6Sample\d+(from_f32|to_f32|from_i32|to_i32|convert)")
 WIDE_MULTIPLY = re.compile(r"__aeabi_lmul|__muldi3")
 CALL = re.compile(r"^(bl|blx|call|jal|jalr|tail)$")
 LABEL = re.compile(r"^(\.L\w+):")
@@ -285,6 +298,21 @@ def analyse(name, assembly, opt_level):
             for body in loops(bodies[member]):
                 for call in calls(body):
                     failures.append(name + ": call in hot loop of " + function + ": " + call)
+    for function in FLOAT_CALL_FREE + FLOAT_STAGES:
+        if function not in probes:
+            failures.append(name + ": missing " + function)
+    if name in HARD_FLOAT:
+        for function in FLOAT_CALL_FREE:
+            for member in closure(bodies, function):
+                for body in loops(bodies[member]):
+                    for call in calls(body):
+                        failures.append(name + ": call in hot loop of " + function + ": " + call)
+        for function in FLOAT_STAGES:
+            for member in closure(bodies, function):
+                for body in loops(bodies[member]):
+                    for call in calls(body):
+                        if SAMPLE_CONVERSION.search(call):
+                            failures.append(name + ": sample conversion call in a loop of " + function + ": " + call)
     if opt_level not in ("s", "z"):
         for function in INLINED:
             for member in closure(bodies, function):
