@@ -1,6 +1,14 @@
 #![no_std]
 #![doc = include_str!("../README.md")]
 
+#[cfg(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "wasm32", target_feature = "simd128")
+))]
+mod simd;
+
 use core::marker::PhantomData;
 
 use nanoaudio_core::bits::BitReader;
@@ -463,28 +471,58 @@ fn predict_linear(
     let order = coefficients.len();
     let sum_bits = usize::BITS - (order - 1).leading_zeros();
 
+    #[cfg(any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    ))]
     if bits_per_sample + precision + sum_bits <= 32 {
-        for index in order..samples.len() {
-            let prediction = coefficients
-                .iter()
-                .zip(samples[index - order..index].iter().rev())
-                .fold(0i32, |sum, (coefficient, sample)| {
-                    sum.wrapping_add(coefficient.wrapping_mul(*sample))
-                });
-
-            samples[index] = samples[index].wrapping_add(prediction >> shift);
-        }
+        simd::predict_narrow(samples, coefficients, shift);
     } else {
-        for index in order..samples.len() {
-            let prediction = coefficients
-                .iter()
-                .zip(samples[index - order..index].iter().rev())
-                .fold(0i64, |sum, (coefficient, sample)| {
-                    sum + i64::from(*coefficient) * i64::from(*sample)
-                });
+        simd::predict_wide(samples, coefficients, shift);
+    }
 
-            samples[index] = (i64::from(samples[index]) + (prediction >> shift)) as i32;
-        }
+    #[cfg(not(any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    )))]
+    if bits_per_sample + precision + sum_bits <= 32 {
+        predict_narrow(samples, coefficients, shift);
+    } else {
+        predict_wide(samples, coefficients, shift);
+    }
+}
+
+fn predict_narrow(samples: &mut [i32], coefficients: &[i32], shift: u32) {
+    let order = coefficients.len();
+
+    for index in order..samples.len() {
+        let prediction = coefficients
+            .iter()
+            .zip(samples[index - order..index].iter().rev())
+            .fold(0i32, |sum, (coefficient, sample)| {
+                sum.wrapping_add(coefficient.wrapping_mul(*sample))
+            });
+
+        samples[index] = samples[index].wrapping_add(prediction >> shift);
+    }
+}
+
+fn predict_wide(samples: &mut [i32], coefficients: &[i32], shift: u32) {
+    let order = coefficients.len();
+
+    for index in order..samples.len() {
+        let prediction = coefficients
+            .iter()
+            .zip(samples[index - order..index].iter().rev())
+            .fold(0i64, |sum, (coefficient, sample)| {
+                sum + i64::from(*coefficient) * i64::from(*sample)
+            });
+
+        samples[index] = (i64::from(samples[index]) + (prediction >> shift)) as i32;
     }
 }
 

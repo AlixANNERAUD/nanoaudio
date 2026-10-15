@@ -62,6 +62,7 @@ name = "nanoaudio-flac"
 version = "0.1.0"
 dependencies = [
  "nanoaudio-core",
+ "wide",
 ]
 
 [[package]]
