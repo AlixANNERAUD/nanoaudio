@@ -2,3 +2,7 @@
 /tools/asm-probe/target
 lcov.info
 /tools/asm-probe/Cargo.lock
+/tools/bench/target
+/tools/bench/Cargo.lock
+/tools/bench/flash/target
+/tools/bench/flash/Cargo.lock
