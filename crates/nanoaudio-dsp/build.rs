@@ -30,13 +30,20 @@ fn main() {
     let abi = env::var("CARGO_CFG_TARGET_ABI").unwrap_or_default();
     let features = env::var("CARGO_CFG_TARGET_FEATURE").unwrap_or_default();
 
+    println!("cargo::rustc-check-cfg=cfg(nanoaudio_hard_float)");
+
+    let hard_float = has_float(&target, &architecture, &abi, &features);
     let float = if env::var_os("CARGO_FEATURE_FIXED").is_some() {
         false
     } else if env::var_os("CARGO_FEATURE_FLOAT").is_some() {
         true
     } else {
-        has_float(&target, &architecture, &abi, &features)
+        hard_float
     };
+
+    if hard_float {
+        println!("cargo::rustc-cfg=nanoaudio_hard_float");
+    }
 
     if float {
         println!("cargo::rustc-cfg=nanoaudio_float");
