@@ -11,6 +11,7 @@ TARGET_DIRECTORY = ROOT / "target" / "asm-probe"
 
 TARGETS = {
     "m0plus": ("thumbv6m-none-eabi", "cortex-m0plus"),
+    "m23": ("thumbv8m.base-none-eabi", "cortex-m23"),
     "m4": ("thumbv7em-none-eabihf", "cortex-m4"),
     "esp32c3": ("riscv32imc-unknown-none-elf", None),
     "m55": ("thumbv8m.main-none-eabihf", "cortex-m55"),

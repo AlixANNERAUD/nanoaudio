@@ -241,7 +241,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: thumbv6m-none-eabi, thumbv7em-none-eabihf, riscv32imc-unknown-none-elf, thumbv8m.main-none-eabihf
+          targets: thumbv6m-none-eabi, thumbv8m.base-none-eabi, thumbv7em-none-eabihf, riscv32imc-unknown-none-elf, thumbv8m.main-none-eabihf
 
       - uses: Swatinem/rust-cache@v2
         with:
