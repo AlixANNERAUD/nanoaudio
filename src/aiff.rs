@@ -137,8 +137,10 @@ fn parse_common(chunk: &[u8], compressed: bool) -> Result<Common> {
     let (format, encoding) = match (compression, sample_size) {
         (b"NONE" | b"twos" | b"sowt", 1..=8) => (Format::U8, AiffEncoding::BigEndian),
         (b"NONE" | b"twos", 9..=16) => (Format::I16, AiffEncoding::BigEndian),
+        (b"NONE" | b"twos", 17..=24) => (Format::I24, AiffEncoding::BigEndian),
         (b"NONE" | b"twos", 25..=32) => (Format::I32, AiffEncoding::BigEndian),
         (b"sowt", 9..=16) => (Format::I16, AiffEncoding::LittleEndian),
+        (b"sowt", 17..=24) => (Format::I24, AiffEncoding::LittleEndian),
         (b"sowt", 25..=32) => (Format::I32, AiffEncoding::LittleEndian),
         (b"fl32" | b"FL32", 32) => (Format::F32, AiffEncoding::BigEndian),
         (b"alaw" | b"ALAW", _) => (Format::I16, AiffEncoding::ALaw),
@@ -367,9 +369,7 @@ mod tests {
     #[test]
     fn unsupported() {
         for (kind, bits, compression) in [
-            (b"AIFF", 24, &b""[..]),
             (b"AIFF", 64, &b""[..]),
-            (b"AIFC", 24, &b"sowt"[..]),
             (b"AIFC", 64, &b"fl64"[..]),
             (b"AIFC", 16, &b"ima4"[..]),
             (b"AIFC", 16, &b"fl32"[..]),

@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use crate::{AiffEncoding, AiffHeader, Configuration, Format, Result, Sample};
+use crate::{AiffEncoding, AiffHeader, Configuration, Format, I24, Result, Sample};
 
 use super::{Decoder, G711, Law, Progress};
 
@@ -71,6 +71,7 @@ impl<S: Sample> AiffDecoder<S> {
             *output = match format {
                 Format::U8 => (buffer[0] ^ 0x80).convert(),
                 Format::I16 => i16::read_le(&buffer).convert(),
+                Format::I24 => I24::read_le(&buffer).convert(),
                 Format::I32 => i32::read_le(&buffer).convert(),
                 Format::F32 => f32::read_le(&buffer).convert(),
             };
