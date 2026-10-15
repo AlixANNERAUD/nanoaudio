@@ -5,6 +5,7 @@
 mod counter;
 mod measure;
 mod silence;
+mod stereo;
 
 pub use counter::*;
 pub use measure::*;
@@ -12,3 +13,4 @@ pub use nanoaudio_dsp::{
     Analyzer, Tap, analyze, analyze_bytes, analyze_bytes_using, analyze_using,
 };
 pub use silence::*;
+pub use stereo::*;
