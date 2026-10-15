@@ -9,6 +9,7 @@ pub enum Error {
     TooManyChannels,
     InvalidParameter,
     BufferTooSmall,
+    InvalidData,
 }
 
 impl fmt::Display for Error {
@@ -21,6 +22,7 @@ impl fmt::Display for Error {
             Error::TooManyChannels => formatter.write_str("too many channels"),
             Error::InvalidParameter => formatter.write_str("invalid parameter"),
             Error::BufferTooSmall => formatter.write_str("buffer too small"),
+            Error::InvalidData => formatter.write_str("invalid data"),
         }
     }
 }
