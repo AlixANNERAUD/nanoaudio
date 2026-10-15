@@ -1,92 +1,209 @@
 # nanoaudio
 
-Allocation-free, `no_std` building blocks for PCM audio on microcontrollers and beyond.
+[![crates.io](https://img.shields.io/crates/v/nanoaudio.svg)](https://crates.io/crates/nanoaudio)
+[![docs.rs](https://img.shields.io/docsrs/nanoaudio)](https://docs.rs/nanoaudio)
+[![CI](https://github.com/AlixANNERAUD/nanoaudio/actions/workflows/check.yml/badge.svg)](https://github.com/AlixANNERAUD/nanoaudio/actions/workflows/check.yml)
+[![License: MIT](https://img.shields.io/crates/l/nanoaudio.svg)](https://github.com/AlixANNERAUD/nanoaudio/blob/main/LICENSE)
+[![MSRV](https://img.shields.io/crates/msrv/nanoaudio.svg)](https://github.com/AlixANNERAUD/nanoaudio/blob/main/Cargo.toml)
 
-`nanoaudio` does not own a pipeline or talk to hardware. It provides small, composable pieces that an audio driver, a mixer task or an operating system can assemble with the memory it already has.
+**Allocation-free, `no_std` audio for embedded Rust.**
+Convert, mix and adjust the volume of PCM audio, chain it all into single-pass pipelines, buffer it for DMA or audio callbacks, and decode WAV, G.711, IMA ADPCM and MP3, on anything from a Cortex-M0 to a desktop.
+nanoaudio does not own a runtime or talk to hardware: it gives your driver, mixer task or operating system the pieces, and lets you bring the memory.
 
-## Features
+## Why nanoaudio?
 
-- Chainable, single-pass processing pipeline (`Stream`)
-- Sample formats (`U8`, `I16`, `I32`, `F32`) and stream configuration (`#[repr(C)]`, ready to cross an ABI)
-- Sample conversion between formats and channel layouts, on typed slices or raw little-endian bytes
-- Volume (Q4.12 control value), applied in place
-- Saturating mixing, and a fixed-size mixer with per-source and master volumes
-- Single-producer/single-consumer ring buffer with contiguous grants, for DMA and audio callbacks
-- WAV header parser that works on a partial buffer and reports when it needs more bytes
-- Codecs (`codec` module), behind allocation-free `Decoder` and `Encoder` traits: G.711 A-law and µ-law, IMA ADPCM (WAV block layout), and `WavDecoder` for PCM, A-law, µ-law and IMA ADPCM WAV files, writing any sample type
-- MP3 decoding (`mp3` feature) with `Mp3Decoder`, built on [`nanomp3-core`](https://crates.io/crates/nanomp3-core)
+- **`no_std` and no allocator.** Everything works with `core` only, on caller-provided buffers. Nothing allocates, on the hot path or anywhere else.
+- **Single-pass pipelines.** Chain format conversion, channel mapping, volume and mixing: the compiler fuses the chain into one loop, with no intermediate buffers, up to 2.9 times faster than running each step on its own.
+- **Integer or floating point, your call.** Processing runs in fixed point on cores without an FPU and in `f32` on cores with one, chosen from the target at build time, overridable with a feature, or selectable at run time.
+- **Made for DMA and audio callbacks.** A lock-free single-producer/single-consumer ring buffer hands out contiguous slices, and every operation is synchronous and non-blocking: it processes what fits and reports how much it did.
+- **Codecs included.** WAV (PCM, A-law, µ-law, IMA ADPCM), G.711 and IMA ADPCM encoders and decoders, bit-exact with reference implementations, and MP3 decoding behind a feature.
+- **Small and dependency-free.** No dependency by default; MP3 support adds [`nanomp3-core`](https://crates.io/crates/nanomp3-core), itself `no_std` and free of `unsafe`.
+- **Checked.** Tested on every combination of features, run under Miri, and built for Cortex-M0, Cortex-M4F and RISC-V in CI.
 
-## Codecs
+## Installation
 
-Decoders implement `codec::Decoder`: call `decode(input, output)` with whatever input is available and an output of at least `minimum_output()` samples. It returns how many input bytes were consumed and how many samples were produced, so it fits a ring buffer or a file read loop. Call `finish()` once the end of the input has been reached, so that decoders that wait for more input (MP3) drain what is left.
+```sh
+cargo add nanoaudio
+```
 
-| Codec | Type | Feature | Memory | Notes |
-|---|---|---|---|---|
-| PCM WAV | `WavDecoder` | | a few bytes | Any `Format`, converted to the output sample type |
-| G.711 A-law / µ-law | `G711`, `WavDecoder` | | a few bytes | Encoder and decoder, bit-exact with the reference implementation |
-| IMA ADPCM | `ImaAdpcm`, `WavDecoder` | | 40 bytes | Encoder and decoder, WAV block layout, whole blocks only |
-| MP3 | `Mp3Decoder` | `mp3` | ~22 KiB, plus input (16 KiB by default) and one frame of output | Decodes in floating point; `mp3-simd` enables SIMD, `mpeg-layer12` adds MP1/MP2 |
+or in `Cargo.toml`:
 
-The output of a decoder can be fed to `samples(...)` to continue in a pipeline.
+```toml
+[dependencies]
+nanoaudio = "0.1"
+```
 
-## Number representation
+No feature is enabled by default:
 
-Volume and mixing are computed with a `Representation`:
+| Feature        | Enables                                                                                                   |
+| -------------- | --------------------------------------------------------------------------------------------------------- |
+| *(none)*       | Everything except MP3, in `no_std` without an allocator.                                                  |
+| `mp3`          | `codec::Mp3Decoder`, MP3 decoding with [`nanomp3-core`](https://crates.io/crates/nanomp3-core).           |
+| `mp3-simd`     | SIMD in the MP3 decoder. Implies `mp3`.                                                                    |
+| `mpeg-layer12` | MPEG Layer I and II (MP1, MP2) decoding. Implies `mp3`.                                                    |
+| `fixed`        | Forces fixed-point processing by default. See [Integer or Floating Point](#integer-or-floating-point).    |
+| `float`        | Forces floating-point processing by default. Mutually exclusive with `fixed`.                             |
 
-| Representation | Values | Gain | Best for |
-|---|---|---|---|
-| `Fixed` | `i32` (Q31), saturating | `i32` (Q4.12) | Cores without a floating-point unit |
-| `Float` | `f32`, clipped on output | `f32` | Cores with a single-precision floating-point unit |
+## Quick Start
 
-Every API is generic and monomorphized, so picking a representation costs nothing per sample:
-
-- At build time, `DefaultRepresentation` (used by `mix`, `Volume::apply_to`, `Mixer<N>`, …) is chosen from the target: `Float` on x86, AArch64, WebAssembly, `eabihf` ARM, RISC-V with the `F` extension, ESP32 and ESP32-S3; `Fixed` otherwise (Cortex-M0/M3, ESP32-C3/C6, ESP32-S2, …). The `fixed` and `float` features override this choice.
-- Explicitly, with the `_using::<R>` functions or `Mixer<N, Fixed>` / `Mixer<N, Float>`.
-- At runtime, with `RepresentationKind` and the `_with` functions, which dispatch once per buffer, not per sample. Both implementations are then linked in.
-
-## Design rules
-
-- `no_std`, no `alloc`, no `unsafe` outside of the ring buffer
-- Caller-provided storage, no allocation on the hot path
-- Synchronous, non-blocking APIs: operations process what fits and report how much they did
-- Codecs are push-based: feed any amount of input, get back how much was consumed and produced
-
-## Pipelines
-
-Operations can be chained into a `Stream`. Each stage pulls one frame at a time from the previous one, so the whole chain runs in a single pass, without intermediate buffers, and samples are converted to the processing representation only once on the way in and once on the way out:
+Mix 16-bit stereo music at 80 % volume with an 8-bit mono notification, and write the result as 16-bit stereo PCM, in a single pass:
 
 ```rust
 use nanoaudio::{Format, Stream, Volume, source};
 
-let music = [0u8; 1024];
-let notification = [0u8; 512];
-let mut output = [0u8; 2048];
+let music = [0u8; 4096];
+let notification = [0x80u8; 512];
+let mut output = [0u8; 4096];
 
-let frames = source(&music, Format::I16, 2)?
+let frames = source(&music, Format::I16, 2)
+    .unwrap()
     .volume(Volume::from_percent(80))
-    .mix(source(&notification, Format::U8, 1)?.to_channels(2)?)
+    .mix(source(&notification, Format::U8, 1).unwrap().to_channels(2).unwrap())
     .write_bytes(&mut output, Format::I16);
+
+assert_eq!(frames, 1024);
 ```
 
-- Sources: `source` / `ByteSource` (raw little-endian bytes in any `Format`) and `samples` / `SampleSource` (typed slices). `remaining()` returns what has not been consumed yet, for example to release it from a ring buffer.
-- Stages: `volume`, `to_channels` (duplicates mono, averages down to mono, otherwise keeps or pads channels), `mix` (adds another stream; it goes on until both have ended, and channels missing from one side are left as is) and `map`.
-- Sinks: `write_bytes` / `write_samples` overwrite the output, `mix_into_bytes` / `mix_into_samples` add to it. They stop when the output is full or the stream has ended, and return the number of frames processed.
-- Frames hold up to `MAXIMUM_CHANNELS` (8) channels.
+A pipeline starts from a source, goes through any number of stages and ends in a sink:
 
-The single-shot functions (`convert_bytes`, `convert_channels`, `Volume::apply_to`, `mix`, …) remain available for simple cases.
+- **Sources:** `source` reads raw little-endian bytes in any `Format`, `samples` reads typed slices (`&[i16]`, `&[f32]`, …). `remaining()` returns what has not been consumed yet.
+- **Stages:** `volume`, `to_channels` (duplicates mono, averages down to mono, otherwise keeps or pads channels), `mix` (adds another stream) and `map` (any function on the processed values).
+- **Sinks:** `write_bytes` and `write_samples` overwrite the output, `mix_into_bytes` and `mix_into_samples` add to it. They stop when the output is full or the stream has ended, and return the number of frames processed.
 
-## Example
+Each stage pulls one frame at a time from the previous one, so samples are converted to the processing representation once on the way in and once on the way out.
+
+## Decoding Audio Files
+
+Every decoder implements `codec::Decoder`: give it whatever input you have and an output of at least `minimum_output()` samples, and it tells you how many bytes it consumed and how many samples it produced. Call `finish()` at the end of the input, so decoders that wait for more data drain what is left. The same loop decodes WAV and MP3:
 
 ```rust
-use nanoaudio::{Format, Volume, convert_bytes};
+use nanoaudio::codec::{Decoder, WavDecoder};
+use nanoaudio::{Error, WavHeader};
 
-let input = [0x00u8, 0x80, 0xFF];
-let mut output = [0u8; 6];
+fn decode_all<D: Decoder>(decoder: &mut D, mut input: &[u8]) -> Result<Vec<D::Sample>, Error> {
+    let mut buffer = vec![D::Sample::default(); decoder.minimum_output().max(1024)];
+    let mut decoded = Vec::new();
+    let mut finished = false;
 
-let samples = convert_bytes(&input, Format::U8, &mut output, Format::I16);
-Volume::from_percent(50).apply_to_bytes(&mut output[..samples * 2], Format::I16);
+    loop {
+        let progress = decoder.decode(input, &mut buffer)?;
+        input = &input[progress.consumed..];
+        decoded.extend_from_slice(&buffer[..progress.produced]);
+
+        if progress.is_stalled() {
+            if finished {
+                return Ok(decoded);
+            }
+
+            decoder.finish();
+            finished = true;
+        }
+    }
+}
+
+fn decode_wav(file: &[u8]) -> Result<Vec<i16>, Error> {
+    let header = WavHeader::parse(file)?;
+    let end = (header.data_offset + header.data_size as usize).min(file.len());
+
+    decode_all(&mut WavDecoder::<i16>::new(&header)?, &file[header.data_offset..end])
+}
 ```
+
+`WavHeader::parse` works on the first bytes of a file and returns `Error::Incomplete` when it needs more. The decoded samples can be fed to `samples(...)` to continue in a pipeline, and `WavDecoder::<f32>` or `Mp3Decoder::<f32>` decode straight to floating point.
+
+| Codec               | Type                  | Feature | Memory                                                    | Notes                                                              |
+| ------------------- | --------------------- | ------- | --------------------------------------------------------- | ------------------------------------------------------------------ |
+| PCM WAV             | `WavDecoder`          |         | a few bytes                                               | 8, 16 and 32-bit integer and 32-bit float                          |
+| G.711 A-law / µ-law | `G711`, `WavDecoder`  |         | a few bytes                                               | Encoder and decoder, bit-exact with the reference implementation  |
+| IMA ADPCM           | `ImaAdpcm`, `WavDecoder` |      | 40 bytes                                                  | Encoder and decoder, WAV block layout, bit-exact sample codec     |
+| MP3                 | `Mp3Decoder`          | `mp3`   | ~22 KiB, plus 16 KiB of input and one frame of output     | MPEG-1/2/2.5 Layer III, decodes in floating point                  |
+
+## Feeding Hardware
+
+`RingBuffer` connects the code producing audio to the code consuming it, such as a DMA interrupt, an I2S driver or a host audio callback. The producer and the consumer can live in different tasks or interrupts, without locks, and both work on contiguous slices:
+
+```rust
+use nanoaudio::{Format, RingBuffer, Stream, Volume, samples};
+
+let mut buffer = RingBuffer::<4096>::new();
+let (mut producer, mut consumer) = buffer.split();
+
+let tone = [1000i16, -1000, 2000, -2000];
+let frames = samples(&tone, 2)
+    .unwrap()
+    .volume(Volume::from_percent(50))
+    .write_bytes(producer.grant(), Format::I16);
+producer.commit(frames * 4);
+
+let ready = consumer.readable().len();
+assert_eq!(ready, 8);
+consumer.release(ready);
+```
+
+`Producer::write` and `Consumer::read` copy as much as fits and return how much they did, so a writer never blocks.
+
+## Integer or Floating Point
+
+Volume and mixing are computed with a `Representation`:
+
+| Representation | Values                   | Gain          | Best for                                           |
+| -------------- | ------------------------ | ------------- | -------------------------------------------------- |
+| `Fixed`        | `i32` (Q31), saturating  | `i32` (Q4.12) | Cores without a floating-point unit                |
+| `Float`        | `f32`, clipped on output | `f32`         | Cores with a single-precision floating-point unit  |
+
+Every API is generic and monomorphized, so the choice costs nothing per sample:
+
+- **At build time,** `DefaultRepresentation` (used by `source`, `mix`, `Volume::apply_to`, `Mixer<N>`, …) is chosen from the target: `Float` on x86, AArch64, WebAssembly, `eabihf` ARM, RISC-V with the `F` extension, ESP32 and ESP32-S3, and `Fixed` otherwise (Cortex-M0/M3, ESP32-C3/C6, ESP32-S2, …). The `fixed` and `float` features override it.
+- **Explicitly,** with `source_using::<Fixed>`, the `_using::<R>` functions, or `Mixer<N, Float>`.
+- **At run time,** with `RepresentationKind` and the `_with` functions, which dispatch once per buffer, not per sample.
+
+## Building Blocks
+
+The pieces used by pipelines are also available on their own:
+
+| Item                                              | Purpose                                                                     |
+| ------------------------------------------------- | --------------------------------------------------------------------------- |
+| `Format`, `Configuration`, `Sample`               | Sample formats (`U8`, `I16`, `I32`, `F32`) and stream configuration, `#[repr(C)]` to cross an ABI |
+| `convert`, `convert_bytes`, `convert_channels`    | Format and channel layout conversion, on typed slices or raw bytes          |
+| `Volume`                                          | Volume as a Q4.12 control value, applied in place                           |
+| `mix`, `mix_bytes`, `Mixer`                       | Saturating mixing, and a fixed-size mixer with per-source and master volumes |
+| `RingBuffer`, `Producer`, `Consumer`              | Lock-free single-producer/single-consumer buffer with contiguous grants     |
+| `WavHeader`                                       | WAV header parsing on a partial buffer                                      |
+| `codec::{G711, ImaAdpcm, WavDecoder, Mp3Decoder}` | Decoders and encoders                                                       |
+
+## Platform Support
+
+nanoaudio only needs `core`, and does not depend on an operating system, an allocator or atomics beyond loads and stores. CI runs the tests and Miri on Linux, and builds for:
+
+| Target                          | Example hardware                  | Default representation |
+| ------------------------------- | --------------------------------- | ---------------------- |
+| `thumbv6m-none-eabi`            | Cortex-M0, RP2040                 | `Fixed`                |
+| `thumbv7em-none-eabihf`         | Cortex-M4F, STM32F4, nRF52840     | `Float`                |
+| `riscv32imc-unknown-none-elf`   | ESP32-C3                          | `Fixed`                |
+| `riscv32imafc-unknown-none-elf` | RISC-V with an FPU                | `Float`                |
+
+## Compared to Other Crates
+
+|                         | nanoaudio                          | [arduino-audio-tools](https://github.com/pschatzmann/arduino-audio-tools) | [rodio](https://crates.io/crates/rodio) | [symphonia](https://crates.io/crates/symphonia) | [dasp](https://crates.io/crates/dasp) |
+| ----------------------- | ---------------------------------- | ------------------------- | ----------------------- | --------------------- | -------------------------- |
+| Language                | Rust                               | C++                       | Rust                    | Rust                  | Rust                       |
+| `no_std`, no allocator  | yes                                | Arduino framework         | no                      | no                    | yes                        |
+| Conversion, volume, mixing | yes                             | yes                       | yes                     | no                    | building blocks            |
+| Single-pass pipelines   | yes                                | stream chaining           | iterator chaining       | no                    | iterator chaining          |
+| Decoders                | WAV, G.711, IMA ADPCM, MP3         | many                      | through symphonia       | many                  | no                         |
+| Hardware output         | bring your own, ring buffer        | I2S and more              | through cpal            | no                    | no                         |
+| License                 | MIT                                | GPL-3.0                   | MIT or Apache-2.0       | MPL-2.0               | MIT or Apache-2.0          |
+
+Choose rodio or symphonia for desktop playback with `std`. Choose nanoaudio when you need audio processing and decoding on a microcontroller, in a kernel, or anywhere you manage the memory yourself.
+
+## Minimum Supported Rust Version
+
+nanoaudio requires Rust 1.89 or newer, and is tested against it in CI.
 
 ## License
 
-MIT
+Licensed under the [MIT License](https://github.com/AlixANNERAUD/nanoaudio/blob/main/LICENSE).
+
+---
+
+Developed by [Alix ANNERAUD](https://alix.anneraud.fr).

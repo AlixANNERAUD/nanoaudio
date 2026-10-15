@@ -4,12 +4,19 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
 authors = ["Alix ANNERAUD <alix@anneraud.fr>"]
-description = "Allocation-free, no_std building blocks for PCM audio: formats, conversion, volume, mixing and buffering"
+description = "Allocation-free no_std audio for embedded Rust: PCM conversion, volume, mixing, ring buffer, single-pass pipelines, WAV, G.711, IMA ADPCM and MP3 decoding."
 repository = "https://github.com/AlixANNERAUD/nanoaudio"
+homepage = "https://github.com/AlixANNERAUD/nanoaudio"
+documentation = "https://docs.rs/nanoaudio"
 license = "MIT"
 readme = "README.md"
-keywords = ["audio", "pcm", "no_std", "embedded", "mixer"]
-categories = ["embedded", "no-std", "multimedia::audio"]
+keywords = ["audio", "no-std", "embedded", "pcm", "mixer"]
+categories = ["multimedia::audio", "embedded", "no-std", "no-std::no-alloc", "multimedia::encoding"]
+exclude = [".github", "tests/data/*.py", "RELEASING.md", "release-plz.toml"]
+
+[package.metadata.docs.rs]
+features = ["mp3"]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 nanomp3-core = { version = "0.2", default-features = false, optional = true }
