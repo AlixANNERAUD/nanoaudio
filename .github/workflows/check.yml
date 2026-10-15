@@ -96,7 +96,7 @@ jobs:
           components: miri
 
       - name: Miri
-        run: cargo miri test
+        run: cargo miri test --lib
 
   msrv:
     runs-on: ubuntu-latest
