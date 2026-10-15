@@ -247,6 +247,33 @@ pub(crate) mod testing {
     pub(crate) fn length(round: u64, offset: u64) -> usize {
         LENGTH - ((round * 3 + offset) % 13) as usize
     }
+
+    #[track_caller]
+    pub(crate) fn assert_same_samples(actual: &[u8], expected: &[u8], format: Format) {
+        assert_eq!(actual.len(), expected.len());
+
+        if format != Format::F32 {
+            assert_eq!(actual, expected);
+            return;
+        }
+
+        let (actual_samples, actual_tail) = actual.as_chunks::<4>();
+        let (expected_samples, expected_tail) = expected.as_chunks::<4>();
+
+        for (index, (actual, expected)) in actual_samples.iter().zip(expected_samples).enumerate() {
+            let actual = f32::from_le_bytes(*actual);
+            let expected = f32::from_le_bytes(*expected);
+
+            assert!(
+                actual.to_bits() == expected.to_bits() || (actual.is_nan() && expected.is_nan()),
+                "sample {index}: {actual:?} ({:#010x}) != {expected:?} ({:#010x})",
+                actual.to_bits(),
+                expected.to_bits(),
+            );
+        }
+
+        assert_eq!(actual_tail, expected_tail);
+    }
 }
 
 #[cfg(test)]

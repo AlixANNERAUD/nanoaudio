@@ -114,6 +114,9 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      - name: Test optimized
+        run: cargo test --workspace --release
+
       - name: Test without default Features
         run: cargo test -p nanoaudio --no-default-features
 

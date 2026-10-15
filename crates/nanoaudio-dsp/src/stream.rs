@@ -524,7 +524,9 @@ pub fn samples_using<R: Representation, S: Sample>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytes::testing::{FORMATS, GAINS, LENGTH, ROUNDS, fill, length};
+    use crate::bytes::testing::{
+        FORMATS, GAINS, LENGTH, ROUNDS, assert_same_samples, fill, length,
+    };
     use crate::{Fixed, Float};
 
     struct ReferenceSource<'a, R: Representation> {
@@ -670,7 +672,7 @@ mod tests {
                             };
 
                             assert_eq!(frames, reference_frames);
-                            assert_eq!(actual, expected);
+                            assert_same_samples(&actual, &expected, output_format);
                             assert_eq!(source.stream.remaining(), reference.stream.bytes);
                         }
                     }
