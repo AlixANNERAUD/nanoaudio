@@ -589,7 +589,16 @@ mod tests {
             .take(if cfg!(miri) { 1 } else { usize::MAX })
     }
 
-    const CALLBACKS: [usize; 7] = [512, 441, 480, 1, 1024, 4096, 333];
+    const RING: usize = if cfg!(miri) { 2_048 } else { 131_072 };
+    const CAPTURE_RING: usize = if cfg!(miri) { 4_096 } else { 65_536 };
+
+    fn callback_frames(index: usize) -> usize {
+        if cfg!(miri) {
+            [48, 1, 37][index % 3]
+        } else {
+            [512, 441, 480, 1, 1024, 4096, 333][index % 7]
+        }
+    }
 
     fn play_resampled(
         quality: Quality,
@@ -599,7 +608,7 @@ mod tests {
         mut sample: impl FnMut(usize) -> Vec<u8>,
         callbacks: usize,
     ) -> (Vec<u8>, usize, usize, u32) {
-        let mut buffer = Box::new(RingBuffer::<131_072>::new());
+        let mut buffer = Box::new(RingBuffer::<RING>::new());
         let (mut producer, consumer) = buffer.split();
         let counters = Arc::new(Counters::default());
         let resampler = Rate::new(quality, stream.channels, rates.0, rates.1).unwrap();
@@ -630,7 +639,7 @@ mod tests {
                 written += 1;
             }
 
-            let count = CALLBACKS[callback % CALLBACKS.len()];
+            let count = callback_frames(callback);
             let mut data = vec![0xAA; count * device.frame_size()];
             playback.render(&mut data);
             output.extend_from_slice(&data);
@@ -638,7 +647,7 @@ mod tests {
         }
 
         drop(playback);
-        let consumed = written - producer.free().abs_diff(131_072) / stream.frame_size();
+        let consumed = written - producer.free().abs_diff(RING) / stream.frame_size();
 
         (output, frames, consumed, counters.dropouts())
     }
@@ -684,8 +693,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn resampled_tones_keep_their_frequency() {
-        let callbacks = if cfg!(miri) { 4 } else { 120 };
+        let callbacks = 120;
 
         for quality in [Quality::Sinc, Quality::Linear] {
             for (input, output) in cases([(44_100, 48_000), (48_000, 22_050), (22_050, 44_100)]) {
@@ -762,7 +772,7 @@ mod tests {
                 (MONO_I16, MONO_I16, (8_000, 48_000)),
                 (STEREO_I16, STEREO_F32, (44_100, 48_000)),
             ]) {
-                let mut buffer = Box::new(RingBuffer::<65_536>::new());
+                let mut buffer = Box::new(RingBuffer::<CAPTURE_RING>::new());
                 let (producer, mut consumer) = buffer.split();
                 let counters = Arc::new(Counters::default());
                 let resampler = Rate::new(quality, stream.channels, rates.0, rates.1).unwrap();
@@ -777,7 +787,7 @@ mod tests {
                 let mut output = 0;
 
                 for round in 0..rounds {
-                    let count = CALLBACKS[round % CALLBACKS.len()];
+                    let count = callback_frames(round);
                     capture.capture(&vec![0; count * device.frame_size()]);
                     input += count;
                     output += consumer.available() / stream.frame_size();
