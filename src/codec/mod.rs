@@ -2,12 +2,14 @@ mod g711;
 mod ima_adpcm;
 #[cfg(feature = "mp3")]
 mod mp3;
+mod ms_adpcm;
 mod wav;
 
 pub use g711::*;
 pub use ima_adpcm::*;
 #[cfg(feature = "mp3")]
 pub use mp3::*;
+pub use ms_adpcm::*;
 pub use wav::*;
 
 use crate::{Configuration, Result, Sample};
