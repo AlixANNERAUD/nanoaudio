@@ -39,6 +39,11 @@ fn decibels(ratio: f32) -> f32 {
     20.0 * core::f32::consts::LOG10_2 * log2(ratio)
 }
 
+#[inline]
+fn shift_right(sum: i64, shift: u32) -> i32 {
+    (((sum >> 32) as i32) << (32 - shift)) | ((sum as u32) >> shift) as i32
+}
+
 fn frames(sample_rate: u32, milliseconds: u32) -> u64 {
     (sample_rate as u64 * milliseconds as u64 / 1000).max(1)
 }
@@ -166,7 +171,7 @@ impl<R: Representation> DcOffset<R> {
 
     /// Creates a meter with a time constant of about `milliseconds`, at `sample_rate` in Hz.
     ///
-    /// The time constant is rounded to the nearest power of two frames, up to 2³¹.
+    /// The time constant is rounded to the nearest power of two frames, from 2 to 2³¹.
     pub fn with_time_constant(sample_rate: u32, milliseconds: u32) -> Self {
         let frames = frames(sample_rate, milliseconds);
         let mut shift = frames.ilog2();
@@ -176,7 +181,7 @@ impl<R: Representation> DcOffset<R> {
         }
 
         Self {
-            shift: shift.min(31),
+            shift: shift.clamp(1, 31),
             channels: 0,
             sums: [0; MAXIMUM_CHANNELS],
             representation: PhantomData,
@@ -196,7 +201,7 @@ impl<R: Representation> DcOffset<R> {
     /// Returns the DC offset of `channel`, or silence if there is no such channel.
     pub fn offset(&self, channel: usize) -> R::Value {
         self.sums.get(channel).map_or(R::SILENCE, |sum| {
-            R::from_sample((*sum >> self.shift) as i32)
+            R::from_sample(shift_right(*sum, self.shift))
         })
     }
 
@@ -218,7 +223,7 @@ impl<R: Representation> Analyzer<R> for DcOffset<R> {
         self.channels = frame.len() as u8;
 
         for (value, sum) in frame.iter().zip(self.sums.iter_mut()) {
-            *sum += R::to_sample::<i32>(*value) as i64 - (*sum >> self.shift);
+            *sum += R::to_sample::<i32>(*value) as i64 - shift_right(*sum, self.shift) as i64;
         }
     }
 }
@@ -240,7 +245,7 @@ impl<V> Window<V> {
 
 /// Measures the crest factor of each channel, its peak over its RMS level, over a window.
 ///
-/// Results are those of the last complete window, and are 0 before the first one ends. The peak is exact. The RMS level is measured on samples rounded to 16 bits, which is within 0.03 dB down to -80 dBFS.
+/// Results are those of the last complete window, and are 0 before the first one ends. The peak is exact. The RMS level is measured on magnitudes rounded to 16 bits, which keeps it within about 0.01 dB down to -50 dBFS and 0.1 dB at -80 dBFS.
 ///
 /// In [`Float`](nanoaudio_dsp::Float), the peak keeps values beyond full scale while the RMS level counts them as full scale, and NaN counts as silence.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -322,7 +327,19 @@ impl<R: Measure> Analyzer<R> for CrestFactor<R> {
     fn analyze(&mut self, frame: &[R::Value]) {
         self.channels = frame.len() as u8;
 
-        for (value, window) in frame.iter().zip(self.current.iter_mut()) {
+        self.frames += 1;
+
+        let end = self.frames == self.window;
+
+        if end {
+            self.frames = 0;
+        }
+
+        for ((value, window), last) in frame
+            .iter()
+            .zip(self.current.iter_mut())
+            .zip(self.last.iter_mut())
+        {
             let magnitude = R::magnitude(*value);
 
             if magnitude > window.peak {
@@ -333,14 +350,11 @@ impl<R: Measure> Analyzer<R> for CrestFactor<R> {
             let rounded = rounded.min(u16::MAX as u32);
 
             window.squares += (rounded * rounded) as u64;
-        }
 
-        self.frames += 1;
-
-        if self.frames == self.window {
-            self.frames = 0;
-            self.last = self.current;
-            self.current = [Window::new(R::SILENCE); MAXIMUM_CHANNELS];
+            if end {
+                *last = *window;
+                *window = Window::new(R::SILENCE);
+            }
         }
     }
 }
@@ -553,11 +567,11 @@ mod tests {
         assert_eq!(DcOffset::<Fixed>::new(48_000).time_constant(), 65_536);
         assert_eq!(DcOffset::<Float>::new(44_100).time_constant(), 32_768);
         assert_eq!(constant(48_000, 10), 512);
-        assert_eq!(constant(1000, 1), 1);
-        assert_eq!(constant(0, 0), 1);
+        assert_eq!(constant(1000, 1), 2);
+        assert_eq!(constant(0, 0), 2);
         assert_eq!(constant(u32::MAX, u32::MAX), 1 << 31);
 
-        for frames in 1u64..5000 {
+        for frames in 2u64..5000 {
             let shift = constant(1000, frames as u32).ilog2() as i32;
             let error = ((frames as f64).log2() - shift as f64).abs();
 
@@ -656,7 +670,7 @@ mod tests {
         meter.analyze(&[f32::NAN, f32::INFINITY, -2.0, 0.25]);
         assert_eq!(
             [0, 1, 2, 3].map(|channel| meter.offset(channel)),
-            [0.0, 1.0, -1.0, 0.25]
+            [0.0, 0.5, -0.5, 0.125]
         );
     }
 
@@ -771,5 +785,40 @@ mod tests {
         assert_eq!(meter.rms(1), 65_535.0 / 65_536.0);
         assert_eq!(meter.rms(2), 0.5);
         assert!((meter.crest_factor(1).unwrap() - 6.0207).abs() < 0.001);
+
+        for (amplitude, tolerance) in [
+            (1.0e-4f64, 0.1),
+            (1.0e-3, 0.03),
+            (0.01, 0.01),
+            (0.1, 0.01),
+            (0.9, 0.01),
+        ] {
+            let signal: Vec<f32> = (0..4800)
+                .map(|index| {
+                    (amplitude * (2.0 * core::f64::consts::PI * index as f64 / 48.0 + 0.3).sin())
+                        as f32
+                })
+                .collect();
+            let peak = signal
+                .iter()
+                .fold(0.0f64, |peak, value| peak.max(value.abs() as f64));
+            let rms = (signal
+                .iter()
+                .map(|value| (*value as f64).powi(2))
+                .sum::<f64>()
+                / signal.len() as f64)
+                .sqrt();
+            let mut meter = CrestFactor::<Float>::with_window(48_000, 100);
+
+            assert_eq!(
+                analyze_using::<Float, _, _>(&signal, 1, &mut meter),
+                Ok(4800)
+            );
+            assert_eq!(meter.peak(0) as f64, peak);
+
+            let error = meter.crest_factor(0).unwrap() as f64 - 20.0 * (peak / rms).log10();
+
+            assert!(error.abs() < tolerance, "{amplitude} {error}");
+        }
     }
 }
