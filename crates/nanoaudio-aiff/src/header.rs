@@ -95,13 +95,18 @@ impl AiffHeader {
                         .and_then(|size| size.checked_sub(data_offset))
                         .ok_or(Error::InvalidHeader)?;
 
-                    sound = Some((body + SOUND_HEADER_SIZE + data_offset, data_size));
+                    let start = (body + SOUND_HEADER_SIZE)
+                        .checked_add(data_offset)
+                        .ok_or(Error::InvalidHeader)?;
+
+                    sound = Some((start, data_size));
                 }
                 _ => {}
             }
 
-            offset = body
-                .checked_add(size + (size & 1))
+            offset = size
+                .checked_add(size & 1)
+                .and_then(|padded| body.checked_add(padded))
                 .ok_or(Error::InvalidHeader)?;
         }
     }

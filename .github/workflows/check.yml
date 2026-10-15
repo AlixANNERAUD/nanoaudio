@@ -101,6 +101,30 @@ jobs:
       - name: Build with all Features
         run: cargo build --workspace --target ${{ matrix.target }} --all-features
 
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, wasm32-wasip1
+
+      - uses: bytecodealliance/actions/wasmtime/setup@v1
+
+      - name: Build for the browser
+        run: cargo build --workspace --all-features --target wasm32-unknown-unknown
+
+      - name: Build for the browser with SIMD
+        run: cargo build --workspace --all-features --target wasm32-unknown-unknown
+        env:
+          RUSTFLAGS: -C target-feature=+simd128
+
+      - name: Test on WASI
+        run: cargo test --workspace --all-features --target wasm32-wasip1
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime --dir=/
+
   miri:
     runs-on: ubuntu-latest
     steps:
