@@ -1,11 +1,13 @@
 #![no_std]
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 
 mod stream;
 
 use core::marker::PhantomData;
 
 use nanomp3_core::MAX_SAMPLES_PER_FRAME;
+/// Sample types `nanomp3-core` can write; [`Mp3Decoder`] accepts those that are also a nanoaudio [`Sample`].
 pub use nanomp3_core::Sample as Mp3Sample;
 
 use nanoaudio_core::codec::{Decoder, Progress, Seek, SeekRequest};
@@ -13,6 +15,7 @@ use nanoaudio_core::{Configuration, Error, Result, Sample};
 
 use stream::{Header, Kind, Table, Tag, find_frame};
 
+/// Default input window of [`Mp3Decoder`], in bytes.
 pub const MP3_DEFAULT_MINIMUM_INPUT: usize = 16 * 1024;
 
 const SYNC_SLACK: u64 = 4;
@@ -143,6 +146,11 @@ enum Phase {
     Ended,
 }
 
+/// An MP3 decoder built on [`nanomp3-core`](https://crates.io/crates/nanomp3-core) that does not allocate.
+///
+/// It decodes MPEG-1, 2 and 2.5 Layer III, and Layer I and II with the `layer12` feature. The `simd` feature, on by default, enables SIMD on x86, AArch64 and WebAssembly. The decoder state takes about 23 KiB. Decoding runs in floating point, which is slow on cores without an FPU.
+///
+/// `decode` waits for an input window of [`MP3_DEFAULT_MINIMUM_INPUT`] bytes (16 KiB) by default, because a frame is recognized from the headers that follow it and a frame cut off at the end of the input would be dropped. Call `finish` once the input ends, so the last bytes, shorter than the window, are decoded too.
 #[derive(Clone)]
 pub struct Mp3Decoder<S: Sample + nanomp3_core::Sample = i16> {
     decoder: nanomp3_core::Decoder,
@@ -158,10 +166,14 @@ pub struct Mp3Decoder<S: Sample + nanomp3_core::Sample = i16> {
 }
 
 impl<S: Sample + nanomp3_core::Sample> Mp3Decoder<S> {
+    /// Creates a decoder with the default input window of [`MP3_DEFAULT_MINIMUM_INPUT`] bytes.
     pub const fn new() -> Self {
         Self::with_minimum_input(MP3_DEFAULT_MINIMUM_INPUT)
     }
 
+    /// Creates a decoder that waits for `minimum_input` bytes of input before decoding.
+    ///
+    /// A smaller window saves RAM but must still hold a few whole frames (a 128 kbit/s frame at 44.1 kHz is 418 bytes), or frames are dropped.
     pub const fn with_minimum_input(minimum_input: usize) -> Self {
         Self {
             decoder: nanomp3_core::Decoder::new(),
@@ -177,6 +189,7 @@ impl<S: Sample + nanomp3_core::Sample> Mp3Decoder<S> {
         }
     }
 
+    /// Returns to the state of a new decoder, keeping its input window, to decode another stream.
     pub fn reset(&mut self) {
         self.decoder = nanomp3_core::Decoder::new();
         self.configuration = None;
@@ -281,6 +294,9 @@ impl<S: Sample + nanomp3_core::Sample> Decoder for Mp3Decoder<S> {
         self.finishing = true;
     }
 
+    /// Decodes the next frame from `input` into interleaved samples in `output`.
+    ///
+    /// Consumes nothing until `input` holds the input window or `finish` was called. Data that is not a valid frame is skipped, not reported.
     fn decode(&mut self, input: &[u8], output: &mut [S]) -> Result<Progress> {
         if output.len() < MAX_SAMPLES_PER_FRAME {
             return Err(Error::BufferTooSmall);
@@ -346,6 +362,13 @@ impl<S: Sample + nanomp3_core::Sample> Decoder for Mp3Decoder<S> {
 }
 
 impl<S: Sample + nanomp3_core::Sample> Seek for Mp3Decoder<S> {
+    /// Prepares the decoder to produce `frame`, and returns the byte offset to resume from, counted from the first byte fed to the decoder.
+    ///
+    /// Constant bitrate streams seek exactly. Variable bitrate streams use the Xing/Info or VBRI table of contents, accurate to about 1 % of the duration. The offset is a few frames before the target, to refill the bit reservoir, and the decoder drops those frames itself. Positions include the Xing/Info frame and the encoder delay: gapless trimming is not applied.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Incomplete`] before the first frame is found, unless `frame` is 0, and [`Error::InvalidParameter`] past the end when a tag gives the frame count.
     fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
         let Some(stream) = self.stream else {
             if frame != 0 {
