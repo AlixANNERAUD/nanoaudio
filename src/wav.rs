@@ -111,6 +111,7 @@ fn parse_format(chunk: &[u8]) -> Result<(Configuration, Encoding)> {
     let (format, encoding) = match (tag, bits_per_sample) {
         (FORMAT_PCM, 8) => (Format::U8, Encoding::Pcm),
         (FORMAT_PCM, 16) => (Format::I16, Encoding::Pcm),
+        (FORMAT_PCM, 24) => (Format::I24, Encoding::Pcm),
         (FORMAT_PCM, 32) => (Format::I32, Encoding::Pcm),
         (FORMAT_IEEE_FLOAT, 32) => (Format::F32, Encoding::Pcm),
         (FORMAT_A_LAW, 8) => (Format::I16, Encoding::ALaw),
@@ -218,6 +219,32 @@ mod tests {
     }
 
     #[test]
+    fn twenty_four_bit() {
+        let bytes = header(FORMAT_PCM, 2, 48_000, 24, &[]);
+        let header = WavHeader::parse(&bytes).unwrap();
+
+        assert_eq!(
+            header.configuration,
+            Configuration::new(48_000, 2, Format::I24)
+        );
+        assert_eq!(header.configuration.frame_size(), 6);
+        assert_eq!(header.frames(), 1);
+    }
+
+    #[test]
+    fn twenty_four_bit_extensible() {
+        let mut extra = std::vec![22, 0, 24, 0, 3, 0, 0, 0];
+        extra.extend_from_slice(&FORMAT_PCM.to_le_bytes());
+        extra.extend_from_slice(&[0; 14]);
+        let bytes = header(FORMAT_EXTENSIBLE, 1, 96_000, 24, &extra);
+
+        assert_eq!(
+            WavHeader::parse(&bytes).unwrap().configuration,
+            Configuration::new(96_000, 1, Format::I24)
+        );
+    }
+
+    #[test]
     fn compressed() {
         let a_law = WavHeader::parse(&header(FORMAT_A_LAW, 1, 8_000, 8, &[0, 0])).unwrap();
         assert_eq!(a_law.encoding, Encoding::ALaw);
@@ -244,7 +271,7 @@ mod tests {
 
     #[test]
     fn unsupported() {
-        let bytes = header(FORMAT_PCM, 2, 44_100, 24, &[]);
+        let bytes = header(FORMAT_PCM, 2, 44_100, 20, &[]);
 
         assert_eq!(WavHeader::parse(&bytes), Err(Error::UnsupportedFormat));
     }

@@ -1,5 +1,5 @@
 use crate::{
-    DefaultRepresentation, Fixed, Float, Format, Representation, RepresentationKind, Sample,
+    DefaultRepresentation, Fixed, Float, Format, I24, Representation, RepresentationKind, Sample,
 };
 
 #[repr(transparent)]
@@ -91,6 +91,7 @@ impl Volume {
         match format {
             Format::U8 => self.apply_to_bytes_typed::<R, u8>(bytes),
             Format::I16 => self.apply_to_bytes_typed::<R, i16>(bytes),
+            Format::I24 => self.apply_to_bytes_typed::<R, I24>(bytes),
             Format::I32 => self.apply_to_bytes_typed::<R, i32>(bytes),
             Format::F32 => self.apply_to_bytes_typed::<R, f32>(bytes),
         }

@@ -1,8 +1,8 @@
 use core::marker::PhantomData;
 
 use crate::{
-    DefaultRepresentation, Error, Fixed, Float, Format, Representation, RepresentationKind, Result,
-    Sample, Volume,
+    DefaultRepresentation, Error, Fixed, Float, Format, I24, Representation, RepresentationKind,
+    Result, Sample, Volume,
 };
 
 pub fn mix<S: Sample>(output: &mut [S], input: &[S], volume: Volume) -> usize {
@@ -55,6 +55,7 @@ pub fn mix_bytes_using<R: Representation>(
     match format {
         Format::U8 => mix_bytes_typed::<R, u8>(output, input, volume),
         Format::I16 => mix_bytes_typed::<R, i16>(output, input, volume),
+        Format::I24 => mix_bytes_typed::<R, I24>(output, input, volume),
         Format::I32 => mix_bytes_typed::<R, i32>(output, input, volume),
         Format::F32 => mix_bytes_typed::<R, f32>(output, input, volume),
     }
@@ -93,7 +94,7 @@ fn mix_sample<R: Representation, S: Sample>(output: S, input: S, gain: R::Gain) 
 pub fn fill_silence(output: &mut [u8], format: Format) {
     match format {
         Format::U8 => output.fill(u8::SILENCE),
-        Format::I16 | Format::I32 | Format::F32 => output.fill(0),
+        Format::I16 | Format::I24 | Format::I32 | Format::F32 => output.fill(0),
     }
 }
 

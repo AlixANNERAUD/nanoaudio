@@ -7,6 +7,7 @@ pub enum Format {
     I16,
     I32,
     F32,
+    I24,
 }
 
 impl Format {
@@ -14,6 +15,7 @@ impl Format {
         match self {
             Format::U8 => 1,
             Format::I16 => 2,
+            Format::I24 => 3,
             Format::I32 | Format::F32 => 4,
         }
     }
@@ -28,6 +30,7 @@ impl TryFrom<u8> for Format {
             1 => Ok(Format::I16),
             2 => Ok(Format::I32),
             3 => Ok(Format::F32),
+            4 => Ok(Format::I24),
             _ => Err(Error::UnsupportedFormat),
         }
     }
@@ -100,11 +103,17 @@ mod tests {
 
     #[test]
     fn format_from_u8() {
-        for format in [Format::U8, Format::I16, Format::I32, Format::F32] {
+        for format in [
+            Format::U8,
+            Format::I16,
+            Format::I24,
+            Format::I32,
+            Format::F32,
+        ] {
             assert_eq!(Format::try_from(u8::from(format)), Ok(format));
         }
 
-        assert_eq!(Format::try_from(4), Err(Error::UnsupportedFormat));
+        assert_eq!(Format::try_from(5), Err(Error::UnsupportedFormat));
     }
 
     #[test]
