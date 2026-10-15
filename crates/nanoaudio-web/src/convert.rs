@@ -1,7 +1,26 @@
+use core::fmt;
+
 use nanoaudio_buffer::{Consumer, Producer};
 use nanoaudio_core::{Configuration, Error, Format, I24, MAXIMUM_CHANNELS, Result, Sample};
+use nanoaudio_dsp::{Float, Stream, samples_using};
+
+use crate::{Quality, resample::Rate};
 
 const LARGEST_FRAME: usize = MAXIMUM_CHANNELS * 4;
+const CHUNK: usize = 1024;
+
+fn resampler(
+    configuration: Configuration,
+    quality: Quality,
+    input_rate: u32,
+    output_rate: u32,
+) -> Result<Option<Rate>> {
+    if input_rate == output_rate {
+        return Ok(None);
+    }
+
+    Rate::new(quality, configuration.channels, input_rate, output_rate).map(Some)
+}
 
 fn check(configuration: Configuration) -> Result<Configuration> {
     if configuration.channels == 0 || configuration.channels as usize > MAXIMUM_CHANNELS {
@@ -17,11 +36,24 @@ fn check(configuration: Configuration) -> Result<Configuration> {
 
 /// Moves interleaved PCM from a [`Consumer`] to planar `f32` channels, the layout of a Web Audio render quantum.
 ///
-/// It plays silence for the frames the consumer is missing and counts each short call as an underrun.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// It plays silence for the frames the consumer is missing and counts each short call as an underrun. Created with [`with_rate`](Self::with_rate), it also resamples the stream to the rate of the render quantum.
 pub struct Renderer {
     configuration: Configuration,
     underruns: u32,
+    resampler: Option<Rate>,
+    staging: [u8; CHUNK * 4],
+    resampled: [f32; CHUNK],
+}
+
+impl fmt::Debug for Renderer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Renderer")
+            .field("configuration", &self.configuration)
+            .field("underruns", &self.underruns)
+            .field("resampling", &self.resampler.is_some())
+            .finish()
+    }
 }
 
 impl Renderer {
@@ -34,7 +66,21 @@ impl Renderer {
         Ok(Self {
             configuration: check(configuration)?,
             underruns: 0,
+            resampler: None,
+            staging: [0; CHUNK * 4],
+            resampled: [0.0; CHUNK],
         })
+    }
+
+    /// Creates a renderer that resamples a stream in `configuration` to `rate` in Hz, with `quality`.
+    ///
+    /// # Errors
+    ///
+    /// Like [`new`](Self::new), and [`Error::InvalidParameter`] for a rate of 0 or a ratio above [`MAXIMUM_RATIO`](crate::MAXIMUM_RATIO) with [`Quality::Sinc`].
+    pub fn with_rate(configuration: Configuration, rate: u32, quality: Quality) -> Result<Self> {
+        let mut renderer = Self::new(configuration)?;
+        renderer.resampler = resampler(configuration, quality, configuration.sample_rate, rate)?;
+        Ok(renderer)
     }
 
     /// Returns the configuration of the stream.
@@ -49,15 +95,81 @@ impl Renderer {
 
     /// Fills `output` with as many whole frames as `consumer` holds, and silence after them.
     ///
-    /// `output` holds the channels one after the other, `output.len() / channels` samples each. Returns the number of frames read.
+    /// `output` holds the channels one after the other, `output.len() / channels` samples each. Returns the number of frames written before the silence, at the rate of `output`.
     pub fn render<const N: usize>(
         &mut self,
         consumer: &mut Consumer<'_, N>,
         output: &mut [f32],
     ) -> usize {
         let channels = self.configuration.channels as usize;
-        let frame_size = self.configuration.frame_size();
         let frames = output.len() / channels;
+        let done = if self.resampler.is_some() {
+            self.resample(consumer, output, frames)
+        } else {
+            self.copy(consumer, output, frames)
+        };
+
+        if done < frames {
+            for channel in output.chunks_exact_mut(frames) {
+                channel[done..].fill(0.0);
+            }
+
+            self.underruns = self.underruns.wrapping_add(1);
+        }
+
+        done
+    }
+
+    fn resample<const N: usize>(
+        &mut self,
+        consumer: &mut Consumer<'_, N>,
+        output: &mut [f32],
+        frames: usize,
+    ) -> usize {
+        let Some(resampler) = &mut self.resampler else {
+            return 0;
+        };
+        let channels = self.configuration.channels;
+        let frame_size = self.configuration.frame_size();
+        let capacity = self.staging.len() / frame_size;
+        let chunk = CHUNK / channels as usize;
+        let mut done = 0;
+
+        while done < frames {
+            let available = (consumer.available() / frame_size).min(capacity);
+            let count = (frames - done)
+                .min(chunk)
+                .min(resampler.output_frames(available));
+
+            if count == 0 {
+                break;
+            }
+
+            let staged = &mut self.staging[..resampler.input_frames(count) * frame_size];
+            consumer.read(staged);
+
+            let resampled = &mut self.resampled[..count * channels as usize];
+            resampler.convert(staged, self.configuration.format, channels, resampled);
+
+            for (index, frame) in resampled.chunks_exact(channels as usize).enumerate() {
+                for (channel, sample) in frame.iter().enumerate() {
+                    output[channel * frames + done + index] = *sample;
+                }
+            }
+
+            done += count;
+        }
+
+        done
+    }
+
+    fn copy<const N: usize>(
+        &self,
+        consumer: &mut Consumer<'_, N>,
+        output: &mut [f32],
+        frames: usize,
+    ) -> usize {
+        let frame_size = self.configuration.frame_size();
         let mut done = 0;
 
         while done < frames {
@@ -77,14 +189,6 @@ impl Renderer {
             } else {
                 break;
             }
-        }
-
-        if done < frames {
-            for channel in output.chunks_exact_mut(frames) {
-                channel[done..].fill(0.0);
-            }
-
-            self.underruns = self.underruns.wrapping_add(1);
         }
 
         done
@@ -119,11 +223,25 @@ fn deinterleave<S: Sample>(
 
 /// Moves planar `f32` channels, the layout of a Web Audio render quantum, to interleaved PCM in a [`Producer`].
 ///
-/// It drops the frames that do not fit and counts each short call as an overrun.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// It drops the frames that do not fit and counts each short call as an overrun. Created with [`with_rate`](Self::with_rate), it also resamples the render quantum to the rate of the stream.
 pub struct Recorder {
     configuration: Configuration,
     overruns: u32,
+    resampler: Option<Rate>,
+    staging: [u8; CHUNK * 4],
+    input: [f32; CHUNK],
+    output: [f32; CHUNK],
+}
+
+impl fmt::Debug for Recorder {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Recorder")
+            .field("configuration", &self.configuration)
+            .field("overruns", &self.overruns)
+            .field("resampling", &self.resampler.is_some())
+            .finish()
+    }
 }
 
 impl Recorder {
@@ -136,7 +254,22 @@ impl Recorder {
         Ok(Self {
             configuration: check(configuration)?,
             overruns: 0,
+            resampler: None,
+            staging: [0; CHUNK * 4],
+            input: [0.0; CHUNK],
+            output: [0.0; CHUNK],
         })
+    }
+
+    /// Creates a recorder that resamples input at `rate` in Hz to a stream in `configuration`, with `quality`.
+    ///
+    /// # Errors
+    ///
+    /// Like [`new`](Self::new), and [`Error::InvalidParameter`] for a rate of 0 or a ratio above [`MAXIMUM_RATIO`](crate::MAXIMUM_RATIO) with [`Quality::Sinc`].
+    pub fn with_rate(configuration: Configuration, rate: u32, quality: Quality) -> Result<Self> {
+        let mut recorder = Self::new(configuration)?;
+        recorder.resampler = resampler(configuration, quality, rate, configuration.sample_rate)?;
+        Ok(recorder)
     }
 
     /// Returns the configuration of the stream.
@@ -151,15 +284,95 @@ impl Recorder {
 
     /// Writes as many whole frames of `input` as fit in `producer`, and returns their number.
     ///
-    /// `input` holds the channels one after the other, `input.len() / channels` samples each.
+    /// `input` holds the channels one after the other, `input.len() / channels` samples each. When resampling, the frames written are at the rate of the stream.
     pub fn record<const N: usize>(
         &mut self,
         input: &[f32],
         producer: &mut Producer<'_, N>,
     ) -> usize {
         let channels = self.configuration.channels as usize;
-        let frame_size = self.configuration.frame_size();
         let frames = input.len() / channels;
+        let (done, complete) = if self.resampler.is_some() {
+            self.resample(input, frames, producer)
+        } else {
+            let done = self.copy(input, frames, producer);
+            (done, done == frames)
+        };
+
+        if !complete {
+            self.overruns = self.overruns.wrapping_add(1);
+        }
+
+        done
+    }
+
+    fn resample<const N: usize>(
+        &mut self,
+        input: &[f32],
+        frames: usize,
+        producer: &mut Producer<'_, N>,
+    ) -> (usize, bool) {
+        let Some(resampler) = &mut self.resampler else {
+            return (0, false);
+        };
+        let channels = self.configuration.channels as usize;
+        let frame_size = self.configuration.frame_size();
+        let chunk = CHUNK / channels;
+        let room = chunk.min(self.staging.len() / frame_size) * channels;
+        let mut written = 0;
+        let mut complete = true;
+        let mut start = 0;
+
+        while start < frames {
+            let count = (frames - start).min(chunk);
+
+            for (index, frame) in self.input[..count * channels]
+                .chunks_exact_mut(channels)
+                .enumerate()
+            {
+                for (channel, sample) in frame.iter_mut().enumerate() {
+                    *sample = input[channel * frames + start + index];
+                }
+            }
+
+            let mut pending = &self.input[..count * channels];
+
+            loop {
+                let progress = resampler.process(pending, &mut self.output[..room]);
+                pending = &pending[progress.consumed..];
+
+                let bytes = progress.produced / channels * frame_size;
+                let encoded = &mut self.staging[..bytes];
+
+                if let Ok(mut source) =
+                    samples_using::<Float, f32>(&self.output[..progress.produced], channels as u8)
+                {
+                    source.write_bytes(encoded, self.configuration.format);
+                }
+
+                let fits = (producer.free() / frame_size * frame_size).min(bytes);
+                producer.write(&encoded[..fits]);
+                written += fits / frame_size;
+                complete &= fits == bytes;
+
+                if pending.is_empty() && progress.produced < room {
+                    break;
+                }
+            }
+
+            start += count;
+        }
+
+        (written, complete)
+    }
+
+    fn copy<const N: usize>(
+        &self,
+        input: &[f32],
+        frames: usize,
+        producer: &mut Producer<'_, N>,
+    ) -> usize {
+        let frame_size = self.configuration.frame_size();
         let mut done = 0;
 
         while done < frames {
@@ -179,10 +392,6 @@ impl Recorder {
             } else {
                 break;
             }
-        }
-
-        if done < frames {
-            self.overruns = self.overruns.wrapping_add(1);
         }
 
         done
@@ -217,6 +426,10 @@ fn interleave<S: Sample>(
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
+    use std::{vec, vec::Vec};
+
     use super::*;
     use nanoaudio_buffer::RingBuffer;
 
@@ -227,16 +440,37 @@ mod tests {
     #[test]
     fn rejects_invalid_configurations() {
         assert_eq!(
-            Renderer::new(Configuration::new(48_000, 0, Format::I16)),
-            Err(Error::TooManyChannels)
+            Renderer::new(Configuration::new(48_000, 0, Format::I16)).err(),
+            Some(Error::TooManyChannels)
         );
         assert_eq!(
-            Recorder::new(Configuration::new(48_000, 9, Format::I16)),
-            Err(Error::TooManyChannels)
+            Recorder::new(Configuration::new(48_000, 9, Format::I16)).err(),
+            Some(Error::TooManyChannels)
         );
         assert_eq!(
-            Renderer::new(Configuration::new(0, 2, Format::I16)),
-            Err(Error::InvalidParameter)
+            Renderer::new(Configuration::new(0, 2, Format::I16)).err(),
+            Some(Error::InvalidParameter)
+        );
+        assert_eq!(
+            Renderer::with_rate(stereo(Format::I16), 0, Quality::Sinc).err(),
+            Some(Error::InvalidParameter)
+        );
+        assert_eq!(
+            Recorder::with_rate(
+                Configuration::new(8_000, 1, Format::I16),
+                8_000 * 32,
+                Quality::Sinc
+            )
+            .err(),
+            Some(Error::InvalidParameter)
+        );
+        assert!(
+            Recorder::with_rate(
+                Configuration::new(8_000, 1, Format::I16),
+                8_000 * 31,
+                Quality::Sinc
+            )
+            .is_ok()
         );
     }
 
@@ -343,5 +577,167 @@ mod tests {
         let mut bytes = [0; 8];
         consumer.read(&mut bytes);
         assert_eq!(bytes, [0, 64, 0, 192, 0, 64, 0, 192]);
+    }
+
+    fn cases<T>(cases: impl IntoIterator<Item = T>) -> impl Iterator<Item = T> {
+        cases
+            .into_iter()
+            .take(if cfg!(miri) { 1 } else { usize::MAX })
+    }
+
+    const QUANTA: usize = if cfg!(miri) { 8 } else { 1_000 };
+
+    fn tone(frame: usize, rate: u32) -> f32 {
+        (0.5 * (core::f64::consts::TAU * 1_000.0 * frame as f64 / rate as f64).sin()) as f32
+    }
+
+    fn frequency(samples: &[f32], rate: u32) -> f64 {
+        let mut first = None;
+        let mut last = 0.0;
+        let mut crossings = 0;
+
+        for (index, pair) in samples.windows(2).enumerate() {
+            if pair[0] < 0.0 && pair[1] >= 0.0 {
+                let position = index as f64 + (pair[0] / (pair[0] - pair[1])) as f64;
+                first.get_or_insert(position);
+                last = position;
+                crossings += 1;
+            }
+        }
+
+        (crossings - 1) as f64 * rate as f64 / (last - first.unwrap())
+    }
+
+    #[test]
+    fn resamples_quanta_with_exact_frame_accounting() {
+        for quality in [Quality::Sinc, Quality::Linear] {
+            for (stream, context) in cases([(44_100, 48_000), (48_000, 44_100), (96_000, 16_000)]) {
+                let configuration = Configuration::new(stream, 2, Format::I16);
+                let mut buffer = RingBuffer::<16_384>::new();
+                let (mut producer, mut consumer) = buffer.split();
+                let mut renderer = Renderer::with_rate(configuration, context, quality).unwrap();
+                let reference = Rate::new(quality, 2, stream, context).unwrap();
+                let mut quantum = [0.0; 256];
+                let mut written = 0;
+
+                for _ in 0..QUANTA {
+                    while producer.free() >= 4 {
+                        producer.write(&[1, 0, 2, 0]);
+                        written += 1;
+                    }
+
+                    assert_eq!(renderer.render(&mut consumer, &mut quantum), 128);
+                }
+
+                let consumed = written - consumer.available() / 4;
+
+                assert_eq!(renderer.underruns(), 0, "{quality:?} {stream} -> {context}");
+                assert_eq!(consumed, reference.input_frames(128 * QUANTA));
+            }
+        }
+    }
+
+    #[test]
+    fn resampled_tones_keep_their_frequency() {
+        for quality in [Quality::Sinc, Quality::Linear] {
+            for (stream, context) in cases([(44_100, 48_000), (22_050, 48_000), (48_000, 44_100)]) {
+                let configuration = Configuration::new(stream, 1, Format::F32);
+                let mut buffer = RingBuffer::<8_192>::new();
+                let (mut producer, mut consumer) = buffer.split();
+                let mut renderer = Renderer::with_rate(configuration, context, quality).unwrap();
+                let mut quantum = [0.0; 128];
+                let mut output = Vec::new();
+                let mut frame = 0;
+
+                for _ in 0..QUANTA {
+                    while producer.free() >= 4 {
+                        producer.write(&tone(frame, stream).to_le_bytes());
+                        frame += 1;
+                    }
+
+                    renderer.render(&mut consumer, &mut quantum);
+                    output.extend_from_slice(&quantum);
+                }
+
+                let steady = &output[256..];
+                let peak = steady
+                    .iter()
+                    .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+                let measured = frequency(steady, context);
+
+                assert_eq!(renderer.underruns(), 0);
+                assert!(
+                    (measured - 1_000.0).abs() < 0.5,
+                    "{quality:?} {stream} -> {context}: {measured} Hz"
+                );
+                assert!((peak - 0.5).abs() < 0.01, "{quality:?}: peak {peak}");
+            }
+        }
+    }
+
+    #[test]
+    fn resampled_underruns_play_silence() {
+        let mut buffer = RingBuffer::<1024>::new();
+        let (mut producer, mut consumer) = buffer.split();
+        let mut renderer = Renderer::with_rate(
+            Configuration::new(44_100, 1, Format::I16),
+            48_000,
+            Quality::Sinc,
+        )
+        .unwrap();
+
+        producer.write(&[0x10; 100]);
+
+        let mut quantum = [1.0; 128];
+        let done = renderer.render(&mut consumer, &mut quantum);
+
+        assert_eq!(done, 55);
+        assert!(quantum[done..].iter().all(|sample| *sample == 0.0));
+        assert_eq!(renderer.underruns(), 1);
+    }
+
+    #[test]
+    fn records_resampled_frames() {
+        for quality in [Quality::Sinc, Quality::Linear] {
+            for (context, stream, channels) in
+                cases([(48_000, 16_000, 1), (8_000, 48_000, 2), (44_100, 48_000, 2)])
+            {
+                let configuration = Configuration::new(stream, channels, Format::I16);
+                let mut buffer = RingBuffer::<65_536>::new();
+                let (mut producer, mut consumer) = buffer.split();
+                let mut recorder = Recorder::with_rate(configuration, context, quality).unwrap();
+                let quantum = vec![0.25; 128 * channels as usize];
+                let mut written = 0;
+
+                for _ in 0..QUANTA {
+                    written += recorder.record(&quantum, &mut producer);
+                    consumer.clear();
+                }
+
+                let expected = (128 * QUANTA as u64 * stream as u64).div_ceil(context as u64);
+
+                assert_eq!(
+                    written as u64, expected,
+                    "{quality:?} {context} -> {stream}"
+                );
+                assert_eq!(recorder.overruns(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn resampled_recording_counts_overruns() {
+        let mut buffer = RingBuffer::<64>::new();
+        let (mut producer, consumer) = buffer.split();
+        let mut recorder = Recorder::with_rate(
+            Configuration::new(16_000, 1, Format::I16),
+            8_000,
+            Quality::Linear,
+        )
+        .unwrap();
+
+        assert_eq!(recorder.record(&[0.5; 40], &mut producer), 32);
+        assert_eq!(consumer.available(), 64);
+        assert_eq!(recorder.overruns(), 1);
     }
 }

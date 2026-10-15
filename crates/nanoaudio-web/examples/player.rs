@@ -6,8 +6,8 @@ mod web {
     use nanoaudio_core::{Sample, codec::Decoder};
     use nanoaudio_wav::{WavDecoder, WavHeader};
     use nanoaudio_web::{
-        CAPACITY, Configuration, Consumer, Format, Input, Output, Port, Producer, Sink, Source,
-        Worklet,
+        CAPACITY, Configuration, Consumer, Format, Input, Options, Output, Port, Producer, Quality,
+        Sink, Source, Worklet,
     };
     use wasm_bindgen::prelude::*;
 
@@ -162,22 +162,42 @@ mod web {
         pub fn underruns(&self) -> u32 {
             self.0.underruns()
         }
+
+        pub fn sample_rate(&self) -> u32 {
+            self.0.configuration().sample_rate
+        }
+
+        pub fn device_sample_rate(&self) -> u32 {
+            self.0.device_sample_rate()
+        }
     }
 
     #[wasm_bindgen]
     pub async fn play_sine() -> Result<Playback, JsValue> {
-        Ok(Playback(Output::start(SINE, "sine").await?))
+        Ok(Playback(Output::open(SINE, "sine").await?))
     }
 
     #[wasm_bindgen]
-    pub async fn play_wav(file: Vec<u8>) -> Result<Playback, JsValue> {
+    pub async fn play_wav(
+        file: Vec<u8>,
+        context_rate: u32,
+        linear: bool,
+    ) -> Result<Playback, JsValue> {
         let header = WavHeader::parse(&file).map_err(|error| JsError::new(&error.to_string()))?;
         let configuration = Configuration::new(
             header.configuration.sample_rate,
             header.configuration.channels,
             Format::I16,
         );
-        let output = Output::start(configuration, "wav").await?;
+        let options = Options {
+            quality: if linear {
+                Quality::Linear
+            } else {
+                Quality::Sinc
+            },
+            sample_rate: (context_rate != 0).then_some(context_rate),
+        };
+        let output = Output::open_with(configuration, "wav", options).await?;
         let bytes = Uint8Array::from(file.as_slice());
         output.post_with_transfer(&bytes, &Array::of1(&bytes.buffer()))?;
         Ok(Playback(output))
@@ -195,7 +215,7 @@ mod web {
 
     #[wasm_bindgen]
     pub async fn listen(on_level: Function) -> Result<Capture, JsValue> {
-        let input = Input::start(LEVEL, "level").await?;
+        let input = Input::open(LEVEL, "level").await?;
         input.set_on_message(move |level| {
             let _ = on_level.call1(&JsValue::NULL, &level);
         });

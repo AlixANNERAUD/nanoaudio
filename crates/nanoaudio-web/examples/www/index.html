@@ -10,9 +10,24 @@
   <p>
     <button id="sine">Play a 440 Hz sine</button>
     <label>Play a WAV file <input id="wav" type="file" accept=".wav,audio/wav"></label>
+    <label>with the audio context at
+      <select id="rate">
+        <option value="0">the file's rate</option>
+        <option value="48000" selected>48000 Hz</option>
+        <option value="44100">44100 Hz</option>
+        <option value="96000">96000 Hz</option>
+      </select>
+    </label>
+    <label>resampling with
+      <select id="quality">
+        <option value="sinc" selected>sinc</option>
+        <option value="linear">linear</option>
+      </select>
+    </label>
     <button id="listen">Show the microphone level</button>
     <button id="stop">Stop</button>
   </p>
+  <p>Stream: <output id="stream"></output>, audio context: <output id="context"></output></p>
   <p>Underruns: <output id="underruns">0</output></p>
   <p>Microphone peak: <meter id="level" max="1"></meter> <output id="overruns"></output></p>
   <script type="module">
@@ -36,6 +51,8 @@
     const play = async (start) => {
       stop();
       playback = await start();
+      element("stream").value = `${playback.sample_rate()} Hz`;
+      element("context").value = `${playback.device_sample_rate()} Hz`;
       timer = setInterval(() => element("underruns").value = playback.underruns(), 250);
     };
 
@@ -44,7 +61,9 @@
       const file = event.target.files[0];
       if (file !== undefined) {
         const bytes = new Uint8Array(await file.arrayBuffer());
-        await play(() => play_wav(bytes));
+        const rate = Number(element("rate").value);
+        const linear = element("quality").value === "linear";
+        await play(() => play_wav(bytes, rate, linear));
       }
     };
     element("listen").onclick = async () => {

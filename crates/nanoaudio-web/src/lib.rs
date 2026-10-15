@@ -3,11 +3,13 @@
 #![doc = include_str!("../README.md")]
 
 mod convert;
+mod resample;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod web;
 
 pub use convert::*;
 pub use nanoaudio_buffer::{Consumer, Producer};
 pub use nanoaudio_core::{Configuration, Format};
+pub use resample::{MAXIMUM_RATIO, Quality};
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub use web::*;

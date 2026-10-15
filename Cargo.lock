@@ -430,6 +430,7 @@ dependencies = [
  "js-sys",
  "nanoaudio-buffer",
  "nanoaudio-core",
+ "nanoaudio-dsp",
  "nanoaudio-wav",
  "wasm-bindgen",
  "wasm-bindgen-futures",
