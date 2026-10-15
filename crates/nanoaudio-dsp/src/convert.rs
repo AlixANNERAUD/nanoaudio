@@ -2,6 +2,9 @@ use nanoaudio_core::{Format, I24, Sample};
 
 use crate::bytes::{Bytes, pairs, read};
 
+/// Converts samples to another sample type, and returns the number of samples converted.
+///
+/// It stops at the end of the shorter slice. Converting to a narrower type rounds to the nearest value and saturates.
 pub fn convert<I: Sample, O: Sample>(input: &[I], output: &mut [O]) -> usize {
     let count = input.len().min(output.len());
 
@@ -12,6 +15,9 @@ pub fn convert<I: Sample, O: Sample>(input: &[I], output: &mut [O]) -> usize {
     count
 }
 
+/// Converts little-endian samples from `input_format` to `output_format`, and returns the number of samples converted.
+///
+/// It stops at the end of the shorter buffer, and ignores trailing bytes that do not form a whole sample.
 pub fn convert_bytes(
     input: &[u8],
     input_format: Format,
@@ -55,6 +61,9 @@ fn convert_bytes_typed<
     })
 }
 
+/// Converts interleaved frames from `input_channels` to `output_channels`, and returns the number of frames converted.
+///
+/// Mono is copied to every channel, several channels are averaged down to mono, and other layouts keep the first channels and pad with silence. Returns 0 if either channel count is 0.
 pub fn convert_channels<S: Sample>(
     input: &[S],
     input_channels: u8,

@@ -1,22 +1,37 @@
 use crate::Format;
 
+/// A PCM sample type: `u8`, `i16`, [`I24`], `i32` or `f32`.
+///
+/// Conversions go through a full-scale `i32` or an `f32` with full scale at -1.0 and 1.0. Converting to a narrower type rounds to the nearest value and saturates, and NaN becomes silence.
 pub trait Sample: Copy + Default + PartialEq + Send + Sync + 'static {
+    /// The [`Format`] of this type.
     const FORMAT: Format;
+    /// The value of silence: `0x80` for `u8`, 0 otherwise.
     const SILENCE: Self;
+    /// The size of one sample in a byte buffer, in bytes.
     const SIZE: usize = Self::FORMAT.sample_size();
 
+    /// Scales the sample to the full `i32` range.
     fn to_i32(self) -> i32;
 
+    /// Converts a full-scale `i32` to this type, rounding to the nearest value.
     fn from_i32(value: i32) -> Self;
 
+    /// Converts the sample to an `f32` with full scale at -1.0 and 1.0.
     fn to_f32(self) -> f32;
 
+    /// Converts an `f32` with full scale at -1.0 and 1.0 to this type.
+    ///
+    /// Integer types round to the nearest value, saturate out-of-range values and turn NaN into silence.
     fn from_f32(value: f32) -> Self;
 
+    /// Reads a sample from the first [`SIZE`](Self::SIZE) bytes of `bytes`, little-endian, and panics if there are fewer.
     fn read_le(bytes: &[u8]) -> Self;
 
+    /// Writes the sample to the first [`SIZE`](Self::SIZE) bytes of `bytes`, little-endian, and panics if there are fewer.
     fn write_le(self, bytes: &mut [u8]);
 
+    /// Converts the sample to another sample type, through `f32` if either side is `f32` and through `i32` otherwise.
     fn convert<O: Sample>(self) -> O {
         if const { matches!(Self::FORMAT, Format::F32) || matches!(O::FORMAT, Format::F32) } {
             O::from_f32(self.to_f32())
@@ -128,14 +143,20 @@ impl Sample for i32 {
     }
 }
 
+/// A signed 24-bit sample.
+///
+/// It takes 4 bytes in memory and 3 bytes in a byte buffer.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct I24(i32);
 
 impl I24 {
+    /// The smallest 24-bit value.
     pub const MIN: Self = Self(-(1 << 23));
+    /// The largest 24-bit value.
     pub const MAX: Self = Self((1 << 23) - 1);
 
+    /// Creates a sample, saturating `value` to the 24-bit range.
     pub const fn new(value: i32) -> Self {
         if value < Self::MIN.0 {
             Self::MIN
@@ -146,6 +167,7 @@ impl I24 {
         }
     }
 
+    /// Returns the sample as an `i32` between [`MIN`](Self::MIN) and [`MAX`](Self::MAX).
     pub const fn value(self) -> i32 {
         self.0
     }
