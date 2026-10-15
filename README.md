@@ -43,7 +43,7 @@ No feature is enabled by default:
 | `mp3-simd`     | SIMD in the MP3 decoder. Implies `mp3`.                                                                    |
 | `mpeg-layer12` | MPEG Layer I and II (MP1, MP2) decoding. Implies `mp3`.                                                    |
 | `fixed`        | Forces fixed-point processing by default. See [Integer or Floating Point](#integer-or-floating-point).    |
-| `float`        | Forces floating-point processing by default. Mutually exclusive with `fixed`.                             |
+| `float`        | Forces floating-point processing by default. If `fixed` is also enabled, `fixed` takes precedence.        |
 
 ## Quick Start
 
@@ -154,7 +154,7 @@ Volume and mixing are computed with a `Representation`:
 
 Every API is generic and monomorphized, so the choice costs nothing per sample:
 
-- **At build time,** `DefaultRepresentation` (used by `source`, `mix`, `Volume::apply_to`, `Mixer<N>`, …) is chosen from the target: `Float` on x86, AArch64, WebAssembly, `eabihf` ARM, RISC-V with the `F` extension, ESP32 and ESP32-S3, and `Fixed` otherwise (Cortex-M0/M3, ESP32-C3/C6, ESP32-S2, …). The `fixed` and `float` features override it.
+- **At build time,** `DefaultRepresentation` (used by `source`, `mix`, `Volume::apply_to`, `Mixer<N>`, …) is chosen from the target: `Float` on x86, AArch64, WebAssembly, `eabihf` ARM, RISC-V with the `F` extension, ESP32 and ESP32-S3, and `Fixed` otherwise (Cortex-M0/M3, ESP32-C3/C6, ESP32-S2, …). The `fixed` and `float` features override it; when both are enabled, for example by two dependencies, `fixed` takes precedence since it runs everywhere.
 - **Explicitly,** with `source_using::<Fixed>`, the `_using::<R>` functions, or `Mixer<N, Float>`.
 - **At run time,** with `RepresentationKind` and the `_with` functions, which dispatch once per buffer, not per sample.
 

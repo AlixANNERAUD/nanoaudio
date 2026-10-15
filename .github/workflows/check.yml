@@ -47,6 +47,9 @@ jobs:
       - name: Test with float
         run: cargo test --features float
 
+      - name: Test with all Features
+        run: cargo test --all-features
+
       - name: Test with every mp3 option
         run: cargo test --features mp3-simd,mpeg-layer12
 
