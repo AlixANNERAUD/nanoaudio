@@ -24,7 +24,11 @@ const FLOAT: bool = cfg!(any(
 ));
 
 const LEADING_ZEROS: bool = cfg!(any(
-    all(target_arch = "arm", target_has_atomic = "32"),
+    all(
+        target_arch = "arm",
+        target_has_atomic = "32",
+        not(nanoaudio_no_clz)
+    ),
     all(
         any(target_arch = "riscv32", target_arch = "riscv64"),
         target_feature = "zbb"
