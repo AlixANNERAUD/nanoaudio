@@ -1,6 +1,6 @@
 # nanoaudio-mp3
 
-An MP3 decoder built on [`nanomp3-core`](https://crates.io/crates/nanomp3-core). It is `no_std` and does not allocate. The `simd` feature enables SIMD and `layer12` adds MPEG Layer I and II.
+An MP3 decoder built on [`nanomp3-core`](https://crates.io/crates/nanomp3-core). It is `no_std` and does not allocate. The `simd` feature, on by default, enables explicit SIMD on x86, AArch64 and WebAssembly with `simd128`, and costs nothing elsewhere. `layer12` adds MPEG Layer I and II.
 
 It is part of [nanoaudio](https://github.com/AlixANNERAUD/nanoaudio#readme), and can be used on its own:
 
