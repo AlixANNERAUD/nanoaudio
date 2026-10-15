@@ -13,7 +13,7 @@ pub use nanomp3_core::Sample as Mp3Sample;
 use nanoaudio_core::codec::{Decoder, Progress, Seek, SeekRequest};
 use nanoaudio_core::{Configuration, Error, Result, Sample};
 
-use stream::{Header, Kind, Table, Tag, find_frame};
+use stream::{Gapless, Header, Kind, Table, Tag, find_frame};
 
 /// Default input window of [`Mp3Decoder`], in bytes.
 ///
@@ -23,6 +23,7 @@ pub const MP3_DEFAULT_MINIMUM_INPUT: usize = 4 * 1024;
 const SYNC_SLACK: u64 = 4;
 const SYNC_KEPT: usize = stream::LARGEST_FRAME + stream::HEADER_SIZE;
 const SETTLE_FRAMES: u64 = 2;
+const DECODER_DELAY: u64 = 529;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Stream {
@@ -32,23 +33,25 @@ struct Stream {
     kind: Kind,
     frames: Option<u32>,
     table: Table,
+    gapless: Option<Gapless>,
     variable: bool,
     observed: Option<(u64, u64)>,
     counting: bool,
 }
 
 impl Stream {
-    fn new(first: u64, frame: &[u8], header: Header) -> Self {
+    fn new(first: u64, frame: &[u8], header: Header, next: Option<Header>) -> Self {
         let tag = Tag::parse(frame, header);
         let tagged = tag.kind != Kind::Plain;
 
         Self {
             first,
-            header,
+            header: next.filter(|_| tagged).unwrap_or(header),
             tag_size: tagged.then_some(header.size() as u64),
             kind: tag.kind,
             frames: tag.frames,
             table: tag.table,
+            gapless: tag.gapless,
             variable: false,
             observed: Some((0, 0)),
             counting: true,
@@ -61,6 +64,14 @@ impl Stream {
 
     fn tag_frames(&self) -> u64 {
         u64::from(self.tag_size.is_some())
+    }
+
+    fn audio_first(&self) -> u64 {
+        self.first.saturating_add(self.tag_size.unwrap_or(0))
+    }
+
+    fn is_tag(&self, end: u64) -> bool {
+        self.tag_size.is_some() && end == self.audio_first()
     }
 
     fn frame_bytes(&self) -> (u64, u64) {
@@ -106,14 +117,31 @@ impl Stream {
         })
     }
 
+    fn trim(&self) -> Option<(u64, Option<u64>)> {
+        let gapless = self.gapless?;
+        let delay = u64::from(gapless.delay);
+        let lead = self.tag_frames() * u64::from(self.header.samples()) + delay + DECODER_DELAY;
+        let end = self.total().map(|total| {
+            let audio = total - self.tag_frames() * u64::from(self.header.samples());
+            let length = audio.saturating_sub(delay + u64::from(gapless.padding));
+
+            (lead + length).min(total).max(lead)
+        });
+
+        Some((lead, end))
+    }
+
     fn position(&self, frame: u64) -> u64 {
         let (bytes, frames) = self.frame_bytes();
 
         if self.is_constant() {
-            let distance = u128::from(frame) * u128::from(bytes) / u128::from(frames);
+            let Some(audio) = frame.checked_sub(self.tag_frames()) else {
+                return self.first;
+            };
+            let distance = u128::from(audio) * u128::from(bytes) / u128::from(frames);
 
             return self
-                .first
+                .audio_first()
                 .saturating_add(u64::try_from(distance).unwrap_or(u64::MAX));
         }
 
@@ -131,9 +159,16 @@ impl Stream {
 
     fn index(&self, byte: u64) -> u64 {
         let (bytes, frames) = self.frame_bytes();
-        let distance = u128::from(byte.saturating_sub(self.first));
 
-        ((2 * distance * u128::from(frames) + u128::from(bytes)) / (2 * u128::from(bytes))) as u64
+        if byte < self.audio_first() {
+            return 0;
+        }
+
+        let distance = u128::from(byte - self.audio_first());
+
+        self.tag_frames()
+            + ((2 * distance * u128::from(frames) + u128::from(bytes)) / (2 * u128::from(bytes)))
+                as u64
     }
 }
 
@@ -152,6 +187,8 @@ enum Phase {
 ///
 /// It decodes MPEG-1, 2 and 2.5 Layer III, and Layer I and II with the `layer12` feature. The `simd` feature, on by default, enables SIMD on x86, AArch64 and WebAssembly. The decoder state takes about 23 KiB. Decoding runs in floating point, which is slow on cores without an FPU.
 ///
+/// When the stream starts with a LAME or FFmpeg tag, the encoder delay and padding are trimmed, so the output is the audio that was encoded: see [`set_gapless`](Self::set_gapless).
+///
 /// `decode` waits for an input window of [`MP3_DEFAULT_MINIMUM_INPUT`] bytes (4 KiB) by default, because a frame is recognized from the header that follows it. The bit reservoir is kept inside the decoder, so the window does not need to hold it. Call `finish` once the input ends, so the last bytes, shorter than the window, are decoded too.
 #[derive(Clone)]
 pub struct Mp3Decoder<S: Sample + nanomp3_core::Sample = i16> {
@@ -164,6 +201,8 @@ pub struct Mp3Decoder<S: Sample + nanomp3_core::Sample = i16> {
     offset: u64,
     drop: u64,
     skip: usize,
+    cursor: u64,
+    gapless: bool,
     sample: PhantomData<S>,
 }
 
@@ -187,6 +226,8 @@ impl<S: Sample + nanomp3_core::Sample> Mp3Decoder<S> {
             offset: 0,
             drop: 0,
             skip: 0,
+            cursor: 0,
+            gapless: true,
             sample: PhantomData,
         }
     }
@@ -201,6 +242,33 @@ impl<S: Sample + nanomp3_core::Sample> Mp3Decoder<S> {
         self.offset = 0;
         self.drop = 0;
         self.skip = 0;
+        self.cursor = 0;
+    }
+
+    /// Turns gapless trimming on or off. It is on by default.
+    ///
+    /// When on and the stream starts with a LAME or FFmpeg tag, the decoder drops the Xing or Info frame, the encoder delay and the decoder delay at the start, and the encoder padding at the end, so the output is the audio that was encoded, sample for sample. Seek positions and [`frames`](Self::frames) then count the same samples. Other streams are not trimmed. Change it before decoding, or seek after changing it.
+    pub fn set_gapless(&mut self, gapless: bool) {
+        self.gapless = gapless;
+    }
+
+    /// Returns `true` if gapless trimming is on.
+    pub const fn is_gapless(&self) -> bool {
+        self.gapless
+    }
+
+    /// Returns the length of the stream in frames, when its Xing, Info or VBRI tag gives the frame count.
+    ///
+    /// It is the number of frames a full decode produces, and the end position for [`Seek`]: trimmed when gapless trimming applies, otherwise it includes the tag frame and the encoder delay and padding. Returns `None` before the first frame is found.
+    pub fn frames(&self) -> Option<u64> {
+        match self.trim() {
+            Some((lead, end)) => end.map(|end| end - lead),
+            None => self.stream?.total(),
+        }
+    }
+
+    fn trim(&self) -> Option<(u64, Option<u64>)> {
+        self.stream.filter(|_| self.gapless)?.trim()
     }
 
     fn skippable(&self, input: &[u8]) -> usize {
@@ -227,18 +295,27 @@ impl<S: Sample + nanomp3_core::Sample> Mp3Decoder<S> {
             start
         };
 
+        let samples = u64::from(stream.header.samples());
+
         self.phase = Phase::Decode;
         self.drop = target.saturating_sub(reached);
         self.skip = if reached <= target { within } else { 0 };
+        self.cursor = reached.max(target) * samples + self.skip as u64;
 
         index
     }
 
     fn observe(&mut self, input: &[u8]) {
         if let Some((index, header)) = find_frame(input, None) {
-            let frame = &input[index..(index + header.size()).min(input.len())];
+            let end = (index + header.size()).min(input.len());
+            let next = Header::read(&input[end..]).filter(|next| header.matches(*next));
 
-            self.stream = Some(Stream::new(self.offset + index as u64, frame, header));
+            self.stream = Some(Stream::new(
+                self.offset + index as u64,
+                &input[index..end],
+                header,
+                next,
+            ));
         }
     }
 
@@ -249,7 +326,10 @@ impl<S: Sample + nanomp3_core::Sample> Mp3Decoder<S> {
         produced: usize,
     ) -> usize {
         if let Some(stream) = &mut self.stream {
-            if information.bitrate != stream.header.bitrate() && stream.kind != Kind::Variable {
+            if information.bitrate != stream.header.bitrate()
+                && stream.kind != Kind::Variable
+                && !stream.is_tag(self.offset)
+            {
                 stream.variable = true;
             }
 
@@ -265,16 +345,38 @@ impl<S: Sample + nanomp3_core::Sample> Mp3Decoder<S> {
             return 0;
         }
 
-        if self.skip == 0 {
-            return produced;
+        let channels = information.channels.num() as usize;
+        let cursor = self.cursor;
+
+        if produced == 0 {
+            self.cursor += self
+                .stream
+                .map_or(0, |stream| u64::from(stream.header.samples()));
+
+            return 0;
         }
 
-        let skipped = (self.skip * information.channels.num() as usize).min(produced);
+        let skipped = (self.skip * channels).min(produced);
+        let frames = ((produced - skipped) / channels) as u64;
 
-        output.copy_within(skipped..produced, 0);
         self.skip = 0;
+        self.cursor += frames;
 
-        produced - skipped
+        let (first, last) = match self.trim() {
+            Some((lead, end)) => (
+                lead.saturating_sub(cursor).min(frames),
+                end.map_or(frames, |end| end.saturating_sub(cursor).min(frames)),
+            ),
+            None => (0, frames),
+        };
+        let start = skipped + first as usize * channels;
+        let end = skipped + (last.max(first) as usize) * channels;
+
+        if start != 0 {
+            output.copy_within(start..end, 0);
+        }
+
+        end - start
     }
 }
 
@@ -377,11 +479,13 @@ impl<S: Sample + nanomp3_core::Sample> Decoder for Mp3Decoder<S> {
 impl<S: Sample + nanomp3_core::Sample> Seek for Mp3Decoder<S> {
     /// Prepares the decoder to produce `frame`, and returns the byte offset to resume from, counted from the first byte fed to the decoder.
     ///
-    /// Constant bitrate streams seek exactly. Variable bitrate streams use the Xing/Info or VBRI table of contents, accurate to about 1 % of the duration. The offset is a few frames before the target, to refill the bit reservoir, and the decoder drops those frames itself. Positions include the Xing/Info frame and the encoder delay: gapless trimming is not applied.
+    /// Constant bitrate streams seek exactly. Variable bitrate streams use the Xing/Info or VBRI table of contents, accurate to about 1 % of the duration. The offset is a few frames before the target, to refill the bit reservoir, and the decoder drops those frames itself.
+    ///
+    /// Positions count the frames `decode` produces: with gapless trimming, frame 0 is the first sample that was encoded, otherwise it is the start of the Xing, Info or VBRI frame, and positions include the encoder delay.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Incomplete`] before the first frame is found, unless `frame` is 0, and [`Error::InvalidParameter`] past the end when a tag gives the frame count.
+    /// Returns [`Error::Incomplete`] before the first frame is found, unless `frame` is 0, and [`Error::InvalidParameter`] past [`frames`](Mp3Decoder::frames) when a tag gives the frame count.
     fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
         let Some(stream) = self.stream else {
             if frame != 0 {
@@ -393,9 +497,13 @@ impl<S: Sample + nanomp3_core::Sample> Seek for Mp3Decoder<S> {
             return Ok(SeekRequest::default());
         };
 
-        if stream.total().is_some_and(|total| frame > total) {
+        let length = self.frames();
+
+        if length.is_some_and(|length| frame > length) {
             return Err(Error::InvalidParameter);
         }
+
+        let lead = self.trim().map_or(0, |(lead, _)| lead);
 
         self.decoder = nanomp3_core::Decoder::new();
         self.finishing = false;
@@ -408,12 +516,13 @@ impl<S: Sample + nanomp3_core::Sample> Seek for Mp3Decoder<S> {
         }
 
         let samples = u64::from(stream.header.samples());
-        let target = frame / samples;
-        let within = frame % samples;
+        let position = frame.saturating_add(lead);
+        let target = position / samples;
+        let within = position % samples;
 
-        if stream.total() == Some(frame) {
+        if length == Some(frame) {
             self.phase = Phase::Ended;
-            self.offset = stream.position(target);
+            self.offset = stream.position(stream.total().unwrap_or(position) / samples);
 
             return Ok(SeekRequest {
                 byte_offset: self.offset,
