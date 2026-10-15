@@ -4,6 +4,7 @@ mod ima_adpcm;
 #[cfg(feature = "mp3")]
 mod mp3;
 mod ms_adpcm;
+mod sbc;
 mod wav;
 
 pub use aiff::*;
@@ -12,6 +13,7 @@ pub use ima_adpcm::*;
 #[cfg(feature = "mp3")]
 pub use mp3::*;
 pub use ms_adpcm::*;
+pub use sbc::*;
 pub use wav::*;
 
 use crate::{Configuration, Result, Sample};
