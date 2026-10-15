@@ -1,4 +1,5 @@
 #![no_std]
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
 use nanoaudio_core::bits::BitReader;
@@ -46,7 +47,9 @@ const ANALYSIS_FRACTION: u32 = 12;
 const PARTIAL_FRACTION: u32 = 15;
 const SYNTHESIS_HISTORY_BLOCKS: usize = SYNTHESIS / (2 * MAXIMUM_SUBBANDS) - 1;
 
+/// The largest SBC frame, in bytes.
 pub const SBC_MAXIMUM_FRAME_LENGTH: usize = 524;
+/// The most samples one frame decodes to, all channels together: 16 blocks of 8 subbands for 2 channels.
 pub const SBC_MAXIMUM_FRAME_SAMPLES: usize = MAXIMUM_BLOCKS * MAXIMUM_SUBBANDS * MAXIMUM_CHANNELS;
 
 type Crc8 = crc::Crc8<0x1D>;
@@ -188,16 +191,22 @@ impl Filterbank {
     }
 }
 
+/// How a frame codes its channels.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum SbcChannelMode {
+    /// One channel.
     Mono,
+    /// Two channels coded independently, each with its own bitpool.
     DualChannel,
+    /// Two channels sharing one bitpool.
     Stereo,
+    /// Two channels sharing one bitpool, where each subband can be coded as the sum and difference of the channels.
     #[default]
     JointStereo,
 }
 
 impl SbcChannelMode {
+    /// Returns the number of channels: 1 for [`Mono`](Self::Mono), 2 otherwise.
     pub const fn channels(self) -> u8 {
         match self {
             SbcChannelMode::Mono => 1,
@@ -206,20 +215,30 @@ impl SbcChannelMode {
     }
 }
 
+/// How the bitpool is spread across subbands.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum SbcAllocation {
+    /// Weighted by a model of hearing, the usual choice.
     #[default]
     Loudness,
+    /// In proportion to the scale factors only.
     Snr,
 }
 
+/// The parameters of an SBC stream, as stored in each frame header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SbcParameters {
+    /// Sample rate in Hz: 16000, 32000, 44100 or 48000.
     pub sample_rate: u32,
+    /// How the channels are coded.
     pub channel_mode: SbcChannelMode,
+    /// How the bitpool is spread across subbands.
     pub allocation: SbcAllocation,
+    /// Blocks per frame: 4, 8, 12 or 16, and 15 for mSBC.
     pub blocks: u8,
+    /// Subbands per block: 4 or 8.
     pub subbands: u8,
+    /// Bits spread across subbands in each block, which sets the bitrate and the quality.
     pub bitpool: u8,
 }
 
@@ -230,6 +249,7 @@ impl Default for SbcParameters {
 }
 
 impl SbcParameters {
+    /// The A2DP high-quality setting: 44.1 kHz joint stereo, 16 blocks, 8 subbands, bitpool 53, about 328 kbit/s.
     pub const HIGH_QUALITY: Self = Self {
         sample_rate: 44_100,
         channel_mode: SbcChannelMode::JointStereo,
@@ -239,6 +259,7 @@ impl SbcParameters {
         bitpool: 53,
     };
 
+    /// The mSBC setting of the Bluetooth hands-free profile: 16 kHz mono, 15 blocks, 8 subbands, bitpool 26, 57-byte frames.
     pub const MSBC: Self = Self {
         sample_rate: 16_000,
         channel_mode: SbcChannelMode::Mono,
@@ -248,6 +269,9 @@ impl SbcParameters {
         bitpool: 26,
     };
 
+    /// Reads the parameters from the first bytes of a frame.
+    ///
+    /// Returns [`Error::Incomplete`] with fewer than 3 bytes, and [`Error::InvalidHeader`] for an unknown synchronization byte or parameters that fail [`validate`](Self::validate).
     pub fn parse(header: &[u8]) -> Result<Self> {
         let [synchronization, settings, bitpool, ..] = *header else {
             return Err(Error::Incomplete);
@@ -284,6 +308,9 @@ impl SbcParameters {
         Ok(parameters)
     }
 
+    /// Checks that the parameters fit in an SBC frame header, with a bitpool from 2 to [`maximum_bitpool`](Self::maximum_bitpool).
+    ///
+    /// Returns [`Error::InvalidParameter`] otherwise, or if `blocks` is 15 and the parameters differ from [`MSBC`](Self::MSBC).
     pub fn validate(&self) -> Result<()> {
         if self.is_msbc() {
             return if *self == Self::MSBC {
@@ -306,14 +333,17 @@ impl SbcParameters {
         }
     }
 
+    /// Returns whether these are mSBC parameters, recognized by their 15 blocks.
     pub const fn is_msbc(&self) -> bool {
         self.blocks == MSBC_BLOCKS
     }
 
+    /// Returns the number of channels.
     pub const fn channels(&self) -> u8 {
         self.channel_mode.channels()
     }
 
+    /// Returns the largest bitpool the channel mode and subband count allow.
     pub const fn maximum_bitpool(&self) -> usize {
         match self.channel_mode {
             SbcChannelMode::Mono | SbcChannelMode::DualChannel => 16 * self.subbands as usize,
@@ -321,6 +351,7 @@ impl SbcParameters {
         }
     }
 
+    /// Returns the size of one frame in bytes.
     pub const fn frame_length(&self) -> usize {
         let channels = self.channels() as usize;
         let blocks = self.blocks as usize;
@@ -335,14 +366,17 @@ impl SbcParameters {
         HEADER_SIZE + 4 * subbands * channels / 8 + audio.div_ceil(8)
     }
 
+    /// Returns the number of samples per channel in one frame: blocks times subbands.
     pub const fn samples_per_channel(&self) -> usize {
         self.blocks as usize * self.subbands as usize
     }
 
+    /// Returns the number of samples in one frame, all channels together.
     pub const fn frame_samples(&self) -> usize {
         self.samples_per_channel() * self.channels() as usize
     }
 
+    /// Returns the PCM configuration: sample rate, channel count and 16-bit samples.
     pub fn configuration(&self) -> Configuration {
         Configuration::new(self.sample_rate, self.channels(), Format::I16)
     }
@@ -555,6 +589,9 @@ impl BitWriter<'_> {
     }
 }
 
+/// An SBC and mSBC decoder.
+///
+/// Every frame header carries its parameters, so the decoder needs none from the caller and follows changes from one frame to the next. It decodes whole frames to interleaved 16-bit samples and checks the CRC of each one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SbcDecoder {
     parameters: Option<SbcParameters>,
@@ -570,6 +607,7 @@ impl Default for SbcDecoder {
 }
 
 impl SbcDecoder {
+    /// Creates a decoder waiting for its first frame.
     pub const fn new() -> Self {
         Self {
             parameters: None,
@@ -579,14 +617,17 @@ impl SbcDecoder {
         }
     }
 
+    /// Returns to the state of a new decoder.
     pub fn reset(&mut self) {
         *self = Self::new();
     }
 
+    /// Returns the parameters of the last decoded frame, or `None` before the first one.
     pub const fn parameters(&self) -> Option<SbcParameters> {
         self.parameters
     }
 
+    /// Like [`Decoder::decode`], but writes any [`Sample`] format.
     pub fn decode_into<S: Sample>(&mut self, input: &[u8], output: &mut [S]) -> Result<Progress> {
         let mut progress = Progress::default();
 
@@ -789,20 +830,28 @@ impl Decoder for SbcDecoder {
         self.parameters.map(|parameters| parameters.configuration())
     }
 
+    /// The largest frame, 256 samples, as the parameters are only known from the stream.
     fn minimum_output(&self) -> usize {
         SBC_MAXIMUM_FRAME_SAMPLES
     }
 
+    /// Marks the end of the input: a truncated last frame then returns [`Error::Incomplete`] instead of waiting for more bytes.
     fn finish(&mut self) {
         self.finishing = true;
     }
 
+    /// Decodes as many whole frames as `input` and `output` hold.
+    ///
+    /// Returns [`Error::InvalidHeader`] for an invalid frame header, [`Error::InvalidData`] when a frame fails its CRC check, and [`Error::BufferTooSmall`] when `output` cannot hold the next frame. An error met after some frames were decoded is returned by the next call.
     fn decode(&mut self, input: &[u8], output: &mut [i16]) -> Result<Progress> {
         self.decode_into(input, output)
     }
 }
 
 impl Seek for SbcDecoder {
+    /// Seeks to `frame`, counted per channel from the start of the audio.
+    ///
+    /// The byte offset is counted from the start of the stream, assuming every frame uses the parameters of the last decoded one. The decoder resumes up to 9 blocks early to refill its synthesis filter and drops them, so the output matches a sequential decode exactly. The stream length is unknown: seeking past the end returns an offset past the end, and nothing is produced. Before the first decoded frame, only frame 0 is accepted, and other frames return [`Error::Incomplete`].
     fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
         let Some(parameters) = self.parameters else {
             if frame != 0 {
@@ -894,6 +943,9 @@ fn quantize(sample: i32, scale_factor: u8, bits: u8) -> u32 {
 
 type SubbandSamples = [[[i32; MAXIMUM_SUBBANDS]; MAXIMUM_CHANNELS]; MAXIMUM_BLOCKS];
 
+/// An SBC and mSBC encoder.
+///
+/// Codes interleaved 16-bit samples with fixed [`SbcParameters`], one frame of [`frame_samples`](SbcParameters::frame_samples) samples into [`frame_length`](SbcParameters::frame_length) bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SbcEncoder {
     parameters: SbcParameters,
@@ -901,6 +953,9 @@ pub struct SbcEncoder {
 }
 
 impl SbcEncoder {
+    /// Creates an encoder for `parameters`.
+    ///
+    /// Returns [`Error::InvalidParameter`] if they fail [`SbcParameters::validate`].
     pub fn new(parameters: SbcParameters) -> Result<Self> {
         parameters.validate()?;
 
@@ -910,10 +965,12 @@ impl SbcEncoder {
         })
     }
 
+    /// Returns the parameters given at creation.
     pub const fn parameters(&self) -> SbcParameters {
         self.parameters
     }
 
+    /// Clears the analysis filter, to start a new stream.
     pub fn reset(&mut self) {
         self.analysis = [[0; WINDOW]; MAXIMUM_CHANNELS];
     }
@@ -1035,14 +1092,19 @@ impl Encoder for SbcEncoder {
         self.parameters.configuration()
     }
 
+    /// One frame of interleaved samples.
     fn minimum_input(&self) -> usize {
         self.parameters.frame_samples()
     }
 
+    /// One frame, [`frame_length`](SbcParameters::frame_length) bytes.
     fn minimum_output(&self) -> usize {
         self.parameters.frame_length()
     }
 
+    /// Encodes as many whole frames as `input` and `output` hold.
+    ///
+    /// A final partial frame is not encoded: pad it with silence to a whole frame. Returns [`Error::BufferTooSmall`] if `output` is shorter than one frame.
     fn encode(&mut self, input: &[i16], output: &mut [u8]) -> Result<Progress> {
         let samples = self.parameters.frame_samples();
         let length = self.parameters.frame_length();

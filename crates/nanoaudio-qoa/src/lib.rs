@@ -1,4 +1,5 @@
 #![no_std]
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
 use core::marker::PhantomData;
@@ -6,9 +7,13 @@ use core::marker::PhantomData;
 use nanoaudio_core::codec::{Decoder, Encoder, Progress, Seek, SeekRequest};
 use nanoaudio_core::{Configuration, Error, MAXIMUM_CHANNELS, Result, Sample};
 
+/// Samples per channel in a slice, coded together in 8 bytes.
 pub const QOA_SLICE_LENGTH: usize = 20;
+/// Slices per channel in a full frame.
 pub const QOA_SLICES_PER_FRAME: usize = 256;
+/// Samples per channel in a full frame. Only the last frame of a file can be shorter.
 pub const QOA_FRAME_LENGTH: usize = QOA_SLICE_LENGTH * QOA_SLICES_PER_FRAME;
+/// The highest sample rate a frame header can store, in Hz.
 pub const QOA_MAXIMUM_SAMPLE_RATE: u32 = 0xFF_FFFF;
 
 const MAGIC: [u8; 4] = *b"qoaf";
@@ -62,6 +67,7 @@ const RECONSTRUCT: [[i16; 17]; SCALE_FACTORS] = {
     table
 };
 
+/// Returns the size in bytes of a frame holding `samples` samples per channel, headers included.
 pub const fn qoa_frame_size(channels: u8, samples: usize) -> usize {
     let channels = channels as usize;
     let slices = samples.div_ceil(QOA_SLICE_LENGTH);
@@ -169,6 +175,9 @@ enum Stage {
     End,
 }
 
+/// A QOA decoder.
+///
+/// Everything is read from the stream: the sample rate and channel count, up to 8, are known once the first frame header is decoded. Each call decodes whole slices of 20 samples per channel, to `i16` or any other [`Sample`] format. Files written as streams, with an unknown length, are supported.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QoaDecoder<S: Sample = i16> {
     stage: Stage,
@@ -184,6 +193,7 @@ pub struct QoaDecoder<S: Sample = i16> {
 }
 
 impl<S: Sample> QoaDecoder<S> {
+    /// Creates a decoder waiting for the file header.
     pub const fn new() -> Self {
         Self {
             stage: Stage::FileHeader,
@@ -199,14 +209,17 @@ impl<S: Sample> QoaDecoder<S> {
         }
     }
 
+    /// Returns to the state of a new decoder, to decode another file.
     pub fn reset(&mut self) {
         *self = Self::new();
     }
 
+    /// Returns the number of samples per channel declared in the file header, `Some(0)` for a stream of unknown length, or `None` before the header is read.
     pub const fn samples(&self) -> Option<u32> {
         self.total
     }
 
+    /// Returns whether the file header declares an unknown length.
     pub const fn is_streaming(&self) -> bool {
         matches!(self.total, Some(0))
     }
@@ -379,18 +392,24 @@ impl<S: Sample> Default for QoaDecoder<S> {
 impl<S: Sample> Decoder for QoaDecoder<S> {
     type Sample = S;
 
+    /// Returns the stream configuration once a frame header has been read.
     fn configuration(&self) -> Option<Configuration> {
         (self.channels != 0).then(|| Configuration::new(self.sample_rate, self.channels, S::FORMAT))
     }
 
+    /// One slice for 8 channels, 160 samples, as the channel count is only known from the stream.
     fn minimum_output(&self) -> usize {
         QOA_SLICE_LENGTH * MAXIMUM_CHANNELS
     }
 
+    /// Marks the end of the input: once no more progress can be made, `decode` returns [`Error::Incomplete`] if the file stopped before its end.
     fn finish(&mut self) {
         self.finishing = true;
     }
 
+    /// Decodes as many slices as `input` and `output` hold, reading the file and frame headers as they come.
+    ///
+    /// Returns [`Error::BufferTooSmall`] if `output` is shorter than [`Decoder::minimum_output`], [`Error::InvalidHeader`] if the file does not start with `qoaf`, and [`Error::InvalidData`] or [`Error::TooManyChannels`] for an invalid frame header.
     fn decode(&mut self, input: &[u8], output: &mut [S]) -> Result<Progress> {
         if output.len() < self.minimum_output() {
             return Err(Error::BufferTooSmall);
@@ -415,6 +434,29 @@ impl<S: Sample> Decoder for QoaDecoder<S> {
 }
 
 impl<S: Sample> Seek for QoaDecoder<S> {
+    /// Seeks to `frame`, counted per channel from the start of the audio.
+    ///
+    /// QOA frames are independent and all but the last hold 5120 samples per channel, so the decoder resumes at the QOA frame holding `frame`, at a byte offset counted from the start of the file, and drops the samples before it: the result is sample-exact. It needs a decoded frame header first and returns [`Error::Incomplete`] otherwise, except for frame 0, which resets the decoder. Past the end of a file of known length, it returns [`Error::InvalidParameter`].
+    ///
+    /// ```
+    /// use nanoaudio_core::codec::{Decoder, Encoder, Seek};
+    /// use nanoaudio_qoa::{QoaDecoder, QoaEncoder};
+    ///
+    /// let mut file = [0u8; 4096];
+    /// let mut encoder = QoaEncoder::<i16>::new(16_000, 1, 6_000).unwrap();
+    /// let written = encoder.encode(&[0; 6_000], &mut file).unwrap().produced;
+    /// let file = &file[..written];
+    ///
+    /// let mut decoder = QoaDecoder::<i16>::new();
+    /// let mut output = [0i16; 160];
+    /// decoder.decode(file, &mut output).unwrap();
+    ///
+    /// let request = decoder.seek(5_500).unwrap();
+    /// let progress = decoder.decode(&file[request.byte_offset as usize..], &mut output).unwrap();
+    ///
+    /// assert_eq!(request.skip_frames, 380);
+    /// assert_eq!(progress.produced, 160);
+    /// ```
     fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
         let total = match self.total {
             Some(total) if self.channels != 0 => total,
@@ -468,6 +510,9 @@ impl<S: Sample> Seek for QoaDecoder<S> {
     }
 }
 
+/// A QOA encoder.
+///
+/// Writes the file header, then frames of up to 5120 samples per channel, each split into slices of 20. Takes up to 8 interleaved channels as `i16` or any other [`Sample`] format, converted to 16-bit. For every slice it tries the 16 scale factors and keeps the best, so encoding takes 15 to 20 times longer than decoding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QoaEncoder<S: Sample = i16> {
     stage: Stage,
@@ -483,6 +528,11 @@ pub struct QoaEncoder<S: Sample = i16> {
 }
 
 impl<S: Sample> QoaEncoder<S> {
+    /// Creates an encoder for `samples` samples per channel, or for a stream of unknown length if `samples` is 0.
+    ///
+    /// With a known length, the encoder stops after that many samples. With an unknown one, it only writes full frames until [`flush`](Encoder::flush) is called.
+    ///
+    /// Returns [`Error::TooManyChannels`] for 0 or more than 8 channels, and [`Error::InvalidParameter`] if `sample_rate` is 0 or above [`QOA_MAXIMUM_SAMPLE_RATE`].
     pub fn new(sample_rate: u32, channels: u8, samples: u32) -> Result<Self> {
         if channels == 0 || channels as usize > MAXIMUM_CHANNELS {
             return Err(Error::TooManyChannels);
@@ -506,14 +556,17 @@ impl<S: Sample> QoaEncoder<S> {
         })
     }
 
+    /// Returns the number of samples per channel written in the file header, 0 for a stream of unknown length.
     pub const fn samples(&self) -> u32 {
         self.total
     }
 
+    /// Returns whether the length is unknown.
     pub const fn is_streaming(&self) -> bool {
         self.total == 0
     }
 
+    /// Returns whether the last frame has been written: every declared sample is encoded, or a flushed stream got an empty input.
     pub const fn is_finished(&self) -> bool {
         matches!(self.stage, Stage::End)
     }
@@ -692,6 +745,7 @@ impl<S: Sample> Encoder for QoaEncoder<S> {
         Configuration::new(self.sample_rate, self.channels, S::FORMAT)
     }
 
+    /// One slice, 20 samples per channel, or a full frame of 5120 samples per channel for a stream that has not been flushed.
     fn minimum_input(&self) -> usize {
         let frames = if self.is_streaming() && !self.finishing {
             QOA_FRAME_LENGTH
@@ -702,14 +756,19 @@ impl<S: Sample> Encoder for QoaEncoder<S> {
         frames * self.channels as usize
     }
 
+    /// A frame header with the state of each channel: 8 bytes plus 16 per channel.
     fn minimum_output(&self) -> usize {
         FRAME_HEADER_SIZE + CHANNEL_STATE_SIZE * self.channels as usize
     }
 
+    /// Ends a stream of unknown length: from then on, input left after the full frames becomes a last, shorter frame, and an empty input finishes the stream. Files of known length do not need it.
     fn flush(&mut self) {
         self.finishing = true;
     }
 
+    /// Encodes as many slices as `input` and `output` hold, writing the file and frame headers as they come.
+    ///
+    /// Returns [`Error::BufferTooSmall`] if `output` is shorter than [`Encoder::minimum_output`].
     fn encode(&mut self, input: &[S], output: &mut [u8]) -> Result<Progress> {
         if output.len() < self.minimum_output() {
             return Err(Error::BufferTooSmall);
