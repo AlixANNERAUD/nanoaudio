@@ -47,6 +47,11 @@ HELIUM = [
     "probe_float_convert_i16",
 ]
 
+FLAT = [
+    "probe_g711_encode_mu_law",
+    "probe_g711_encode_a_law",
+]
+
 WIDE_MULTIPLY = re.compile(r"__aeabi_lmul|__muldi3")
 CALL = re.compile(r"^(bl|blx|call|jal|jalr|tail)$")
 LABEL = re.compile(r"^(\.L\w+):")
@@ -196,6 +201,11 @@ def loops(lines):
     return found
 
 
+def nested(lines):
+    found = loops(lines)
+    return [body for body in found if any(len(other) < len(body) and set(other) <= set(body) for other in found)]
+
+
 def calls(lines):
     return [line for line in instructions(lines) if CALL.match(line.split()[0])]
 
@@ -236,6 +246,10 @@ def analyse(name, assembly, opt_level):
         lines = [line for member in closure(bodies, function) for line in bodies[member]]
         if any(WIDE_MULTIPLY.search(line) for line in lines):
             failures.append(name + ": 64-bit multiply in " + function)
+    for function in FLAT:
+        for member in closure(bodies, function):
+            if nested(bodies[member]):
+                failures.append(name + ": loop inside the sample loop of " + function)
     for function in CALL_FREE:
         for member in closure(bodies, function):
             for body in loops(bodies[member]):
