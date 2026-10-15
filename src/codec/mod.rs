@@ -4,6 +4,7 @@ mod ima_adpcm;
 #[cfg(feature = "mp3")]
 mod mp3;
 mod ms_adpcm;
+mod qoa;
 mod sbc;
 mod wav;
 
@@ -13,6 +14,7 @@ pub use ima_adpcm::*;
 #[cfg(feature = "mp3")]
 pub use mp3::*;
 pub use ms_adpcm::*;
+pub use qoa::*;
 pub use sbc::*;
 pub use wav::*;
 
@@ -58,6 +60,8 @@ pub trait Encoder {
     fn minimum_input(&self) -> usize;
 
     fn minimum_output(&self) -> usize;
+
+    fn flush(&mut self) {}
 
     fn encode(&mut self, input: &[Self::Sample], output: &mut [u8]) -> Result<Progress>;
 }
