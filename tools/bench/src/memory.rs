@@ -102,10 +102,13 @@ pub fn entries(data: Option<&Path>) -> Vec<Entry> {
     let g711 = G711::new(Law::Mu, 8_000, 1).unwrap();
     let ima_mono = ImaAdpcm::new(16_000, 1, 256).unwrap();
     let ima_stereo = ImaAdpcm::new(44_100, 2, 2_048).unwrap();
+    let ima_stereo_limited = ImaAdpcm::<2>::new_limited(44_100, 2, 2_048).unwrap();
     let ms_stereo = MsAdpcm::new(44_100, 2, 2_048).unwrap();
     let qoa_decoder = QoaDecoder::<i16>::new();
+    let qoa_stereo_decoder = QoaDecoder::<i16, 2>::new_limited();
     let qoa_mono = QoaEncoder::<i16>::new(16_000, 1, 64_000).unwrap();
     let qoa_stereo = QoaEncoder::<i16>::new(44_100, 2, 176_400).unwrap();
+    let qoa_stereo_limited = QoaEncoder::<i16, 2>::new_limited(44_100, 2, 176_400).unwrap();
     let g722_decoder = G722Decoder::new(G722BitRate::Rate64000);
     let g722_encoder = G722Encoder::new();
     let sbc_decoder = SbcDecoder::new();
@@ -130,6 +133,12 @@ pub fn entries(data: Option<&Path>) -> Vec<Entry> {
             &ima_stereo,
         ),
         decoder(
+            "IMA ADPCM",
+            "44.1 kHz stereo, 2048-byte blocks, up to 2 channels",
+            &ima_stereo_limited,
+            2_048,
+        ),
+        decoder(
             "MS ADPCM",
             "44.1 kHz stereo, 2048-byte blocks",
             &ms_stereo,
@@ -137,8 +146,19 @@ pub fn entries(data: Option<&Path>) -> Vec<Entry> {
         ),
         encoder("MS ADPCM", "44.1 kHz stereo, 2048-byte blocks", &ms_stereo),
         decoder("QOA", "any, up to 8 channels", &qoa_decoder, 8 + 16 * 2),
+        decoder(
+            "QOA",
+            "any, up to 2 channels",
+            &qoa_stereo_decoder,
+            8 + 16 * 2,
+        ),
         encoder("QOA", "16 kHz mono", &qoa_mono),
         encoder("QOA", "44.1 kHz stereo", &qoa_stereo),
+        encoder(
+            "QOA",
+            "44.1 kHz stereo, up to 2 channels",
+            &qoa_stereo_limited,
+        ),
         flac::<1_152, 2>(flac_file),
         flac::<4_096, 1>(flac_file),
         flac::<4_096, 2>(flac_file),

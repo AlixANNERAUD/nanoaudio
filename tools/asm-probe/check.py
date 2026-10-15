@@ -55,15 +55,19 @@ FLAT = [
 
 INLINED = [
     "probe_qoa_decode",
+    "probe_qoa_decode_stereo",
 ]
 
 NO_WIDE_MULTIPLY_IN_LOOPS = [
     "probe_fixed_resample_linear_i16",
+    "probe_fixed_stream_resample_linear_i16",
 ]
 
 SCALAR = [
     "probe_qoa_decode",
     "probe_qoa_encode",
+    "probe_qoa_decode_stereo",
+    "probe_qoa_encode_stereo",
 ]
 
 WIDE_MULTIPLY = re.compile(r"__aeabi_lmul|__muldi3")
