@@ -1059,7 +1059,87 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
         self.skip -= skipped;
     }
 
+    fn frame_length(
+        input: &[u8],
+        header: &FrameHeader,
+        information: &FlacStreamInformation,
+    ) -> Option<usize> {
+        let end = header.sample + header.block_size as u64;
+        let limit = input.len().min(information.maximum_frame_size_bound() + 1);
+        let mut start = header.size + FRAME_FOOTER_SIZE;
+
+        while let Some(found) = input
+            .get(start..limit)?
+            .iter()
+            .position(|byte| *byte == 0xFF)
+        {
+            let position = start + found;
+
+            start = position + 1;
+
+            if *input.get(position + 1)? != input[1] {
+                continue;
+            }
+
+            match FrameHeader::parse(&input[position..], information) {
+                Ok(next) if next.sample == end => return Some(position),
+                Err(Error::Incomplete) => return None,
+                _ => {}
+            }
+        }
+
+        None
+    }
+
+    fn scan_frame(&self, input: &[u8]) -> Result<Option<(FrameHeader, usize)>> {
+        let Some(information) = self.information else {
+            return Ok(None);
+        };
+        let Ok(header) = FrameHeader::parse(input, &information) else {
+            return Ok(None);
+        };
+
+        match Self::frame_length(input, &header, &information) {
+            Some(length) => Ok(Some((header, length))),
+            None if !self.finishing && input.len() < information.maximum_frame_size_bound() => {
+                Err(Error::Incomplete)
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn skip_frame(&mut self, input: &[u8]) -> Result<Option<usize>> {
+        let Some(information) = self.information else {
+            return Ok(None);
+        };
+
+        match FrameHeader::parse(input, &information) {
+            Ok(header) if header.block_size as u64 <= self.skip => {}
+            _ => return Ok(None),
+        }
+
+        let Some((header, length)) = self.scan_frame(input)? else {
+            return Ok(None);
+        };
+
+        self.skip -= header.block_size as u64;
+        self.block_size = 0;
+        self.position = 0;
+        self.last = Some(Point {
+            byte: self.offset,
+            sample: header.sample,
+        });
+
+        Ok(Some(length))
+    }
+
     fn next_frame(&mut self, input: &[u8]) -> Result<usize> {
+        if self.skip != 0
+            && let Some(consumed) = self.skip_frame(input)?
+        {
+            return Ok(consumed);
+        }
+
         let consumed = self.decode_frame(input)?;
 
         if self.skip != 0 {
@@ -1087,6 +1167,18 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
             }
         }
 
+        if let Some((header, _)) = self.scan_frame(input)? {
+            let found = Point {
+                byte: self.offset,
+                sample: header.sample,
+            };
+
+            self.last = Some(found);
+            self.land(found)?;
+
+            return Ok(0);
+        }
+
         let consumed = match self.decode_frame(input) {
             Ok(consumed) => consumed,
             Err(Error::Incomplete) if !self.finishing => return Err(Error::Incomplete),
@@ -1101,6 +1193,14 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
             byte: self.offset,
             sample: self.last.map_or(0, |last| last.sample),
         };
+
+        self.land(found)?;
+        self.apply_skip();
+
+        Ok(consumed)
+    }
+
+    fn land(&mut self, found: Point) -> Result<()> {
         let search = self.search;
 
         if found.sample > search.target {
@@ -1118,9 +1218,8 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
 
         self.state = State::Frames;
         self.skip = search.target - found.sample;
-        self.apply_skip();
 
-        Ok(consumed)
+        Ok(())
     }
 
     fn end_of_search(&mut self) -> Error {
