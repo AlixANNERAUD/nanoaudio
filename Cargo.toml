@@ -10,20 +10,20 @@ repository = "https://github.com/AlixANNERAUD/nanoaudio"
 license = "MIT"
 
 [workspace.dependencies]
-nanoaudio-core = { version = "0.1.0", path = "crates/nanoaudio-core" }
+nanoaudio-core = { version = "0.1.1", path = "crates/nanoaudio-core" }
 nanoaudio-buffer = { version = "0.1.0", path = "crates/nanoaudio-buffer" }
-nanoaudio-dsp = { version = "0.1.0", path = "crates/nanoaudio-dsp" }
+nanoaudio-dsp = { version = "0.1.1", path = "crates/nanoaudio-dsp" }
 nanoaudio-analysis = { version = "0.1.0", path = "crates/nanoaudio-analysis" }
-nanoaudio-g711 = { version = "0.1.0", path = "crates/nanoaudio-g711" }
-nanoaudio-adpcm = { version = "0.1.0", path = "crates/nanoaudio-adpcm" }
-nanoaudio-qoa = { version = "0.1.0", path = "crates/nanoaudio-qoa" }
-nanoaudio-flac = { version = "0.1.0", path = "crates/nanoaudio-flac" }
-nanoaudio-g722 = { version = "0.1.0", path = "crates/nanoaudio-g722" }
-nanoaudio-sbc = { version = "0.1.0", path = "crates/nanoaudio-sbc" }
-nanoaudio-mp3 = { version = "0.1.0", path = "crates/nanoaudio-mp3" }
-nanoaudio-wav = { version = "0.1.0", path = "crates/nanoaudio-wav" }
-nanoaudio-aiff = { version = "0.1.0", path = "crates/nanoaudio-aiff" }
-nanoaudio-metadata = { version = "0.1.0", path = "crates/nanoaudio-metadata" }
+nanoaudio-g711 = { version = "0.1.1", path = "crates/nanoaudio-g711" }
+nanoaudio-adpcm = { version = "0.1.1", path = "crates/nanoaudio-adpcm" }
+nanoaudio-qoa = { version = "0.1.1", path = "crates/nanoaudio-qoa" }
+nanoaudio-flac = { version = "0.1.1", path = "crates/nanoaudio-flac" }
+nanoaudio-g722 = { version = "0.1.1", path = "crates/nanoaudio-g722" }
+nanoaudio-sbc = { version = "0.1.1", path = "crates/nanoaudio-sbc" }
+nanoaudio-mp3 = { version = "0.1.1", path = "crates/nanoaudio-mp3" }
+nanoaudio-wav = { version = "0.1.1", path = "crates/nanoaudio-wav" }
+nanoaudio-aiff = { version = "0.1.1", path = "crates/nanoaudio-aiff" }
+nanoaudio-metadata = { version = "0.1.1", path = "crates/nanoaudio-metadata" }
 nanoaudio-cpal = { version = "0.1.0", path = "crates/nanoaudio-cpal" }
 nanoaudio-web = { version = "0.1.0", path = "crates/nanoaudio-web" }
 nanomp3-core = { version = "0.2", default-features = false }
