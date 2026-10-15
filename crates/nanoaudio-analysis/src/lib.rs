@@ -11,6 +11,7 @@ mod level;
 mod measure;
 mod silence;
 mod stereo;
+mod voice;
 
 pub use ballistics::*;
 pub use bands::*;
@@ -24,3 +25,4 @@ pub use nanoaudio_dsp::{
 };
 pub use silence::*;
 pub use stereo::*;
+pub use voice::*;
