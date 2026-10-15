@@ -12,6 +12,11 @@ enum Codec {
     G711(G711),
 }
 
+/// A decoder for the sound data of an AIFF or AIFF-C file, producing interleaved samples of type `S`.
+///
+/// Feed it the bytes that follow [`AiffHeader::data_offset`]. Any [`Sample`] type works as output: PCM is converted from the format in the file, with 8-bit samples read as signed, and A-law and µ-law are decoded to 16-bit and then converted.
+///
+/// With [`Seek`], the returned [`SeekRequest::byte_offset`] counts from `data_offset`, not from the start of the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AiffDecoder<S: Sample = i16> {
     codec: Codec,
@@ -22,6 +27,7 @@ pub struct AiffDecoder<S: Sample = i16> {
 }
 
 impl<S: Sample> AiffDecoder<S> {
+    /// Creates a decoder for the encoding described by `header`.
     pub fn new(header: &AiffHeader) -> Result<Self> {
         let Configuration {
             sample_rate,

@@ -8,12 +8,15 @@ const BLOCK_HEADER_LENGTH: usize = 4;
 const STREAM_INFO_LENGTH: usize = 34;
 const SEEK_POINT_LENGTH: usize = 18;
 
+/// The `fLaC` marker that starts a FLAC stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Flac {
+    /// Where the marker is in the file.
     pub location: Location,
 }
 
 impl Flac {
+    /// Checks for the `fLaC` marker at file offset `offset`, which is also where `bytes` starts.
     pub fn parse(bytes: &[u8], offset: usize) -> Result<Self> {
         let marker = Window::new(bytes, offset).array::<MARKER_LENGTH>(offset)?;
 
@@ -26,6 +29,7 @@ impl Flac {
         })
     }
 
+    /// Returns a cursor over the metadata blocks that follow the marker.
     pub fn blocks(&self) -> FlacBlocks {
         FlacBlocks {
             position: self.location.end(),
@@ -34,6 +38,9 @@ impl Flac {
     }
 }
 
+/// A [`Cursor`] over the metadata blocks of a FLAC stream, returned by [`Flac::blocks`].
+///
+/// It stops after the block marked as last.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FlacBlocks {
     position: usize,
@@ -41,6 +48,7 @@ pub struct FlacBlocks {
 }
 
 impl FlacBlocks {
+    /// Returns the file offset of the next block header, which is where the audio frames start once the cursor is done.
     pub const fn position(&self) -> usize {
         self.position
     }
@@ -78,16 +86,26 @@ impl Cursor for FlacBlocks {
     }
 }
 
+/// The type of a FLAC metadata block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BlockType {
+    /// `STREAMINFO`, the stream parameters.
     StreamInfo,
+    /// `PADDING`.
     Padding,
+    /// `APPLICATION`, data for a third-party application.
     Application,
+    /// `SEEKTABLE`.
     SeekTable,
+    /// `VORBIS_COMMENT`, the tags.
     VorbisComment,
+    /// `CUESHEET`.
     CueSheet,
+    /// `PICTURE`.
     Picture,
+    /// A reserved block type, with its number.
     Reserved(u8),
+    /// The invalid block type 127.
     Invalid,
 }
 
@@ -107,51 +125,90 @@ impl From<u8> for BlockType {
     }
 }
 
+/// A FLAC metadata block, with as much of its data as the buffer given to the cursor held.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Block<'a> {
+    /// Block type.
     pub block_type: BlockType,
+    /// `true` for the last metadata block before the audio frames.
     pub last: bool,
+    /// Where the block data is in the file, header excluded.
     pub location: Location,
+    /// The part of the block data found in the buffer, which can be empty or partial.
     pub data: &'a [u8],
 }
 
+/// The content of a `STREAMINFO` block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StreamInfo {
+    /// Smallest block size in the stream, in samples per channel.
     pub minimum_block_size: u16,
+    /// Largest block size in the stream, in samples per channel.
     pub maximum_block_size: u16,
+    /// Smallest frame size in bytes, 0 when unknown.
     pub minimum_frame_size: u32,
+    /// Largest frame size in bytes, 0 when unknown.
     pub maximum_frame_size: u32,
+    /// Sample rate in Hz.
     pub sample_rate: u32,
+    /// Number of channels, from 1 to 8.
     pub channels: u8,
+    /// Bits per sample, from 4 to 32.
     pub bits_per_sample: u8,
+    /// Total samples per channel, 0 when unknown.
     pub total_samples: u64,
+    /// MD5 signature of the decoded audio, all zeros when unknown.
     pub md5: [u8; 16],
 }
 
+/// The parsed content of a FLAC metadata block, returned by [`Block::content`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum BlockContent<'a> {
+    /// Stream parameters.
     StreamInfo(StreamInfo),
+    /// Padding.
     Padding,
-    Application { identifier: [u8; 4], data: Location },
-    SeekTable { points: usize },
+    /// Application data.
+    Application {
+        /// Registered application identifier.
+        identifier: [u8; 4],
+        /// Where the application data is in the file.
+        data: Location,
+    },
+    /// A seek table, read with [`Block::seek_point`].
+    SeekTable {
+        /// Number of seek points.
+        points: usize,
+    },
+    /// Tags, walked with the [`VorbisComments`] cursor.
     VorbisComment(VorbisComments),
+    /// A cue sheet, not parsed.
     CueSheet,
+    /// An attached picture.
     Picture(Picture<'a>),
+    /// A reserved block type.
     Reserved,
 }
 
 impl<'a> Block<'a> {
+    /// Returns the same block with its data taken from `bytes`, a part of the file that starts at file offset `offset`.
+    ///
+    /// Use it after reading [`location`](Self::location) into a buffer of its own.
     pub fn within<'b>(&self, bytes: &'b [u8], offset: usize) -> Block<'b> {
         Block {
             data: Window::new(bytes, offset).available(self.location),
             ..*self
         }
     }
+    /// Returns `true` when [`data`](Self::data) holds the whole block.
     pub fn is_complete(&self) -> bool {
         self.data.len() == self.location.length
     }
 
+    /// Parses the block content from [`data`](Self::data), reading only what each type needs.
+    ///
+    /// Returns [`Error::Needs`] when the part needed is not in `data`.
     pub fn content(&self) -> Result<BlockContent<'a>> {
         match self.block_type {
             BlockType::StreamInfo => self.stream_info().map(BlockContent::StreamInfo),
@@ -183,6 +240,7 @@ impl<'a> Block<'a> {
         }
     }
 
+    /// Parses a `STREAMINFO` block.
     pub fn stream_info(&self) -> Result<StreamInfo> {
         if self.block_type != BlockType::StreamInfo || self.location.length < STREAM_INFO_LENGTH {
             return Err(Error::Invalid);
@@ -214,6 +272,7 @@ impl<'a> Block<'a> {
         })
     }
 
+    /// Parses a `PICTURE` block. Only the picture header needs to be in [`data`](Self::data), not the image.
     pub fn picture(&self) -> Result<Picture<'a>> {
         if self.block_type != BlockType::Picture {
             return Err(Error::Invalid);
@@ -272,6 +331,7 @@ impl<'a> Block<'a> {
         })
     }
 
+    /// Returns the seek point at `index` in a `SEEKTABLE` block, or [`Error::Invalid`] when `index` is past the end of the table.
     pub fn seek_point(&self, index: usize) -> Result<SeekPoint> {
         if self.block_type != BlockType::SeekTable {
             return Err(Error::Invalid);
@@ -304,14 +364,19 @@ impl<'a> Block<'a> {
     }
 }
 
+/// A point of a FLAC seek table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SeekPoint {
+    /// Number of the first sample in the target frame, `u64::MAX` for a placeholder.
     pub sample: u64,
+    /// Offset in bytes of the target frame, from the first audio frame.
     pub offset: u64,
+    /// Number of samples in the target frame.
     pub samples: u16,
 }
 
 impl SeekPoint {
+    /// Returns `true` for a placeholder point, which holds no position.
     pub const fn is_placeholder(&self) -> bool {
         self.sample == u64::MAX
     }
@@ -337,6 +402,7 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// A [`Cursor`] over the comments of a `VORBIS_COMMENT` block, each a `KEY=value` pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VorbisComments {
     location: Location,
@@ -345,6 +411,7 @@ pub struct VorbisComments {
 }
 
 impl VorbisComments {
+    /// Creates a cursor over the Vorbis comment block found at `location`.
     pub const fn new(location: Location) -> Self {
         Self {
             location,
@@ -353,10 +420,12 @@ impl VorbisComments {
         }
     }
 
+    /// Returns where the block data is in the file.
     pub const fn location(&self) -> Location {
         self.location
     }
 
+    /// Returns the vendor string, read from `bytes`, a part of the file that starts at file offset `offset`.
     pub fn vendor<'a>(&self, bytes: &'a [u8], offset: usize) -> Result<Text<'a>> {
         let window = Window::new(bytes, offset);
         let start = self.location.offset;
@@ -424,23 +493,29 @@ impl Cursor for VorbisComments {
     }
 }
 
+/// A Vorbis comment, with as much of its data as the buffer given to the cursor held.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VorbisComment<'a> {
+    /// Where the comment is in the file, length prefix excluded.
     pub location: Location,
+    /// The part of the comment found in the buffer, which can be empty or partial.
     pub data: &'a [u8],
 }
 
 impl<'a> VorbisComment<'a> {
+    /// Returns the same comment with its data taken from `bytes`, a part of the file that starts at file offset `offset`.
     pub fn within<'b>(&self, bytes: &'b [u8], offset: usize) -> VorbisComment<'b> {
         VorbisComment {
             data: Window::new(bytes, offset).available(self.location),
             ..*self
         }
     }
+    /// Returns `true` when [`data`](Self::data) holds the whole comment.
     pub fn is_complete(&self) -> bool {
         self.data.len() == self.location.length
     }
 
+    /// Returns the key, the part before `=`, such as `TITLE`.
     pub fn key(&self) -> Result<&'a [u8]> {
         match self.data.iter().position(|byte| *byte == b'=') {
             Some(index) => Ok(&self.data[..index]),
@@ -449,6 +524,7 @@ impl<'a> VorbisComment<'a> {
         }
     }
 
+    /// Returns the value, the UTF-8 text after `=`.
     pub fn value(&self) -> Result<Text<'a>> {
         let key = self.key()?;
 
@@ -459,6 +535,7 @@ impl<'a> VorbisComment<'a> {
         Ok(Text::new(Encoding::Utf8, &self.data[key.len() + 1..]))
     }
 
+    /// Returns where the value is in the file, to read a long value without the key.
     pub fn value_location(&self) -> Result<Location> {
         let key = self.key()?;
         let start = key.len() + 1;
@@ -469,6 +546,7 @@ impl<'a> VorbisComment<'a> {
         ))
     }
 
+    /// Returns the common field for the key, if it maps to one.
     pub fn field(&self) -> Option<Field> {
         Field::from_vorbis(self.key().ok()?)
     }

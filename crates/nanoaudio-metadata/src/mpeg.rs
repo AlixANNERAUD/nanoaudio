@@ -24,42 +24,67 @@ const BITRATES: [[u16; 15]; 5] = [
 
 const SAMPLE_RATES: [u32; 3] = [44_100, 48_000, 32_000];
 
+/// The MPEG audio version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MpegVersion {
+    /// MPEG-1, 32 to 48 kHz.
     Mpeg1,
+    /// MPEG-2, 16 to 24 kHz.
     Mpeg2,
+    /// MPEG-2.5, 8 to 12 kHz.
     Mpeg25,
 }
 
+/// The MPEG audio layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Layer {
+    /// Layer I (MP1).
     Layer1,
+    /// Layer II (MP2).
     Layer2,
+    /// Layer III (MP3).
     Layer3,
 }
 
+/// The channel mode of an MPEG audio frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChannelMode {
+    /// Two independent channels.
     Stereo,
+    /// Two channels coded together.
     JointStereo,
+    /// Two unrelated mono channels.
     DualChannel,
+    /// One channel.
     Mono,
 }
 
+/// The 4-byte header of an MPEG audio frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FrameHeader {
+    /// MPEG version.
     pub version: MpegVersion,
+    /// Layer.
     pub layer: Layer,
+    /// `true` when a 16-bit CRC follows the header.
     pub protected: bool,
+    /// Bitrate in bits per second.
     pub bitrate: u32,
+    /// Sample rate in Hz.
     pub sample_rate: u32,
+    /// `true` when the frame has one padding slot.
     pub padding: bool,
+    /// Channel mode.
     pub channel_mode: ChannelMode,
 }
 
 impl FrameHeader {
+    /// Length of the header in bytes.
     pub const LENGTH: usize = FRAME_HEADER_LENGTH;
 
+    /// Parses the frame header at file offset `offset`, which is also where `bytes` starts.
+    ///
+    /// Free-format streams return [`Error::Unsupported`].
     pub fn parse(bytes: &[u8], offset: usize) -> Result<Self> {
         let header = Window::new(bytes, offset).array::<FRAME_HEADER_LENGTH>(offset)?;
 
@@ -117,6 +142,7 @@ impl FrameHeader {
         })
     }
 
+    /// Returns the number of channels: 1 for mono, 2 otherwise.
     pub const fn channels(&self) -> u8 {
         match self.channel_mode {
             ChannelMode::Mono => 1,
@@ -124,6 +150,7 @@ impl FrameHeader {
         }
     }
 
+    /// Returns the number of samples per channel in a frame: 384, 576 or 1152.
     pub const fn samples_per_frame(&self) -> u32 {
         match (self.layer, self.version) {
             (Layer::Layer1, _) => 384,
@@ -132,6 +159,7 @@ impl FrameHeader {
         }
     }
 
+    /// Returns the length of the frame in bytes, header included.
     pub const fn frame_length(&self) -> usize {
         let padding = self.padding as usize;
         let bitrate = self.bitrate as usize;
@@ -147,6 +175,7 @@ impl FrameHeader {
         }
     }
 
+    /// Returns the length in bytes of the Layer III side information, 0 for the other layers.
     pub const fn side_information_length(&self) -> usize {
         match (self.layer, self.version, self.channel_mode) {
             (Layer::Layer3, MpegVersion::Mpeg1, ChannelMode::Mono) => 17,
@@ -157,29 +186,50 @@ impl FrameHeader {
         }
     }
 
+    /// Returns the offset from the start of the frame where a Xing or Info header would be.
     pub const fn xing_offset(&self) -> usize {
         FRAME_HEADER_LENGTH + 2 * self.protected as usize + self.side_information_length()
     }
 }
 
+/// The LAME extension that follows a Xing or Info header, written by LAME 3.90 and later and by FFmpeg.
+///
+/// Gains and the peak are kept in their stored form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LameHeader {
+    /// Encoder name and version, such as `LAME3.100`.
     pub encoder: [u8; 9],
+    /// Revision of the extension format.
     pub revision: u8,
+    /// VBR method, as stored.
     pub vbr_method: u8,
+    /// Lowpass filter frequency in Hz, 0 when unknown.
     pub lowpass_frequency: u32,
+    /// Peak signal amplitude, as stored.
     pub peak: u32,
+    /// Track replay gain, as stored.
     pub track_gain: u16,
+    /// Album replay gain, as stored.
     pub album_gain: u16,
+    /// Encoding flags and ATH type, as stored.
     pub encoding_flags: u8,
+    /// Average, minimal or constant bitrate in kbit/s, depending on the VBR method; 255 means 255 or more.
     pub bitrate: u8,
+    /// Samples added by the encoder at the start, per channel.
     pub encoder_delay: u16,
+    /// Samples added by the encoder at the end, per channel.
     pub encoder_padding: u16,
+    /// Noise shaping, stereo mode and source sample rate, as stored.
     pub miscellaneous: u8,
+    /// Gain applied by MP3Gain, in steps of 1.5 dB.
     pub mp3_gain: u8,
+    /// Surround information and preset, as stored.
     pub preset: u16,
+    /// Length of the audio stream in bytes, this frame included.
     pub music_length: u32,
+    /// CRC-16 of the audio data.
     pub music_crc: u16,
+    /// CRC-16 of the first 190 bytes of this frame.
     pub crc: u16,
 }
 
@@ -248,18 +298,27 @@ fn lame_version_has_extension(encoder: &[u8; 9]) -> bool {
     (major - b'0', minor) >= (3, 90)
 }
 
+/// A Xing or Info header, found in the first frame of most VBR and some CBR MP3 files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct XingHeader<'a> {
+    /// The header of the frame holding it.
     pub frame: FrameHeader,
+    /// `true` for an `Info` header, written for CBR files, `false` for `Xing`.
     pub info: bool,
+    /// Number of audio frames.
     pub frames: Option<u32>,
+    /// Size of the audio stream in bytes.
     pub bytes: Option<u32>,
+    /// The table of contents: 100 positions, each a fraction of [`bytes`](Self::bytes) in 1/256.
     pub table: Option<&'a [u8; XING_TABLE_LENGTH]>,
+    /// Encoder quality, from 0 (best) to 100.
     pub quality: Option<u32>,
+    /// The LAME extension, when present.
     pub lame: Option<LameHeader>,
 }
 
 impl XingHeader<'_> {
+    /// Returns the number of samples per channel, without the encoder delay and padding when the LAME extension gives them.
     pub fn samples(&self) -> Option<u64> {
         let total = self.frames? as u64 * self.frame.samples_per_frame() as u64;
         let trimmed = self.lame.map_or(0, |lame| {
@@ -269,6 +328,9 @@ impl XingHeader<'_> {
         Some(total.saturating_sub(trimmed))
     }
 
+    /// Returns an estimate of the byte position of `sample` from the table of contents, counted from the start of this frame.
+    ///
+    /// Returns `None` without a table, a frame count or a byte count.
     pub fn seek(&self, sample: u64) -> Option<usize> {
         let table = self.table?;
         let bytes = self.bytes? as u128;
@@ -289,25 +351,38 @@ impl XingHeader<'_> {
     }
 }
 
+/// A VBRI header, written by the Fraunhofer encoder in the first frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VbriHeader<'a> {
+    /// The header of the frame holding it.
     pub frame: FrameHeader,
+    /// Version of the VBRI header, always 1.
     pub version: u16,
+    /// Encoder delay, as stored.
     pub delay: u16,
+    /// Encoder quality.
     pub quality: u16,
+    /// Size of the audio in bytes.
     pub bytes: u32,
+    /// Number of audio frames.
     pub frames: u32,
+    /// Scale factor applied to the table entries.
     pub scale: u16,
+    /// Size of a table entry in bytes, from 1 to 4.
     pub entry_size: u16,
+    /// Number of frames covered by each table entry.
     pub frames_per_entry: u16,
+    /// The raw table of contents; read entries with [`entry`](Self::entry).
     pub table: &'a [u8],
 }
 
 impl VbriHeader<'_> {
+    /// Returns the number of samples per channel.
     pub fn samples(&self) -> Option<u64> {
         Some(self.frames as u64 * self.frame.samples_per_frame() as u64)
     }
 
+    /// Returns the number of table entries.
     pub fn entries(&self) -> usize {
         self.table
             .len()
@@ -315,6 +390,7 @@ impl VbriHeader<'_> {
             .unwrap_or(0)
     }
 
+    /// Returns the size in bytes of the frames covered by the entry at `index`, multiplied by [`scale`](Self::scale).
     pub fn entry(&self, index: usize) -> Option<u64> {
         let size = self.entry_size as usize;
         let start = index.checked_mul(size)?;
@@ -326,6 +402,7 @@ impl VbriHeader<'_> {
         Some(value * self.scale as u64)
     }
 
+    /// Returns an estimate of the byte position of `sample` from the table, counted from the start of this frame.
     pub fn seek(&self, sample: u64) -> Option<usize> {
         let samples_per_frame = self.frame.samples_per_frame() as u64;
         let frames_per_entry = self.frames_per_entry as u64;
@@ -351,14 +428,22 @@ impl VbriHeader<'_> {
     }
 }
 
+/// A VBR header found in the first MPEG audio frame: Xing, Info or VBRI.
+///
+/// It gives the duration and a seek table without reading the whole stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum VbrHeader<'a> {
+    /// A Xing or Info header.
     Xing(XingHeader<'a>),
+    /// A VBRI header.
     Vbri(VbriHeader<'a>),
 }
 
 impl<'a> VbrHeader<'a> {
+    /// Parses the VBR header of the frame at file offset `offset`, which is also where `bytes` starts.
+    ///
+    /// Returns `None` when the frame has no VBR header or is not Layer III, and [`Error::Needs`] when `bytes` does not hold the whole frame.
     pub fn parse(bytes: &'a [u8], offset: usize) -> Result<Option<Self>> {
         let frame = FrameHeader::parse(bytes, offset)?;
 
@@ -376,6 +461,7 @@ impl<'a> VbrHeader<'a> {
         Ok(parse_vbri(frame, data).map(VbrHeader::Vbri))
     }
 
+    /// Returns the header of the frame holding the VBR header.
     pub const fn frame(&self) -> FrameHeader {
         match self {
             VbrHeader::Xing(xing) => xing.frame,
@@ -383,6 +469,7 @@ impl<'a> VbrHeader<'a> {
         }
     }
 
+    /// Returns the number of audio frames, when known.
     pub fn frames(&self) -> Option<u32> {
         match self {
             VbrHeader::Xing(xing) => xing.frames,
@@ -390,6 +477,7 @@ impl<'a> VbrHeader<'a> {
         }
     }
 
+    /// Returns the size of the audio in bytes, when known.
     pub fn bytes(&self) -> Option<u32> {
         match self {
             VbrHeader::Xing(xing) => xing.bytes,
@@ -397,6 +485,7 @@ impl<'a> VbrHeader<'a> {
         }
     }
 
+    /// Returns the number of samples per channel, when known.
     pub fn samples(&self) -> Option<u64> {
         match self {
             VbrHeader::Xing(xing) => xing.samples(),
@@ -404,6 +493,7 @@ impl<'a> VbrHeader<'a> {
         }
     }
 
+    /// Returns an estimate of the byte position of `sample`, counted from the start of the frame holding the VBR header.
     pub fn seek(&self, sample: u64) -> Option<usize> {
         match self {
             VbrHeader::Xing(xing) => xing.seek(sample),
@@ -411,6 +501,7 @@ impl<'a> VbrHeader<'a> {
         }
     }
 
+    /// Returns the LAME extension, only found after a Xing or Info header.
     pub fn lame(&self) -> Option<LameHeader> {
         match self {
             VbrHeader::Xing(xing) => xing.lame,

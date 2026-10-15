@@ -8,12 +8,17 @@ const SOUND_HEADER_SIZE: usize = 8;
 const EXTENDED_EXPONENT_BIAS: i32 = 16_383;
 const EXTENDED_MANTISSA_BITS: i32 = 63;
 
+/// How the sound data of an AIFF or AIFF-C file is encoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AiffEncoding {
+    /// Big-endian PCM: plain AIFF, AIFF-C `NONE` and `twos`, and 32-bit float (`fl32`).
     BigEndian,
+    /// Little-endian PCM, AIFF-C `sowt`.
     LittleEndian,
+    /// G.711 A-law (`alaw`), one byte per sample.
     ALaw,
+    /// G.711 µ-law (`ulaw`), one byte per sample.
     MuLaw,
 }
 
@@ -26,11 +31,18 @@ impl AiffEncoding {
     }
 }
 
+/// The format and the location of the sound data of an AIFF or AIFF-C file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AiffHeader {
+    /// Sample rate and channel count, with the sample format of the file for PCM, or `I16` for A-law and µ-law.
+    ///
+    /// Sample sizes are rounded up to whole bytes, so 12-bit audio reads as `I16`. 8-bit AIFF samples are signed but reported as `U8`, and the decoder converts them.
     pub configuration: Configuration,
+    /// How the sound data is encoded.
     pub encoding: AiffEncoding,
+    /// Offset in bytes of the first byte of sound data in the `SSND` chunk, from the start of the file.
     pub data_offset: usize,
+    /// Size in bytes of the sound data, limited to the frame count declared by the `COMM` chunk.
     pub data_size: u32,
 }
 
@@ -42,6 +54,13 @@ struct Common {
 }
 
 impl AiffHeader {
+    /// Parses the `FORM` header and reads the `COMM` and `SSND` chunks, in whichever order they come.
+    ///
+    /// `bytes` is the start of the file and does not need to hold the whole of it: parsing stops once it has read `COMM` and the start of `SSND`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Incomplete`] when `bytes` ends before both chunks are read, [`Error::InvalidHeader`] when the file is not a valid AIFF or AIFF-C file, and [`Error::UnsupportedFormat`] for a compression type or sample size the decoder does not handle.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let header = bytes.get(..FORM_HEADER_SIZE).ok_or(Error::Incomplete)?;
 
@@ -124,10 +143,12 @@ impl AiffHeader {
         }
     }
 
+    /// Returns the size in bytes of one frame of sound data, all channels included.
     pub fn frame_size(&self) -> usize {
         self.configuration.channels as usize * self.encoding.sample_size(self.configuration.format)
     }
 
+    /// Returns the number of frames in the sound data, computed from [`data_size`](Self::data_size).
     pub fn frames(&self) -> usize {
         self.data_size as usize / self.frame_size()
     }

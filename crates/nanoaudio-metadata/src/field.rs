@@ -1,27 +1,52 @@
+/// A common tag field, to read the same information from ID3v2 frames, Vorbis comments, RIFF `INFO` entries and AIFF chunks.
+///
+/// Each format maps its own keys to these fields, for example `TIT2` in ID3v2.3, `TITLE` in a Vorbis comment, `INAM` in RIFF and `NAME` in AIFF all map to [`Field::Title`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Field {
+    /// Title of the track.
     Title,
+    /// Subtitle or description refinement.
     Subtitle,
+    /// Lead artist or performer.
     Artist,
+    /// Album title.
     Album,
+    /// Artist of the whole album.
     AlbumArtist,
+    /// Track number, sometimes written as `number/total`.
     TrackNumber,
+    /// Disc number, sometimes written as `number/total`.
     DiscNumber,
+    /// Recording date or year.
     Date,
+    /// Genre.
     Genre,
+    /// Comment.
     Comment,
+    /// Composer.
     Composer,
+    /// Lyricist or text writer.
     Lyricist,
+    /// Conductor.
     Conductor,
+    /// Publisher or label.
     Publisher,
+    /// Copyright notice.
     Copyright,
+    /// Software or settings used to encode the file.
     Encoder,
+    /// Person or organisation that encoded the file.
     EncodedBy,
+    /// Content group.
     Grouping,
+    /// Beats per minute.
     Bpm,
+    /// International Standard Recording Code.
     Isrc,
+    /// Unsynchronised lyrics.
     Lyrics,
+    /// Language of the lyrics or text.
     Language,
 }
 
@@ -138,10 +163,12 @@ fn find(table: &[(&[u8], Field)], key: &[u8]) -> Option<Field> {
 }
 
 impl Field {
+    /// Returns the field for an ID3v2 frame identifier, with three letters for ID3v2.2 and four otherwise.
     pub fn from_id3v2(identifier: &[u8]) -> Option<Self> {
         find(ID3V2, identifier)
     }
 
+    /// Returns the field for a Vorbis comment key, ignoring ASCII case.
     pub fn from_vorbis(key: &[u8]) -> Option<Self> {
         VORBIS
             .iter()
@@ -149,14 +176,17 @@ impl Field {
             .map(|(_, field)| *field)
     }
 
+    /// Returns the field for a RIFF `INFO` entry identifier.
     pub fn from_riff_info(identifier: &[u8]) -> Option<Self> {
         find(RIFF_INFO, identifier)
     }
 
+    /// Returns the field for an AIFF text chunk identifier: `NAME`, `AUTH`, `ANNO` or `(c) `.
     pub fn from_aiff(identifier: &[u8]) -> Option<Self> {
         find(AIFF, identifier)
     }
 
+    /// Returns the ID3v2 frame identifier for this field in the given major version, such as `TDRC` for [`Field::Date`] in ID3v2.4 and `TYER` in ID3v2.3.
     pub fn id3v2_identifier(self, major_version: u8) -> Option<&'static [u8]> {
         ID3V2
             .iter()
@@ -168,6 +198,7 @@ impl Field {
             .map(|(identifier, _)| *identifier)
     }
 
+    /// Returns the usual Vorbis comment key for this field, such as `TITLE`.
     pub fn vorbis_key(self) -> &'static [u8] {
         VORBIS
             .iter()
