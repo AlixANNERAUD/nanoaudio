@@ -49,6 +49,12 @@ pub fn probe_fixed_volume_i32(samples: &mut [i32], volume: u16) {
 
 #[inline(never)]
 #[no_mangle]
+pub fn probe_fixed_mix_i32(output: &mut [i32], input: &[i32], volume: u16) -> usize {
+    mix_using::<Fixed, i32>(output, input, Volume::from_raw(volume))
+}
+
+#[inline(never)]
+#[no_mangle]
 pub fn probe_fixed_stream_i16(input: &[i16], output: &mut [i16], volume: u16) -> usize {
     match samples_using::<Fixed, i16>(input, 2) {
         Ok(stream) => stream
