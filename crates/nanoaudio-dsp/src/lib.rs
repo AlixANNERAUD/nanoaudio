@@ -8,6 +8,7 @@ mod convert;
 mod dither;
 mod mixer;
 mod representation;
+mod resample;
 mod stream;
 mod volume;
 
@@ -16,5 +17,6 @@ pub use convert::*;
 pub use dither::*;
 pub use mixer::*;
 pub use representation::*;
+pub use resample::*;
 pub use stream::*;
 pub use volume::*;

@@ -57,6 +57,10 @@ INLINED = [
     "probe_qoa_decode",
 ]
 
+NO_WIDE_MULTIPLY_IN_LOOPS = [
+    "probe_fixed_resample_linear_i16",
+]
+
 SCALAR = [
     "probe_qoa_decode",
     "probe_qoa_encode",
@@ -248,7 +252,7 @@ def analyse(name, assembly, opt_level):
         total = sum(len(instructions(bodies[member])) for member in reached)
         sizes = [len(instructions(body)) for member in reached for body in loops(bodies[member])]
         report.append("{:<8} {:<26} instructions {:>4}  loops {}".format(name, function, total, sizes))
-    expected = set(CALL_FREE + HELIUM + FIXED_I24 + FLAT + INLINED + SCALAR)
+    expected = set(CALL_FREE + HELIUM + FIXED_I24 + FLAT + INLINED + SCALAR + NO_WIDE_MULTIPLY_IN_LOOPS)
     for function in sorted(expected - set(probes)):
         failures.append(name + ": missing " + function)
     for function in FIXED_NARROW:
@@ -261,6 +265,11 @@ def analyse(name, assembly, opt_level):
         lines = [line for member in closure(bodies, function) for line in bodies[member]]
         if any(WIDE_MULTIPLY.search(line) for line in lines):
             failures.append(name + ": 64-bit multiply in " + function)
+    for function in NO_WIDE_MULTIPLY_IN_LOOPS:
+        for member in closure(bodies, function):
+            for body in loops(bodies[member]):
+                if any(WIDE_MULTIPLY.search(line) for line in body):
+                    failures.append(name + ": 64-bit multiply in a loop of " + function)
     for function in FLAT:
         for member in closure(bodies, function):
             if nested(bodies[member]):

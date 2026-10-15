@@ -1,6 +1,6 @@
 # nanoaudio-dsp
 
-PCM format conversion, volume, mixing and single-pass pipelines, in fixed or floating point. It is `no_std` and does not allocate.
+PCM format conversion, volume, mixing, sample rate conversion and single-pass pipelines, in fixed or floating point. It is `no_std` and does not allocate.
 
 It is part of [nanoaudio](https://github.com/AlixANNERAUD/nanoaudio#readme), and can be used on its own:
 
@@ -23,6 +23,25 @@ let frames = source(&music, Format::I16, 2)
     .write_bytes(&mut output, Format::I16);
 
 assert_eq!(frames, 1024);
+```
+
+A `Resampler` converts the sample rate, with linear interpolation or a windowed-sinc filter, and keeps its place between buffers:
+
+```rust
+use nanoaudio_core::Format;
+use nanoaudio_dsp::{Resampler, Sinc, Stream, source};
+
+let mut resampler = Resampler::<Sinc>::new(2, 44_100, 48_000).unwrap();
+let music = [0u8; 4 * 441];
+let mut output = [0f32; 2 * 480];
+
+let frames = source(&music, Format::I16, 2)
+    .unwrap()
+    .resample(&mut resampler)
+    .unwrap()
+    .write_samples(&mut output);
+
+assert_eq!(frames, 480);
 ```
 
 ## License
