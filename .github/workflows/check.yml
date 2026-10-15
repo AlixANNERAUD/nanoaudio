@@ -22,6 +22,7 @@ jobs:
       rust: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rust == 'true' }}
       asm: ${{ github.event_name != 'pull_request' || steps.filter.outputs.asm == 'true' }}
       bench: ${{ github.event_name != 'pull_request' || steps.filter.outputs.bench == 'true' }}
+      emu: ${{ github.event_name != 'pull_request' || steps.filter.outputs.emu == 'true' }}
       desktop: ${{ github.event_name != 'pull_request' || steps.filter.outputs.desktop == 'true' }}
       web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.web == 'true' }}
     steps:
@@ -53,6 +54,10 @@ jobs:
               - *shared
               - 'crates/**'
               - 'tools/bench/**'
+            emu:
+              - *shared
+              - 'crates/**'
+              - 'tools/emu/**'
             desktop:
               - *shared
               - 'crates/nanoaudio-cpal/**'
@@ -358,6 +363,31 @@ jobs:
 
       - name: Check the Script
         run: python3 -m py_compile tools/bench/run.py
+
+  emu:
+    needs: changes
+    if: needs.changes.outputs.emu == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv6m-none-eabi, thumbv7em-none-eabihf, thumbv8m.main-none-eabihf, riscv32imc-unknown-none-elf
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/emu -> ../../target/emu
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install Unicorn
+        run: |
+          python3 -m venv tools/emu/.venv
+          tools/emu/.venv/bin/pip install --quiet -r tools/emu/requirements.txt
+
+      - name: Count Instructions
+        run: tools/emu/.venv/bin/python tools/emu/run.py | tee -a "$GITHUB_STEP_SUMMARY"
 
   miri:
     needs: changes

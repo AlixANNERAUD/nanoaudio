@@ -2,6 +2,7 @@ import argparse
 import bisect
 import math
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -71,10 +72,6 @@ class Case:
     def decodes(self):
         return self.name.endswith("decode") or " decode" in self.name
 
-    @property
-    def encodes(self):
-        return " encode" in self.name
-
 
 def signal(rate, channels, frames):
     chords = [
@@ -108,6 +105,27 @@ def fixture(crate, name, limit=None):
     return data[:limit] if limit else data
 
 
+def mpeg_frames(data):
+    bit_rates = (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320)
+    sample_rates = (44_100, 48_000, 32_000)
+    offset = 0
+    frames = []
+    while offset + 40 <= len(data) and data[offset] == 0xFF and data[offset + 1] & 0xFE == 0xFA:
+        header = data[offset + 2]
+        length = 144_000 * bit_rates[header >> 4] // sample_rates[(header >> 2) & 3] + ((header >> 1) & 1)
+        if offset + length > len(data):
+            break
+        tagged = data[offset + 36 : offset + 40] in (b"Info", b"Xing")
+        frames.append((offset + length, tagged))
+        offset += length
+    return frames
+
+
+def mp3(crate, name, count):
+    frames = mpeg_frames(fixture(crate, name))[:count]
+    return fixture(crate, name, frames[-1][0])
+
+
 CASES = [
     Case(0, "codec", "G.711 µ-law encode", "sample", 1, 8_000, 1, ("signal", 8_000, 1, 2_048)),
     Case(1, "codec", "G.711 µ-law decode", "sample", 1, 8_000, 1, ("encoded",), encoder=0),
@@ -126,7 +144,7 @@ CASES = [
     Case(14, "codec", "SBC encode, mSBC", "frame (120)", 120, 16_000, 1, ("file", "nanoaudio-sbc", "msbc.pcm", 240 * 8)),
     Case(15, "codec", "SBC decode, mSBC", "frame (120)", 120, 16_000, 1, ("file", "nanoaudio-sbc", "msbc.sbc", 57 * 8), reference=("nanoaudio-sbc", "msbc.pcm")),
     Case(16, "codec", "FLAC decode, 44.1 kHz stereo 16-bit", "block (4096)", 4_096, 44_100, 2, ("file", "nanoaudio-flac", "flac_stereo_16.flac", None), reference=("nanoaudio-flac", "flac_stereo_16.bin")),
-    Case(17, "codec", "MP3 decode, 44.1 kHz stereo 128 kbit/s", "frame (1152)", 1_152, 44_100, 2, ("file", "nanoaudio-mp3", "gapless_cbr.mp3", 418 * 4)),
+    Case(17, "codec", "MP3 decode, 44.1 kHz stereo 128 kbit/s", "frame (1152)", 1_152, 44_100, 2, ("mp3", "nanoaudio-mp3", "gapless_cbr.mp3", 6)),
     Case(32, "dsp", "Convert i16 to f32", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
     Case(33, "dsp", "Convert f32 to i16, dithered", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
     Case(34, "dsp", "Volume, fixed", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
@@ -135,18 +153,18 @@ CASES = [
     Case(37, "dsp", "Mix, float", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
     Case(38, "dsp", "Pipeline (volume, upmix, mix), fixed", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
     Case(39, "dsp", "Pipeline (volume, upmix, mix), float", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
-    Case(40, "dsp", "Resample 44.1 to 48 kHz, linear, fixed", "input frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
-    Case(41, "dsp", "Resample 44.1 to 48 kHz, linear, float", "input frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
-    Case(42, "dsp", "Resample 44.1 to 48 kHz, sinc, fixed", "input frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
-    Case(43, "dsp", "Resample 44.1 to 48 kHz, sinc, float", "input frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
-    Case(44, "dsp", "Resample 48 to 16 kHz, sinc, fixed", "input frame", 1, 48_000, 2, ("signal", 48_000, 2, 1_024)),
-    Case(45, "dsp", "Resample 48 to 16 kHz, sinc, float", "input frame", 1, 48_000, 2, ("signal", 48_000, 2, 1_024)),
+    Case(40, "dsp", "Resample 44.1 to 48 kHz, linear, fixed", "input frame", 1, 44_100, 2, ("signal", 44_100, 2, 512)),
+    Case(41, "dsp", "Resample 44.1 to 48 kHz, linear, float", "input frame", 1, 44_100, 2, ("signal", 44_100, 2, 512)),
+    Case(42, "dsp", "Resample 44.1 to 48 kHz, sinc, fixed", "input frame", 1, 44_100, 2, ("signal", 44_100, 2, 512)),
+    Case(43, "dsp", "Resample 44.1 to 48 kHz, sinc, float", "input frame", 1, 44_100, 2, ("signal", 44_100, 2, 512)),
+    Case(44, "dsp", "Resample 48 to 16 kHz, sinc, fixed", "input frame", 1, 48_000, 2, ("signal", 48_000, 2, 512)),
+    Case(45, "dsp", "Resample 48 to 16 kHz, sinc, float", "input frame", 1, 48_000, 2, ("signal", 48_000, 2, 512)),
     Case(64, "analysis", "Level meter, fixed", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
     Case(65, "analysis", "Level meter, float", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
     Case(66, "analysis", "Ballistic meter (PPM), fixed", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
     Case(67, "analysis", "Ballistic meter (PPM), float", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
-    Case(68, "analysis", "10 octave bands, fixed", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
-    Case(69, "analysis", "10 octave bands, float", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
+    Case(68, "analysis", "10 octave bands, fixed", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 512)),
+    Case(69, "analysis", "10 octave bands, float", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 512)),
     Case(70, "analysis", "DTMF detector, fixed", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
     Case(71, "analysis", "DTMF detector, float", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
     Case(72, "analysis", "Stereo meter, fixed", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
@@ -157,6 +175,28 @@ CASES = [
     Case(77, "analysis", "Spectrum, 256 points, fixed", "block (256)", 256, 44_100, 2, ("signal", 44_100, 2, 1_024)),
     Case(78, "analysis", "Spectrum, 256 points, float", "block (256)", 256, 44_100, 2, ("signal", 44_100, 2, 1_024)),
 ]
+
+
+def readable(name):
+    if not name.startswith("_R"):
+        return name
+    name = re.sub(r"C[sh][0-9A-Za-z]*_", "", name[2:])
+    parts = []
+    index = 0
+    while index < len(name):
+        match = re.match(r"[1-9][0-9]*", name[index:])
+        if not match:
+            index += 1
+            continue
+        index += len(match.group())
+        if index < len(name) and name[index] == "_":
+            index += 1
+        length = int(match.group())
+        part = name[index : index + length]
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", part) and not re.fullmatch(r"[A-Z]+[0-9]*_", part):
+            parts.append(part)
+        index += length
+    return "::".join(parts) or name
 
 
 def build(targets, opt_level):
@@ -295,6 +335,8 @@ def execute(binary, case, payload, profile):
 
 
 def frames(case, payload, output):
+    if case.source[0] == "mp3":
+        return 1_152 * sum(1 for _, tagged in mpeg_frames(payload) if not tagged)
     if case.decodes:
         return len(output) // 2 // case.channels
     return len(payload) // 2 // case.channels
@@ -328,6 +370,8 @@ def payload_for(case, outputs_by_case, target):
         return signal(*case.source[1:])
     if kind == "file":
         return fixture(*case.source[1:])
+    if kind == "mp3":
+        return mp3(*case.source[1:])
     return outputs_by_case[(case.encoder, target.key)]
 
 
@@ -421,7 +465,7 @@ def main():
     for name, label, top in profiles:
         print(f"\n{name} on {label}, instructions per unit:")
         for function, count in top:
-            print(f"  {number(count):>12}  {function}")
+            print(f"  {number(count):>12}  {readable(function)}")
 
     print(f"\nMeasured in {time.monotonic() - started:.0f} s.", file=sys.stderr)
 

@@ -76,10 +76,7 @@ fn input() -> &'static [u8] {
 fn input_samples() -> &'static [i16] {
     let length = black_box(unsafe { LENGTH }) as usize / 2;
     unsafe {
-        core::slice::from_raw_parts(
-            (&raw const INPUT).cast::<i16>(),
-            length.min(INPUT_SIZE / 2),
-        )
+        core::slice::from_raw_parts((&raw const INPUT).cast::<i16>(), length.min(INPUT_SIZE / 2))
     }
 }
 
