@@ -1,5 +1,7 @@
-use nanoaudio_core::codec::{Decoder, Encoder, Progress};
+use nanoaudio_core::codec::{Decoder, Encoder, Progress, Seek, SeekRequest};
 use nanoaudio_core::{Configuration, Error, Format, Result, Sample};
+
+use crate::{discard, seek_block};
 
 const ADAPTATIONS: [i32; 16] = [
     230, 230, 230, 230, 307, 409, 512, 614, 768, 614, 512, 409, 307, 230, 230, 230,
@@ -141,6 +143,7 @@ pub struct MsAdpcm {
     block_align: u16,
     samples_per_block: u16,
     coefficients: MsAdpcmCoefficients,
+    skip: usize,
 }
 
 impl MsAdpcm {
@@ -206,6 +209,7 @@ impl MsAdpcm {
             block_align,
             samples_per_block,
             coefficients,
+            skip: 0,
         })
     }
 
@@ -401,7 +405,26 @@ impl MsAdpcm {
             progress.produced += block_samples;
         }
 
+        if self.skip != 0 {
+            progress.produced = discard(output, progress.produced, &mut self.skip);
+        }
+
         Ok(progress)
+    }
+}
+
+impl Seek for MsAdpcm {
+    fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
+        let (request, skip) = seek_block(
+            frame,
+            self.channels,
+            self.block_align,
+            self.samples_per_block(),
+        )?;
+
+        self.skip = skip;
+
+        Ok(request)
     }
 }
 

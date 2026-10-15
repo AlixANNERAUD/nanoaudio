@@ -3,7 +3,7 @@
 
 use core::marker::PhantomData;
 
-use nanoaudio_core::codec::{Decoder, Encoder, Progress};
+use nanoaudio_core::codec::{Decoder, Encoder, Progress, Seek, SeekRequest};
 use nanoaudio_core::{Configuration, Error, MAXIMUM_CHANNELS, Result, Sample};
 
 pub const QOA_SLICE_LENGTH: usize = 20;
@@ -146,6 +146,7 @@ pub struct QoaDecoder<S: Sample = i16> {
     frame_remaining: usize,
     lms: [Lms; MAXIMUM_CHANNELS],
     finishing: bool,
+    skip: usize,
     sample: PhantomData<S>,
 }
 
@@ -160,6 +161,7 @@ impl<S: Sample> QoaDecoder<S> {
             frame_remaining: 0,
             lms: [Lms::INITIAL; MAXIMUM_CHANNELS],
             finishing: false,
+            skip: 0,
             sample: PhantomData,
         }
     }
@@ -290,6 +292,16 @@ impl<S: Sample> QoaDecoder<S> {
             self.remaining -= length as u32;
         }
 
+        let mut produced = length * channels;
+
+        if self.skip != 0 {
+            let discarded = self.skip.min(length);
+
+            output.copy_within(discarded * channels..produced, 0);
+            self.skip -= discarded;
+            produced -= discarded * channels;
+        }
+
         if self.frame_remaining == 0 {
             self.stage = if !self.is_streaming() && self.remaining == 0 {
                 Stage::End
@@ -298,7 +310,7 @@ impl<S: Sample> QoaDecoder<S> {
             };
         }
 
-        Some(Progress::new(size, length * channels))
+        Some(Progress::new(size, produced))
     }
 
     fn step(&mut self, input: &[u8], output: &mut [S]) -> Result<Option<Progress>> {
@@ -360,6 +372,60 @@ impl<S: Sample> Decoder for QoaDecoder<S> {
         }
 
         Ok(progress)
+    }
+}
+
+impl<S: Sample> Seek for QoaDecoder<S> {
+    fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
+        let total = match self.total {
+            Some(total) if self.channels != 0 => total,
+            _ if frame == 0 => {
+                self.reset();
+
+                return Ok(SeekRequest::default());
+            }
+            _ => return Err(Error::Incomplete),
+        };
+
+        let streaming = total == 0;
+
+        if !streaming && frame > total as u64 {
+            return Err(Error::InvalidParameter);
+        }
+
+        let length = QOA_FRAME_LENGTH as u64;
+        let index = frame / length;
+        let mut skip = (frame % length) as usize;
+        let mut byte_offset = index
+            .checked_mul(qoa_frame_size(self.channels, QOA_FRAME_LENGTH) as u64)
+            .and_then(|offset| offset.checked_add(FILE_HEADER_SIZE as u64))
+            .ok_or(Error::InvalidParameter)?;
+
+        self.frame_remaining = 0;
+        self.finishing = false;
+
+        if !streaming && frame == total as u64 {
+            if skip != 0 {
+                byte_offset += qoa_frame_size(self.channels, skip) as u64;
+            }
+
+            skip = 0;
+            self.remaining = 0;
+            self.stage = Stage::End;
+        } else {
+            if !streaming {
+                self.remaining = total - (index * length) as u32;
+            }
+
+            self.stage = Stage::FrameHeader;
+        }
+
+        self.skip = skip;
+
+        Ok(SeekRequest {
+            byte_offset,
+            skip_frames: skip as u32,
+        })
     }
 }
 

@@ -45,3 +45,18 @@ pub trait Encoder {
 
     fn encode(&mut self, input: &[Self::Sample], output: &mut [u8]) -> Result<Progress>;
 }
+
+/// Where to resume feeding input after a seek.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct SeekRequest {
+    /// Byte offset to resume from, counted from the first byte the decoder was ever fed: the start of the sound data for WAV and AIFF, the start of the file for QOA.
+    pub byte_offset: u64,
+    /// Frames the decoder drops by itself after resuming, so the next frame produced is the requested one; reported for information only.
+    pub skip_frames: u32,
+}
+
+/// Decoders that can jump to an arbitrary frame.
+pub trait Seek {
+    /// Prepares the decoder to produce `frame`, counted per channel from the start of the audio, and returns where the caller must resume feeding input.
+    fn seek(&mut self, frame: u64) -> Result<SeekRequest>;
+}

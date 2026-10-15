@@ -1,7 +1,7 @@
 #![no_std]
 #![doc = include_str!("../README.md")]
 
-use nanoaudio_core::codec::{Decoder, Encoder, Progress};
+use nanoaudio_core::codec::{Decoder, Encoder, Progress, Seek, SeekRequest};
 use nanoaudio_core::{Configuration, Error, Format, Result, Sample};
 
 const SIGN: u8 = 0x80;
@@ -161,6 +161,19 @@ impl Decoder for G711 {
 
     fn decode(&mut self, input: &[u8], output: &mut [i16]) -> Result<Progress> {
         self.decode_into(input, output)
+    }
+}
+
+impl Seek for G711 {
+    fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
+        let byte_offset = frame
+            .checked_mul(self.channels as u64)
+            .ok_or(Error::InvalidParameter)?;
+
+        Ok(SeekRequest {
+            byte_offset,
+            skip_frames: 0,
+        })
     }
 }
 

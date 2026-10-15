@@ -1,7 +1,7 @@
 #![no_std]
 #![doc = include_str!("../README.md")]
 
-use nanoaudio_core::codec::{Decoder, Encoder, Progress};
+use nanoaudio_core::codec::{Decoder, Encoder, Progress, Seek, SeekRequest};
 use nanoaudio_core::{Configuration, Format, Result, Sample};
 
 pub const G722_SAMPLE_RATE: u32 = 16_000;
@@ -354,6 +354,7 @@ pub struct G722Decoder {
     differences: [i32; 12],
     low: Band,
     high: Band,
+    skip: bool,
 }
 
 impl Default for G722Decoder {
@@ -370,6 +371,7 @@ impl G722Decoder {
             differences: [0; 12],
             low: Band::new(LOW_MINIMUM_SCALE),
             high: Band::new(HIGH_MINIMUM_SCALE),
+            skip: false,
         }
     }
 
@@ -434,7 +436,27 @@ impl G722Decoder {
             *pair = [first.convert(), second.convert()];
         }
 
-        Ok(Progress::new(count, count * 2))
+        let mut produced = count * 2;
+
+        if self.skip && produced != 0 {
+            output.copy_within(1..produced, 0);
+            self.skip = false;
+            produced -= 1;
+        }
+
+        Ok(Progress::new(count, produced))
+    }
+}
+
+impl Seek for G722Decoder {
+    fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
+        self.reset();
+        self.skip = !frame.is_multiple_of(2);
+
+        Ok(SeekRequest {
+            byte_offset: frame / 2,
+            skip_frames: self.skip as u32,
+        })
     }
 }
 

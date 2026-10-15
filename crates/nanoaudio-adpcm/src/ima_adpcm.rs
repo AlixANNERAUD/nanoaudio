@@ -1,5 +1,7 @@
-use nanoaudio_core::codec::{Decoder, Encoder, Progress};
+use nanoaudio_core::codec::{Decoder, Encoder, Progress, Seek, SeekRequest};
 use nanoaudio_core::{Configuration, Error, Format, MAXIMUM_CHANNELS, Result, Sample};
+
+use crate::{discard, seek_block};
 
 const INDEX_ADJUSTMENTS: [i8; 16] = [-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8];
 
@@ -100,6 +102,7 @@ pub struct ImaAdpcm {
     block_align: u16,
     states: [ImaAdpcmState; MAXIMUM_CHANNELS],
     finishing: bool,
+    skip: usize,
 }
 
 impl ImaAdpcm {
@@ -122,6 +125,7 @@ impl ImaAdpcm {
             block_align,
             states: [ImaAdpcmState::default(); MAXIMUM_CHANNELS],
             finishing: false,
+            skip: 0,
         })
     }
 
@@ -306,7 +310,27 @@ impl ImaAdpcm {
             progress.produced += samples;
         }
 
+        if self.skip != 0 {
+            progress.produced = discard(output, progress.produced, &mut self.skip);
+        }
+
         Ok(progress)
+    }
+}
+
+impl Seek for ImaAdpcm {
+    fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
+        let (request, skip) = seek_block(
+            frame,
+            self.channels,
+            self.block_align,
+            self.samples_per_block(),
+        )?;
+
+        self.skip = skip;
+        self.finishing = false;
+
+        Ok(request)
     }
 }
 
