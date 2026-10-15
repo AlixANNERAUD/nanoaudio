@@ -1,0 +1,130 @@
+metadata_xing.mp3	mpeg	sample_rate	44100
+metadata_xing.mp3	mpeg	channels	2
+metadata_xing.mp3	mpeg	frames	13
+metadata_xing.mp3	mpeg	bytes	5850
+metadata_xing.mp3	mpeg	table	121212121212121224242424242424243636363636363636494949494949495b5b5b5b5b5b5b5b6d6d6d6d6d6d6d6d7f7f7f7f7f7f7f9292929292929292a4a4a4a4a4a4a4a4b6b6b6b6b6b6b6c9c9c9c9c9c9c9c9dbdbdbdbdbdbdbdbededededededed
+metadata_xing.mp3	mpeg	quality	57
+metadata_xing.mp3	mpeg	encoder	3.100.0+
+metadata_xing.mp3	mpeg	encoder_delay	576
+metadata_xing.mp3	mpeg	encoder_padding	1170
+metadata_xing.mp3	mpeg	lowpass_frequency	16000
+metadata_xing.mp3	mpeg	music_length	5850
+metadata_xing.mp3	mpeg	samples	13230
+metadata_vbri.mp3	mpeg	sample_rate	16000
+metadata_vbri.mp3	mpeg	channels	1
+metadata_vbri.mp3	mpeg	frames	16
+metadata_vbri.mp3	mpeg	bytes	2448
+metadata_vbri.mp3	mpeg	quality	75
+metadata_vbri.mp3	mpeg	frames_per_entry	4
+metadata_vbri.mp3	mpeg	table	576,576,576,576
+metadata_vbri.mp3	mpeg	samples	9216
+metadata_id3v24.mp3	id3v2	version	4.0
+metadata_id3v24.mp3	id3v2	size	758
+metadata_id3v24.mp3	text	TIT2	Café crème 𝄞
+metadata_id3v24.mp3	text	TPE1	Ünïcødé Ärtist 🎵
+metadata_id3v24.mp3	text	TRCK	3/12
+metadata_id3v24.mp3	text	TALB	Ålbum ÿÿ
+metadata_id3v24.mp3	text	TPOS	1/2
+metadata_id3v24.mp3	text	TDRC	2024
+metadata_id3v24.mp3	text	TCON	Jazz
+metadata_id3v24.mp3	user_text	TXXX	MOODCalm
+metadata_id3v24.mp3	text	TPE2	Album Ártist
+metadata_id3v24.mp3	text	TCOM	Composer ØneComposer Twö
+metadata_id3v24.mp3	comment	COMM	fraDéscriptionCommentaire ✓
+metadata_id3v24.mp3	picture	APIC	image/png3Front ✓89504e470d0a1a0aa5c4d5592d65b7d99162dc12ff00ffe021afa0a2368546864f3e577283234e07ffffa4e25fbcfe5199fe16d3ee7d69526163a51fa2e9d1b11b713a1db96421557bc92620bbaa72dd3f27a8f7ff578927b4e2696d255f55cc316e01c89b9574a098db724c1a27ad35da56aab7281d745772a504c496e06b8fe7acc5aa01afdea24deda19c53294511c302364941c8c498f4238d5bcd62abb197a49efac3a9f811f175cb493eaad22850a362e622500ea490d41d6ca2e0adec98cda3f2ba7c5aa7dcee078bb3a2ee34dbb246c6a4aced31a031cc2ded5008f742a0eec8bc1f9b1a66cd6e9a8a082febbba6fc219dd4f7f87bb1b1d886aa5589ee9494b6a38b5423e88c18ae9cd42d0748f89a2fe7c1c5b179cde5a346e72b5cf321b0f246b71d7ab8a31cffc0ff823eda1f3927596aef14f2fc80c704fe24ff
+metadata_id3v24.mp3	id3v1	TIT2	Café crème ?
+metadata_id3v24.mp3	id3v1	TPE1	Ünïcødé Ärtist ?
+metadata_id3v24.mp3	id3v1	TALB	Ålbum ÿÿ
+metadata_id3v24.mp3	id3v1	TDRC	2024
+metadata_id3v24.mp3	id3v1	TRCK	3
+metadata_id3v24.mp3	id3v1	TCON	8
+metadata_id3v24.mp3	id3v1	COMM	
+metadata_id3v23.mp3	id3v2	version	3.0
+metadata_id3v23.mp3	id3v2	size	812
+metadata_id3v23.mp3	text	TIT2	Café crème 𝄞
+metadata_id3v23.mp3	text	TPE1	Ünïcødé Ärtist 🎵
+metadata_id3v23.mp3	text	TRCK	3/12
+metadata_id3v23.mp3	text	TALB	Ålbum ÿÿ
+metadata_id3v23.mp3	text	TPOS	1/2
+metadata_id3v23.mp3	text	TCON	Jazz
+metadata_id3v23.mp3	text	TYER	2024
+metadata_id3v23.mp3	text	TPE2	Album Ártist
+metadata_id3v23.mp3	user_text	TXXX	MOODCalm
+metadata_id3v23.mp3	text	TCOM	Composer Øne/Composer Twö
+metadata_id3v23.mp3	comment	COMM	fraDéscriptionCommentaire ✓
+metadata_id3v23.mp3	picture	APIC	image/png3Front ✓89504e470d0a1a0aa5c4d5592d65b7d99162dc12ff00ffe021afa0a2368546864f3e577283234e07ffffa4e25fbcfe5199fe16d3ee7d69526163a51fa2e9d1b11b713a1db96421557bc92620bbaa72dd3f27a8f7ff578927b4e2696d255f55cc316e01c89b9574a098db724c1a27ad35da56aab7281d745772a504c496e06b8fe7acc5aa01afdea24deda19c53294511c302364941c8c498f4238d5bcd62abb197a49efac3a9f811f175cb493eaad22850a362e622500ea490d41d6ca2e0adec98cda3f2ba7c5aa7dcee078bb3a2ee34dbb246c6a4aced31a031cc2ded5008f742a0eec8bc1f9b1a66cd6e9a8a082febbba6fc219dd4f7f87bb1b1d886aa5589ee9494b6a38b5423e88c18ae9cd42d0748f89a2fe7c1c5b179cde5a346e72b5cf321b0f246b71d7ab8a31cffc0ff823eda1f3927596aef14f2fc80c704fe24ff
+metadata_id3v23.mp3	id3v1	TIT2	Café crème ?
+metadata_id3v23.mp3	id3v1	TPE1	Ünïcødé Ärtist ?
+metadata_id3v23.mp3	id3v1	TALB	Ålbum ÿÿ
+metadata_id3v23.mp3	id3v1	TDRC	2024
+metadata_id3v23.mp3	id3v1	TRCK	3
+metadata_id3v23.mp3	id3v1	TCON	8
+metadata_id3v23.mp3	id3v1	COMM	
+metadata_id3v22.mp3	id3v2	version	2.0
+metadata_id3v22.mp3	id3v2	size	486
+metadata_id3v22.mp3	text	TIT2	Café
+metadata_id3v22.mp3	text	TPE1	Ünïcødé Ärtist 🎵
+metadata_id3v22.mp3	text	TALB	Ålbum ÿÿ
+metadata_id3v22.mp3	text	TRCK	7
+metadata_id3v22.mp3	comment	COMM	engOld comment
+metadata_id3v22.mp3	user_text	TXXX	KeyValue
+metadata_id3v22.mp3	picture	APIC	PNG3Cover89504e470d0a1a0aa5c4d5592d65b7d99162dc12ff00ffe021afa0a2368546864f3e577283234e07ffffa4e25fbcfe5199fe16d3ee7d69526163a51fa2e9d1b11b713a1db96421557bc92620bbaa72dd3f27a8f7ff578927b4e2696d255f55cc316e01c89b9574a098db724c1a27ad35da56aab7281d745772a504c496e06b8fe7acc5aa01afdea24deda19c53294511c302364941c8c498f4238d5bcd62abb197a49efac3a9f811f175cb493eaad22850a362e622500ea490d41d6ca2e0adec98cda3f2ba7c5aa7dcee078bb3a2ee34dbb246c6a4aced31a031cc2ded5008f742a0eec8bc1f9b1a66cd6e9a8a082febbba6fc219dd4f7f87bb1b1d886aa5589ee9494b6a38b5423e88c18ae9cd42d0748f89a2fe7c1c5b179cde5a346e72b5cf321b0f246b71d7ab8a31cffc0ff823eda1f3927596aef14f2fc80c704fe24ff
+metadata_id3v23_unsynchronised.mp3	id3v2	version	3.0
+metadata_id3v23_unsynchronised.mp3	id3v2	size	492
+metadata_id3v23_unsynchronised.mp3	text	TIT2	ÿÿ Title ÿ
+metadata_id3v23_unsynchronised.mp3	text	TPE1	ÿartist ÿ
+metadata_id3v23_unsynchronised.mp3	text	TALB	Album
+metadata_id3v23_unsynchronised.mp3	picture	APIC	image/png3Cover89504e470d0a1a0aa5c4d5592d65b7d99162dc12ff00ffe021afa0a2368546864f3e577283234e07ffffa4e25fbcfe5199fe16d3ee7d69526163a51fa2e9d1b11b713a1db96421557bc92620bbaa72dd3f27a8f7ff578927b4e2696d255f55cc316e01c89b9574a098db724c1a27ad35da56aab7281d745772a504c496e06b8fe7acc5aa01afdea24deda19c53294511c302364941c8c498f4238d5bcd62abb197a49efac3a9f811f175cb493eaad22850a362e622500ea490d41d6ca2e0adec98cda3f2ba7c5aa7dcee078bb3a2ee34dbb246c6a4aced31a031cc2ded5008f742a0eec8bc1f9b1a66cd6e9a8a082febbba6fc219dd4f7f87bb1b1d886aa5589ee9494b6a38b5423e88c18ae9cd42d0748f89a2fe7c1c5b179cde5a346e72b5cf321b0f246b71d7ab8a31cffc0ff823eda1f3927596aef14f2fc80c704fe24ff
+metadata_id3v23_unsynchronised.mp3	text	TCON	Rockÿ
+metadata_id3v24_unsynchronised.mp3	id3v2	version	4.0
+metadata_id3v24_unsynchronised.mp3	id3v2	size	520
+metadata_id3v24_unsynchronised.mp3	text	TIT2	ÿÿ Title
+metadata_id3v24_unsynchronised.mp3	text	TPE1	Ünïcødé Ärtist 🎵
+metadata_id3v24_unsynchronised.mp3	text	TALB	Compressed album
+metadata_id3v24_unsynchronised.mp3	picture	APIC	image/png8Back89504e470d0a1a0aa5c4d5592d65b7d99162dc12ff00ffe021afa0a2368546864f3e577283234e07ffffa4e25fbcfe5199fe16d3ee7d69526163a51fa2e9d1b11b713a1db96421557bc92620bbaa72dd3f27a8f7ff578927b4e2696d255f55cc316e01c89b9574a098db724c1a27ad35da56aab7281d745772a504c496e06b8fe7acc5aa01afdea24deda19c53294511c302364941c8c498f4238d5bcd62abb197a49efac3a9f811f175cb493eaad22850a362e622500ea490d41d6ca2e0adec98cda3f2ba7c5aa7dcee078bb3a2ee34dbb246c6a4aced31a031cc2ded5008f742a0eec8bc1f9b1a66cd6e9a8a082febbba6fc219dd4f7f87bb1b1d886aa5589ee9494b6a38b5423e88c18ae9cd42d0748f89a2fe7c1c5b179cde5a346e72b5cf321b0f246b71d7ab8a31cffc0ff823eda1f3927596aef14f2fc80c704fe24ff
+metadata_id3v24_unsynchronised.mp3	text	TCON	RockPop
+metadata.flac	stream_info	sample_rate	8000
+metadata.flac	stream_info	channels	1
+metadata.flac	stream_info	bits_per_sample	16
+metadata.flac	stream_info	total_samples	600
+metadata.flac	stream_info	md5	b3536545eb58f87ab8ea12b01956a2fb
+metadata.flac	stream_info	minimum_block_size	4096
+metadata.flac	stream_info	maximum_block_size	4096
+metadata.flac	stream_info	minimum_frame_size	228
+metadata.flac	stream_info	maximum_frame_size	228
+metadata.flac	vorbis	vendor	reference libFLAC 1.4.3 20230623
+metadata.flac	vorbis	0	TITLE=Café crème 𝄞
+metadata.flac	vorbis	1	Artist=Ünïcødé Ärtist 🎵
+metadata.flac	vorbis	2	Artist=Second Ärtist
+metadata.flac	vorbis	3	album=Ålbum ÿÿ
+metadata.flac	vorbis	4	TRACKNUMBER=5
+metadata.flac	vorbis	5	DATE=1999-12-31
+metadata.flac	vorbis	6	X-CUSTOM=custom value
+metadata.flac	block	0	0
+metadata.flac	block	1	4
+metadata.flac	block	2	6
+metadata.flac	block	3	1
+metadata.flac	picture	PICTURE	image/png3Fröñt16824089504e470d0a1a0aa5c4d5592d65b7d99162dc12ff00ffe021afa0a2368546864f3e577283234e07ffffa4e25fbcfe5199fe16d3ee7d69526163a51fa2e9d1b11b713a1db96421557bc92620bbaa72dd3f27a8f7ff578927b4e2696d255f55cc316e01c89b9574a098db724c1a27ad35da56aab7281d745772a504c496e06b8fe7acc5aa01afdea24deda19c53294511c302364941c8c498f4238d5bcd62abb197a49efac3a9f811f175cb493eaad22850a362e622500ea490d41d6ca2e0adec98cda3f2ba7c5aa7dcee078bb3a2ee34dbb246c6a4aced31a031cc2ded5008f742a0eec8bc1f9b1a66cd6e9a8a082febbba6fc219dd4f7f87bb1b1d886aa5589ee9494b6a38b5423e88c18ae9cd42d0748f89a2fe7c1c5b179cde5a346e72b5cf321b0f246b71d7ab8a31cffc0ff823eda1f3927596aef14f2fc80c704fe24ff
+metadata.wav	audio	frames	301
+metadata.wav	info	INAM	Wave Title
+metadata.wav	info	IART	Wave Artist
+metadata.wav	info	IPRD	Wave Album
+metadata.wav	info	ICRD	2021
+metadata.wav	info	IGNR	Ambient
+metadata.wav	info	ICMT	Wave comment
+metadata.wav	info	ICOP	Wave copyright
+metadata.wav	info	ITRK	9
+metadata.wav	info	ISFT	generator (libsndfile-1.2.2)
+metadata.wav	id3v2	version	4.0
+metadata.wav	id3v2	size	1112
+metadata.wav	text	TIT2	Café crème 𝄞
+metadata.wav	text	TPE1	Ünïcødé Ärtist 🎵
+metadata.aiff	audio	frames	201
+metadata.aiff	info	NAME	Aiff Title
+metadata.aiff	info	AUTH	Aiff Artist
+metadata.aiff	info	ANNO	Aiff comment
+metadata.aiff	info	(c) 	Aiff copyright
+metadata.aiff	id3v2	version	3.0
+metadata.aiff	id3v2	size	1124
+metadata.aiff	text	TIT2	Café crème 𝄞
+metadata.aiff	text	TPE1	Ünïcødé Ärtist 🎵
