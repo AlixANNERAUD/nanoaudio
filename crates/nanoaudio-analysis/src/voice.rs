@@ -2,7 +2,7 @@ use nanoaudio_dsp::{Analyzer, Fixed, Float};
 
 /// Settings of a [`VoiceActivityDetector`], in units that do not depend on the sample rate.
 ///
-/// The [`DEFAULT`](Self::DEFAULT) settings suit speech at 8, 16 and 48 kHz with a close or desk microphone.
+/// The [`DEFAULT`](Self::DEFAULT) settings are meant for speech at any sample rate from 8 to 48 kHz.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VoiceSettings {
     /// Length of an analysis block, in milliseconds.
@@ -19,7 +19,7 @@ pub struct VoiceSettings {
     pub onset: u32,
     /// How long voice is still reported after the last voiced block, in milliseconds.
     pub hangover: u32,
-    /// How far back the noise floor looks for the quietest block, in milliseconds.
+    /// How far back the noise floor looks for the quietest level, in milliseconds.
     pub floor: u32,
 }
 
@@ -53,11 +53,11 @@ const MIX_SCALES: [f32; 9] = [
 
 /// Tells when someone is talking, from the short-term energy and zero-crossing rate of the signal.
 ///
-/// The channels are mixed, the DC and the low end below about 100 Hz removed, and the signal cut into blocks of about 10 ms. A block is voiced when its level is above the noise floor by the threshold and above the minimum level, and its zero-crossing rate is in the range of voiced speech, which leaves out hum, rumble, hiss and white noise. Crossings are counted only when the signal swings past the noise floor amplitude, so noise riding on a voice does not add any. Voice starts after a run of voiced blocks as long as the onset, lasts while blocks stay above the threshold whatever their crossing rate, so unvoiced sounds and short pauses between words keep it, and ends after a run of quieter blocks as long as the hangover.
+/// The channels are mixed (summed, then divided by their count rounded up to a power of two), the DC and the low end below about 100 Hz removed, and the signal cut into blocks of about 10 ms. A block is voiced when its level is above the noise floor by the threshold and above the minimum level, and its zero-crossing rate is in the range of voiced speech, which leaves out hum, rumble, hiss and white noise. Crossings are counted only when the signal swings past the noise floor amplitude, so noise riding on a voice does not add any. Voice starts after a run of voiced blocks as long as the onset, lasts while blocks stay above the threshold whatever their crossing rate, so unvoiced sounds and short pauses between words keep it, and ends after a run of quieter blocks as long as the hangover.
 ///
 /// The noise floor is the lowest level over the last few seconds, averaged over about four blocks, so it follows a changing background and assumes the signal is not voice all the time. It reads -100 dBFS until the first block ends, and the first blocks are taken as background.
 ///
-/// Each frame costs a handful of 32-bit integer operations and one 32 × 32-bit multiply, also with [`Float`], where samples are converted to 16 bits first: NaN counts as silence and infinities as full scale. The decision runs once per block, also without floating point or division. Positions are counted in frames analyzed since creation or the last [`reset`](Self::reset).
+/// Each frame costs a handful of 32-bit integer operations and one 32 × 32-bit multiply, on the top 16 bits of each sample, also with [`Float`], where NaN counts as silence and infinities as full scale. The decision runs once per block, also without floating point or division. Positions are counted in frames analyzed since creation or the last [`reset`](Self::reset).
 ///
 /// ```
 /// use nanoaudio_analysis::{VoiceActivityDetector, analyze_using};
