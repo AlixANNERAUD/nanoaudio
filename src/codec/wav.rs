@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use crate::{Configuration, Encoding, Format, Result, Sample, WavHeader};
+use crate::{Configuration, Encoding, Format, I24, Result, Sample, WavHeader};
 
 use super::{Decoder, G711, ImaAdpcm, Law, Progress};
 
@@ -57,6 +57,7 @@ impl<S: Sample> WavDecoder<S> {
             *output = match format {
                 Format::U8 => u8::read_le(bytes).convert(),
                 Format::I16 => i16::read_le(bytes).convert(),
+                Format::I24 => I24::read_le(bytes).convert(),
                 Format::I32 => i32::read_le(bytes).convert(),
                 Format::F32 => f32::read_le(bytes).convert(),
             };
