@@ -4,6 +4,9 @@ const SYNC_MATCHES: usize = 10;
 const XING_FRAMES: u32 = 1;
 const XING_BYTES: u32 = 2;
 const XING_TABLE: u32 = 4;
+const XING_QUALITY: u32 = 8;
+const LAME_SIZE: usize = 24;
+const LAME_VERSION: (u8, u32) = (3, 90);
 const VBRI_OFFSET: usize = HEADER_SIZE + 32;
 const VBRI_HEADER_SIZE: usize = 26;
 const PERCENT: usize = 100;
@@ -218,10 +221,54 @@ impl Table {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Gapless {
+    pub(crate) delay: u16,
+    pub(crate) padding: u16,
+}
+
+impl Gapless {
+    fn parse(lame: &[u8]) -> Option<Self> {
+        let lame = lame.first_chunk::<LAME_SIZE>()?;
+        let (encoder, version) = lame.split_at(4);
+
+        if !matches!(encoder, b"Lavc" | b"Lavf") && !(encoder == b"LAME" && supported(version)) {
+            return None;
+        }
+
+        let delay = u32::from_be_bytes([0, lame[21], lame[22], lame[23]]);
+
+        Some(Self {
+            delay: (delay >> 12) as u16,
+            padding: (delay & 0x0FFF) as u16,
+        })
+    }
+}
+
+fn supported(version: &[u8]) -> bool {
+    let [major, b'.', minor @ ..] = version else {
+        return false;
+    };
+    let digits = minor
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+
+    major.is_ascii_digit()
+        && digits != 0
+        && (
+            major - b'0',
+            minor[..digits]
+                .iter()
+                .fold(0, |value, digit| value * 10 + u32::from(digit - b'0')),
+        ) >= LAME_VERSION
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Tag {
     pub(crate) kind: Kind,
     pub(crate) frames: Option<u32>,
     pub(crate) table: Table,
+    pub(crate) gapless: Option<Gapless>,
 }
 
 impl Tag {
@@ -230,6 +277,7 @@ impl Tag {
             kind: Kind::Plain,
             frames: None,
             table: Table::EMPTY,
+            gapless: None,
         };
 
         if header.layer() != 3 {
@@ -255,15 +303,20 @@ impl Tag {
         let bytes = (flags & XING_BYTES != 0)
             .then(|| read_u32(&mut rest))
             .flatten();
+        let toc = (flags & XING_TABLE != 0)
+            .then(|| rest.split_first_chunk::<PERCENT>())
+            .flatten()
+            .map(|(toc, after)| {
+                rest = after;
+                toc
+            });
         let mut table = Table::EMPTY;
 
-        if let (Some(frames), Some(bytes), Some(toc)) = (
-            frames,
-            bytes,
-            (flags & XING_TABLE != 0)
-                .then(|| rest.first_chunk::<PERCENT>())
-                .flatten(),
-        ) {
+        if flags & XING_QUALITY != 0 {
+            rest = rest.get(4..).unwrap_or_default();
+        }
+
+        if let (Some(frames), Some(bytes), Some(toc)) = (frames, bytes, toc) {
             for (percent, entry) in toc.iter().enumerate() {
                 table.push(
                     (u64::from(frames) * percent as u64 / PERCENT as u64) as u32,
@@ -281,6 +334,9 @@ impl Tag {
             kind,
             frames,
             table,
+            gapless: (toc.is_some() || flags & XING_TABLE == 0)
+                .then(|| Gapless::parse(rest))
+                .flatten(),
         })
     }
 
@@ -328,6 +384,7 @@ impl Tag {
             kind: Kind::Variable,
             frames: Some(frames),
             table,
+            gapless: None,
         })
     }
 }
