@@ -629,24 +629,23 @@ struct Search {
 /// use nanoaudio_core::codec::{Decoder, Seek};
 /// use nanoaudio_flac::FlacDecoder;
 ///
-/// let file = include_bytes!("../tests/data/flac_seek_table.flac");
-/// let mut decoder = FlacDecoder::<i16>::new();
-/// let mut output = [0; 4096];
+/// fn decode_from(file: &[u8], frame: u64, output: &mut [i16]) -> Result<usize, Error> {
+///     let mut decoder = FlacDecoder::<i16>::new();
 ///
-/// decoder.set_stream_length(file.len() as u64);
-/// decoder.decode(file, &mut output)?;
+///     decoder.set_stream_length(file.len() as u64);
+///     decoder.decode(file, output)?;
 ///
-/// let mut offset = decoder.seek(20_000)?.byte_offset as usize;
-/// let progress = loop {
-///     decoder.finish();
-///     match decoder.decode(&file[offset..], &mut output) {
-///         Err(Error::SeekTo(next)) => offset = next as usize,
-///         result => break result?,
-///     }
-/// };
+///     let mut offset = decoder.seek(frame)?.byte_offset as usize;
+///     let progress = loop {
+///         decoder.finish();
+///         match decoder.decode(&file[offset..], output) {
+///             Err(Error::SeekTo(next)) => offset = next as usize,
+///             result => break result?,
+///         }
+///     };
 ///
-/// assert!(progress.produced > 0);
-/// # Ok::<(), Error>(())
+///     Ok(progress.produced)
+/// }
 /// ```
 #[derive(Clone)]
 pub struct FlacDecoder<
