@@ -213,9 +213,9 @@ impl VoiceActivityDetector {
 
     /// Returns how voice-like the last blocks were, from 0 to 255.
     ///
-    /// It is a running average over about four blocks, where a voiced-range block scores 128 at the threshold above the floor and 255 at twice the threshold, and other blocks score 0. It moves before [`is_voice`](Self::is_voice) changes.
+    /// It is a running average over about four blocks, where a block in the voiced crossing range scores from 0 at the noise floor to 128 at the threshold above it and 255 at twice the threshold, and other blocks score 0. It moves before [`is_voice`](Self::is_voice) changes.
     pub const fn score(&self) -> u8 {
-        self.score as u8
+        ((self.score + 128) >> 8) as u8
     }
 
     /// Returns the noise floor estimate, in dBFS.
@@ -345,7 +345,7 @@ impl VoiceActivityDetector {
             0
         };
 
-        self.score += (target - self.score) >> 2;
+        self.score += ((target << 8) - self.score) >> 2;
 
         let keeps = if self.voice { loud } else { !(loud && ranged) };
 
@@ -452,7 +452,8 @@ const fn logarithm(value: u64) -> i32 {
     }
 
     let fraction = ((value >> 47) & 0xFFFF) as u32;
-    let bend = ((fraction * (65536 - fraction)) >> 16) * 22713 >> 16;
+    let parabola = (fraction * (65536 - fraction)) >> 16;
+    let bend = (parabola * (27689 - ((10184 * fraction) >> 16))) >> 16;
 
     (exponent << 12) + ((fraction + bend) >> 4) as i32
 }
@@ -463,7 +464,10 @@ const fn amplitude(decibels: i32) -> i32 {
     if exponent < 0 {
         0
     } else {
-        ((256 + (exponent & 255)) << (exponent >> 8)) >> 8
+        let fraction = exponent & 255;
+        let mantissa = 256 + fraction - ((fraction * (256 - fraction) * 88) >> 16);
+
+        (mantissa << (exponent >> 8)) >> 8
     }
 }
 
@@ -551,21 +555,21 @@ mod tests {
     ];
 
     #[derive(Clone, Copy, PartialEq, Debug)]
-    pub(super) enum Voice {
+    enum Voice {
         Formants,
         Tones,
     }
 
     #[derive(Clone, Copy, PartialEq, Debug)]
-    pub(super) enum Noise {
+    enum Noise {
         White,
         Pink,
         Hum,
     }
 
-    pub(super) struct Scene {
-        pub(super) speech: Vec<f64>,
-        pub(super) truth: Vec<(usize, usize)>,
+    struct Scene {
+        speech: Vec<f64>,
+        truth: Vec<(usize, usize)>,
     }
 
     fn envelope(position: usize, length: usize, ramp: usize) -> f64 {
@@ -641,7 +645,7 @@ mod tests {
         }
     }
 
-    pub(super) fn scene(voice: Voice, rate: u32, seconds: f64, seed: u64) -> Scene {
+    fn scene(voice: Voice, rate: u32, seconds: f64, seed: u64) -> Scene {
         let rate_f = rate as f64;
         let total = (seconds * rate_f) as usize;
         let mut speech = vec![0.0; total];
@@ -711,7 +715,7 @@ mod tests {
         Scene { speech, truth }
     }
 
-    pub(super) fn noise(kind: Noise, rate: u32, length: usize, seed: u64) -> Vec<f64> {
+    fn noise(kind: Noise, rate: u32, length: usize, seed: u64) -> Vec<f64> {
         let mut random = Random(seed);
         let mut poles = [0.0f64; 3];
         let mut signal: Vec<f64> = (0..length)
@@ -738,7 +742,7 @@ mod tests {
         signal
     }
 
-    pub(super) fn quantize(signal: &[f64]) -> Vec<i16> {
+    fn quantize(signal: &[f64]) -> Vec<i16> {
         signal
             .iter()
             .map(|sample| (sample * 32768.0).round().clamp(-32768.0, 32767.0) as i16)
@@ -817,28 +821,21 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn detects_synthetic_speech() {
-        let seconds = if cfg!(miri) { 4.0 } else { 30.0 };
-        let rates: &[u32] = if cfg!(miri) {
-            &[8000]
-        } else {
-            &[8000, 16000, 48000]
-        };
-        let ratios: &[f64] = if cfg!(miri) {
-            &[20.0]
-        } else {
-            &[30.0, 20.0, 10.0, 5.0, 0.0]
-        };
+        const RATIOS: [f64; 5] = [30.0, 20.0, 10.0, 5.0, 0.0];
+
         let settings = VoiceSettings::DEFAULT;
+        let mut totals = [(0.0, 0.0, 0.0, 0usize); RATIOS.len()];
 
         for voice in [Voice::Formants, Voice::Tones] {
-            for (index, rate) in rates.iter().enumerate() {
-                let scene = scene(voice, *rate, seconds, 7 + index as u64);
+            for (index, rate) in [8000, 16000, 48000].into_iter().enumerate() {
+                let scene = scene(voice, rate, 20.0, 7 + index as u64);
 
                 for kind in [Noise::White, Noise::Pink, Noise::Hum] {
-                    let background = noise(kind, *rate, scene.speech.len(), 99 + index as u64);
+                    let background = noise(kind, rate, scene.speech.len(), 99 + index as u64);
 
-                    for ratio in ratios {
+                    for (slot, ratio) in RATIOS.iter().enumerate() {
                         let gain = 10f64.powf((-26.0 - ratio) / 20.0);
                         let mixed: Vec<f64> = scene
                             .speech
@@ -847,26 +844,675 @@ mod tests {
                             .map(|(speech, noise)| speech + gain * noise)
                             .collect();
                         let samples = quantize(&mixed);
-                        let mut detector = VoiceActivityDetector::new(*rate);
+                        let mut detector = VoiceActivityDetector::new(rate);
                         let decided = decisions::<Fixed>(&samples, 1, &mut detector);
                         let score = evaluate(
                             &scene.truth,
                             &decided,
                             detector.block_frames() as usize,
                             settings,
-                            *rate,
+                            rate,
                         );
+                        let label = std::format!("{voice:?} {rate} Hz {kind:?} {ratio} dB");
 
                         std::println!(
-                            "{voice:?} {rate} Hz {kind:?} {ratio} dB: accuracy {:.3} recall {:.3} false alarms {:.3} floor {:.1}",
+                            "{label}: accuracy {:.3} recall {:.3} false alarms {:.3}",
                             score.accuracy,
                             score.recall,
                             score.false_alarms,
-                            detector.noise_floor()
                         );
+
+                        assert!(score.false_alarms <= 0.01, "{label}");
+
+                        if *ratio >= 10.0 {
+                            assert!(score.accuracy >= 0.97, "{label}");
+                        } else if *ratio >= 5.0 {
+                            assert!(score.accuracy >= 0.8, "{label}");
+                        }
+
+                        let total = &mut totals[slot];
+                        total.0 += score.accuracy;
+                        total.1 += score.recall;
+                        total.2 += score.false_alarms;
+                        total.3 += 1;
                     }
                 }
             }
         }
+
+        for (ratio, (accuracy, recall, alarms, count)) in RATIOS.iter().zip(totals) {
+            let count = count as f64;
+            std::println!(
+                "{ratio} dB SNR: accuracy {:.3} recall {:.3} false alarms {:.3}",
+                accuracy / count,
+                recall / count,
+                alarms / count
+            );
+        }
+    }
+
+    fn sine(rate: u32, frequency: f64, amplitude: f64, length: usize) -> Vec<i16> {
+        (0..length)
+            .map(|index| {
+                (amplitude * 32767.0 * (TAU * frequency * index as f64 / rate as f64).sin()).round()
+                    as i16
+            })
+            .collect()
+    }
+
+    fn high_pass_gain(rate: u32, frequency: f64) -> f64 {
+        let mut shift = 1;
+
+        while shift < 12 && rate >> (shift + 1) >= 400 {
+            shift += 1;
+        }
+
+        let alpha = 1.0 / (1u32 << shift) as f64;
+        let angle = TAU * frequency / rate as f64;
+        let numerator = (1.0 - alpha) * (2.0 - 2.0 * angle.cos()).sqrt();
+        let pole = 1.0 - alpha;
+        let denominator = (1.0 - 2.0 * pole * angle.cos() + pole * pole).sqrt();
+
+        numerator / denominator
+    }
+
+    #[test]
+    fn follows_closed_forms() {
+        let cases: &[(u32, f64, f64)] = if cfg!(miri) {
+            &[(8000, 1000.0, 0.5)]
+        } else {
+            &[
+                (8000, 1000.0, 0.5),
+                (8000, 300.0, 0.01),
+                (16000, 400.0, 0.9),
+                (16000, 3000.0, 0.1),
+                (48000, 1200.0, 0.3),
+                (44100, 2205.0, 0.05),
+            ]
+        };
+
+        for (rate, frequency, amplitude) in cases {
+            let mut detector = VoiceActivityDetector::new(*rate);
+            let length = detector.block_frames() as usize;
+            let signal = sine(*rate, *frequency, *amplitude, 30 * length);
+
+            analyze_using::<Fixed, _, _>(&signal, 1, &mut detector).unwrap();
+
+            let gain = high_pass_gain(*rate, *frequency);
+            let expected = 20.0 * (amplitude * 32767.0 / 32768.0 * gain / 2f64.sqrt()).log10();
+            let crossings = 2.0 * frequency * length as f64 / *rate as f64;
+
+            assert!(
+                (detector.level() as f64 - expected).abs() < 0.05,
+                "{rate} {frequency} {} {expected}",
+                detector.level()
+            );
+            assert!((detector.crossings() as f64 - crossings).abs() <= 1.0);
+            assert_eq!(detector.blocks(), 30);
+            assert_eq!(detector.frames(), 30 * length as u64);
+            assert!(!detector.is_voice());
+            assert_eq!(detector.transition(), 0);
+            assert!(detector.score() < 8);
+            assert!(
+                (detector.noise_floor() as f64 - expected).abs() < 0.3,
+                "{rate} {frequency} {} {expected}",
+                detector.noise_floor()
+            );
+            assert!(
+                detector
+                    .crossing_rate()
+                    .abs_diff((2.0 * frequency).round() as u32)
+                    <= (*rate as f64 / length as f64) as u32
+            );
+        }
+    }
+
+    #[test]
+    fn approximates_logarithms() {
+        let mut random = Random(5);
+
+        for index in 0..if cfg!(miri) { 200 } else { 20000 } {
+            let value = match index {
+                0 => 1,
+                1 => u64::MAX,
+                _ => random.next() >> (random.next() % 64),
+            }
+            .max(1);
+            let error = logarithm(value) as f64 / 4096.0 - (value as f64).log2();
+
+            assert!(error.abs() < 0.003, "{value} {error}");
+        }
+
+        assert_eq!(logarithm(0), 0);
+
+        for decibels in -100..=0 {
+            let expected = 32768.0 * 10f64.powf(decibels as f64 / 20.0);
+            let actual = amplitude(decibels << 8) as f64;
+
+            assert!(
+                (actual - expected).abs() <= expected * 0.01 + 1.0,
+                "{decibels} {actual} {expected}"
+            );
+        }
+    }
+
+    struct Reference {
+        length: usize,
+        alpha: f64,
+        dc: f64,
+        negative: bool,
+        energy: f64,
+        crossings: u32,
+        position: usize,
+        smooth: Option<f64>,
+        minima: Vec<f64>,
+        current: f64,
+        count: u32,
+        window: u32,
+        floor: f64,
+        voice: bool,
+        pending: u32,
+        settings: VoiceSettings,
+        rate: u32,
+    }
+
+    impl Reference {
+        fn new(rate: u32, settings: VoiceSettings) -> Self {
+            let shift = (rate as f64 / 400.0).log2().floor().clamp(1.0, 12.0);
+            Self {
+                length: (rate as f64 * settings.block as f64 / 1000.0).round() as usize,
+                alpha: 0.5f64.powf(shift),
+                dc: 0.0,
+                negative: false,
+                energy: 0.0,
+                crossings: 0,
+                position: 0,
+                smooth: None,
+                minima: Vec::new(),
+                current: f64::INFINITY,
+                count: 0,
+                window: (settings.floor as f64 / settings.block as f64 / 4.0).round() as u32,
+                floor: -100.0,
+                voice: false,
+                pending: 0,
+                settings,
+                rate,
+            }
+        }
+
+        fn push(&mut self, sample: i16) -> Option<(f64, u32, f64, bool)> {
+            let sample = sample as f64;
+            self.dc += self.alpha * (sample - self.dc);
+            let filtered = sample - self.dc;
+            let dead = 32768.0 * 10f64.powf(self.floor / 20.0);
+
+            self.energy += filtered * filtered;
+
+            if (self.negative && filtered > dead) || (!self.negative && filtered < -dead) {
+                self.negative = !self.negative;
+                self.crossings += 1;
+            }
+
+            self.position += 1;
+
+            if self.position < self.length {
+                return None;
+            }
+
+            let level =
+                (10.0 * (self.energy / self.length as f64 / 1073741824.0).log10()).max(-100.0);
+            let smooth = match self.smooth {
+                Some(smooth) => smooth + (level - smooth) / 4.0,
+                None => level,
+            };
+            let crossings = core::mem::take(&mut self.crossings);
+
+            self.smooth = Some(smooth);
+            self.position = 0;
+            self.energy = 0.0;
+            self.current = self.current.min(smooth);
+            self.count += 1;
+
+            if self.count >= self.window {
+                self.minima.push(self.current);
+                self.current = f64::INFINITY;
+                self.count = 0;
+            }
+
+            self.floor = self
+                .minima
+                .iter()
+                .rev()
+                .take(4)
+                .fold(self.current, |floor, minimum| floor.min(*minimum));
+
+            let block = self.length as f64 / self.rate as f64;
+            let rate = crossings as f64 / block;
+            let loud = level >= self.settings.minimum as f64
+                && level - self.floor >= self.settings.threshold as f64;
+            let ranged = rate >= self.settings.lowest_crossings as f64
+                && rate <= self.settings.highest_crossings as f64;
+            let keeps = if self.voice { loud } else { !(loud && ranged) };
+
+            if keeps {
+                self.pending = 0;
+            } else {
+                self.pending += 1;
+
+                let duration = if self.voice {
+                    self.settings.hangover
+                } else {
+                    self.settings.onset
+                } / self.settings.block;
+
+                if self.pending >= duration {
+                    self.voice = !self.voice;
+                    self.pending = 0;
+                }
+            }
+
+            Some((level, crossings, self.floor, self.voice))
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn follows_the_reference() {
+        let mut checked = 0;
+        let mut disagreements = 0;
+        let mut worst = (0.0f64, 0.0f64, 0u32, 0u32);
+
+        for (rate, kind, ratio) in [
+            (16000, Noise::Pink, 10.0),
+            (8000, Noise::White, 20.0),
+            (48000, Noise::Hum, 5.0),
+        ] {
+            let scene = scene(Voice::Formants, rate, 12.0, rate as u64);
+            let background = noise(kind, rate, scene.speech.len(), 3);
+            let gain = 10f64.powf((-26.0 - ratio) / 20.0);
+            let mixed: Vec<f64> = scene
+                .speech
+                .iter()
+                .zip(&background)
+                .map(|(speech, noise)| speech + gain * noise)
+                .collect();
+            let samples = quantize(&mixed);
+            let mut detector = VoiceActivityDetector::new(rate);
+            let mut reference = Reference::new(rate, VoiceSettings::DEFAULT);
+
+            for sample in samples {
+                Analyzer::<Fixed>::analyze(&mut detector, &[Fixed::from_sample(sample)]);
+
+                if let Some((level, crossings, floor, voice)) = reference.push(sample) {
+                    worst.0 = worst.0.max((detector.level() as f64 - level).abs());
+                    worst.1 = worst.1.max((detector.noise_floor() as f64 - floor).abs());
+                    let difference = detector.crossings().abs_diff(crossings);
+                    worst.2 = worst.2.max(difference);
+                    worst.3 += (difference > 2) as u32;
+                    checked += 1;
+                    disagreements += (detector.is_voice() != voice) as u32;
+                }
+            }
+        }
+
+        std::println!("{worst:?} {disagreements} of {checked}");
+        assert!(worst.0 < 0.03 && worst.1 < 0.05 && worst.2 <= 4);
+        assert!(worst.3 * 100 <= checked);
+        assert!(checked > 3000);
+        assert!(
+            disagreements * 200 <= checked,
+            "{disagreements} of {checked}"
+        );
+    }
+
+    fn state(detector: &VoiceActivityDetector) -> (bool, u64, u64, u64, i32, i32, u32, u8) {
+        (
+            detector.is_voice(),
+            detector.transition(),
+            detector.frames(),
+            detector.blocks(),
+            detector.level_fixed(),
+            detector.noise_floor_fixed(),
+            detector.crossings(),
+            detector.score(),
+        )
+    }
+
+    fn paths<R: Representation>(signal: &[i16], channels: u8, rate: u32) -> VoiceActivityDetector
+    where
+        VoiceActivityDetector: Analyzer<R>,
+    {
+        let mut tapped = VoiceActivityDetector::new(rate);
+        let mut output = vec![0i16; signal.len()];
+
+        let frames = samples_using::<R, _>(signal, channels)
+            .unwrap()
+            .tap(&mut tapped)
+            .write_samples(&mut output);
+
+        assert_eq!(frames as u64, tapped.frames());
+        assert_eq!(output, signal);
+
+        let mut sliced = VoiceActivityDetector::new(rate);
+
+        assert_eq!(
+            analyze_using::<R, _, _>(signal, channels, &mut sliced),
+            Ok(frames)
+        );
+        assert_eq!(state(&sliced), state(&tapped));
+
+        let bytes: Vec<u8> = signal
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect();
+        let mut decoded = VoiceActivityDetector::new(rate);
+
+        assert_eq!(
+            analyze_bytes_using::<R, _>(&bytes, Format::I16, channels, &mut decoded),
+            Ok(frames)
+        );
+        assert_eq!(state(&decoded), state(&tapped));
+
+        tapped
+    }
+
+    #[test]
+    fn takes_every_path() {
+        let rate = 8000;
+        let seconds = if cfg!(miri) { 0.6 } else { 6.0 };
+        let mut speech = vec![0i16; (seconds * rate as f64) as usize];
+        let begin = speech.len() / 3;
+
+        for (index, sample) in speech.iter_mut().enumerate().skip(begin) {
+            if (index - begin) % 4000 < 3200 {
+                *sample = triangle(index, 40, 3000);
+            }
+        }
+
+        let mono_fixed = paths::<Fixed>(&speech, 1, rate);
+        let mono_float = paths::<Float>(&speech, 1, rate);
+
+        assert_eq!(state(&mono_fixed), state(&mono_float));
+        assert!(mono_fixed.is_voice());
+        assert_eq!(mono_fixed.transition(), begin as u64);
+
+        for channels in [2u8, 3] {
+            let interleaved: Vec<i16> = speech
+                .iter()
+                .enumerate()
+                .flat_map(|(index, sample)| {
+                    (0..channels).map(move |channel| match channel {
+                        0 => *sample,
+                        1 => sample / 2 + (index % 7) as i16 - 3,
+                        _ => -*sample,
+                    })
+                })
+                .collect();
+            let fixed = paths::<Fixed>(&interleaved, channels, rate);
+            let float = paths::<Float>(&interleaved, channels, rate);
+
+            assert!(fixed.is_voice() && float.is_voice());
+            assert_eq!(fixed.transition(), begin as u64);
+            assert_eq!(float.transition(), begin as u64);
+            assert_eq!(fixed.blocks(), float.blocks());
+            assert_eq!(fixed.frames(), speech.len() as u64);
+        }
+    }
+
+    fn triangle(index: usize, period: usize, amplitude: i32) -> i16 {
+        let phase = (index % period) as i32;
+        let half = period as i32 / 2;
+        let ramp = if phase < half {
+            phase
+        } else {
+            period as i32 - phase
+        };
+
+        ((2 * ramp - half) * amplitude / half) as i16
+    }
+
+    #[test]
+    fn finds_onsets_and_offsets() {
+        let rate = 16000;
+        let mut signal = vec![0i16; 80000];
+
+        for (index, sample) in signal.iter_mut().enumerate() {
+            if (16000..32000).contains(&index) || (34400..42400).contains(&index) {
+                *sample = triangle(index, 50, 3000);
+            }
+        }
+
+        let mut detector = VoiceActivityDetector::new(rate);
+
+        assert_eq!(detector.block_frames(), 160);
+
+        analyze_using::<Fixed, _, _>(&signal[..16479], 1, &mut detector).unwrap();
+        assert!(!detector.is_voice());
+        assert!(detector.score() > 0);
+
+        analyze_using::<Fixed, _, _>(&signal[16479..16480], 1, &mut detector).unwrap();
+        assert!(detector.is_voice());
+        assert_eq!(detector.transition(), 16000);
+        assert_eq!(detector.noise_floor(), -100.0);
+        assert!([600, 700].contains(&detector.crossing_rate()));
+
+        analyze_using::<Fixed, _, _>(&signal[16480..42400 + 4640], 1, &mut detector).unwrap();
+        assert!(detector.is_voice());
+        assert_eq!(detector.transition(), 16000);
+        assert!(detector.score() < 8);
+
+        analyze_using::<Fixed, _, _>(&signal[42400 + 4640..42400 + 4800], 1, &mut detector)
+            .unwrap();
+        assert!(!detector.is_voice());
+        assert_eq!(detector.transition(), 42400);
+
+        analyze_using::<Fixed, _, _>(&signal[42400 + 4800..], 1, &mut detector).unwrap();
+        assert!(!detector.is_voice());
+        assert_eq!(detector.frames(), 80000);
+        assert_eq!(detector.blocks(), 500);
+
+        let mut steady = VoiceActivityDetector::new(rate);
+        analyze_using::<Fixed, _, _>(&signal[16000..32000], 1, &mut steady).unwrap();
+        assert!(!steady.is_voice());
+        assert!(steady.score() < 8);
+
+        let mut late = VoiceActivityDetector::new(rate);
+        analyze_using::<Fixed, _, _>(&signal[..20000], 1, &mut late).unwrap();
+        assert_eq!(late.score(), 255);
+
+        late.reset();
+        assert_eq!(late, VoiceActivityDetector::new(rate));
+    }
+
+    #[test]
+    fn ignores_noise_and_hum() {
+        let seconds = if cfg!(miri) { 0.5 } else { 8.0 };
+
+        for rate in [8000, 16000, 48000] {
+            let length = (seconds * rate as f64) as usize;
+            let start = length / 4;
+            let white = noise(Noise::White, rate, length, 11);
+            let pink = noise(Noise::Pink, rate, length, 12);
+            let hum: Vec<f64> = (0..length)
+                .map(|index| (TAU * 50.0 * index as f64 / rate as f64).sin())
+                .collect();
+
+            for (name, signal, level) in [
+                ("silence", vec![0.0; length], 0.0),
+                ("white", white.clone(), 0.03),
+                ("pink", pink.clone(), 0.03),
+                ("hum", hum.clone(), 0.1),
+                ("loud hum", hum.clone(), 0.9),
+            ] {
+                for sudden in [false, true] {
+                    let scaled: Vec<f64> = signal
+                        .iter()
+                        .enumerate()
+                        .map(|(index, sample)| {
+                            if sudden && index < start {
+                                0.0
+                            } else {
+                                sample * level
+                            }
+                        })
+                        .collect();
+                    let samples = quantize(&scaled);
+                    let mut detector = VoiceActivityDetector::new(rate);
+                    let decided = decisions::<Fixed>(&samples, 1, &mut detector);
+                    let alarms = decided.iter().filter(|voice| **voice).count();
+
+                    if name == "pink" && sudden {
+                        continue;
+                    }
+
+                    assert_eq!(alarms, 0, "{name} {rate} {sudden}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn handles_edges() {
+        let mut detector = VoiceActivityDetector::new(8000);
+
+        assert_eq!(
+            analyze_using::<Fixed, _, _>(&[0i16; 0], 2, &mut detector),
+            Ok(0)
+        );
+        assert_eq!(detector.frames(), 0);
+        assert_eq!(detector.noise_floor(), -100.0);
+        assert_eq!(detector.level(), -100.0);
+        assert_eq!(detector.crossing_rate(), 0);
+
+        for _ in 0..80 {
+            Analyzer::<Fixed>::analyze(&mut detector, &[]);
+        }
+
+        assert_eq!((detector.blocks(), detector.level()), (1, -100.0));
+
+        let mut minimum = VoiceActivityDetector::new(8000);
+
+        for index in 0..800 {
+            let value = if index % 2 == 0 { i32::MIN } else { i32::MAX };
+            Analyzer::<Fixed>::analyze(&mut minimum, &[value]);
+
+            if index == 79 {
+                assert_eq!(minimum.crossings(), 80);
+            }
+        }
+
+        let nyquist = 20.0 * high_pass_gain(8000, 4000.0).log10();
+
+        assert!((minimum.level() as f64 - nyquist).abs() < 0.02);
+        assert!(!minimum.is_voice());
+
+        let mut float = VoiceActivityDetector::new(8000);
+
+        for index in 0..800 {
+            let value = match index % 4 {
+                0 => f32::INFINITY,
+                1 => f32::NAN,
+                2 => f32::NEG_INFINITY,
+                _ => f32::NAN,
+            };
+            Analyzer::<Float>::analyze(&mut float, &[value]);
+        }
+
+        let mut expected = VoiceActivityDetector::new(8000);
+
+        for index in 0..800 {
+            let value = match index % 4 {
+                0 => 32767i16,
+                2 => -32768,
+                _ => 0,
+            };
+            Analyzer::<Fixed>::analyze(&mut expected, &[Fixed::from_sample(value)]);
+        }
+
+        assert_eq!(state(&float), state(&expected));
+
+        let mut long = VoiceActivityDetector::with_settings(
+            48000,
+            VoiceSettings {
+                block: 5000,
+                ..VoiceSettings::DEFAULT
+            },
+        );
+
+        assert_eq!(long.block_frames(), 65535);
+
+        long.frames = u64::MAX - 70000;
+
+        for index in 0..65535 {
+            let value = if index % 2 == 0 { i16::MIN } else { i16::MAX };
+            Analyzer::<Fixed>::analyze(&mut long, &[Fixed::from_sample(value)]);
+        }
+
+        let nyquist = 20.0 * high_pass_gain(48000, 24000.0).log10();
+
+        assert!((long.level() as f64 - nyquist).abs() < 0.02);
+        assert_eq!(long.frames(), u64::MAX - 70000 + 65535);
+        assert_eq!(long.blocks(), 1);
+    }
+
+    #[test]
+    fn converts_the_settings() {
+        for (rate, frames, shift) in [
+            (8000, 80, 4),
+            (16000, 160, 5),
+            (44100, 441, 6),
+            (48000, 480, 6),
+            (96000, 960, 7),
+        ] {
+            let detector = VoiceActivityDetector::new(rate);
+
+            assert_eq!(detector.block_frames(), frames);
+            assert_eq!(detector.shift, shift);
+            assert_eq!(detector.sample_rate(), rate);
+            assert_eq!(detector.settings(), VoiceSettings::default());
+            assert_eq!(
+                (detector.onset, detector.hangover, detector.window),
+                (3, 30, 75)
+            );
+            assert_eq!(
+                (detector.lowest, detector.highest),
+                (
+                    (150 * frames + rate / 2) / rate,
+                    (3000 * frames + rate / 2) / rate
+                )
+            );
+            assert_eq!(detector.threshold, 6 << 8);
+        }
+
+        let settings = VoiceSettings {
+            block: 0,
+            threshold: 0,
+            minimum: -120,
+            lowest_crossings: 0,
+            highest_crossings: 0,
+            onset: 0,
+            hangover: 0,
+            floor: 0,
+        };
+        let detector = VoiceActivityDetector::with_settings(16000, settings);
+
+        assert_eq!(detector.block_frames(), 1);
+        assert_eq!(
+            (detector.onset, detector.hangover, detector.window),
+            (1, 1, 1)
+        );
+        assert_eq!((detector.lowest, detector.highest), (0, 0));
+        assert_eq!(detector.settings(), settings);
+
+        let mut stopped = VoiceActivityDetector::new(0);
+
+        assert_eq!(stopped.block_frames(), 1);
+
+        for _ in 0..10 {
+            Analyzer::<Fixed>::analyze(&mut stopped, &[i32::MAX]);
+        }
+
+        assert!(!stopped.is_voice());
+        assert_eq!(stopped.crossing_rate(), 0);
     }
 }
