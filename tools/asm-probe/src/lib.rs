@@ -7,6 +7,7 @@ use nanoaudio_dsp::{
 };
 use nanoaudio_g711::{Law, G711};
 use nanoaudio_qoa::{QoaDecoder, QoaEncoder};
+use nanoaudio_sbc::{SbcDecoder, SbcEncoder};
 
 #[inline(never)]
 #[no_mangle]
@@ -161,6 +162,22 @@ pub fn probe_qoa_encode_stereo(
     input: &[i16],
     output: &mut [u8],
 ) -> usize {
+    encoder
+        .encode(input, output)
+        .map_or(0, |progress| progress.produced)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_sbc_decode(decoder: &mut SbcDecoder, input: &[u8], output: &mut [i16]) -> usize {
+    decoder
+        .decode(input, output)
+        .map_or(0, |progress| progress.produced)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_sbc_encode(encoder: &mut SbcEncoder, input: &[i16], output: &mut [u8]) -> usize {
     encoder
         .encode(input, output)
         .map_or(0, |progress| progress.produced)

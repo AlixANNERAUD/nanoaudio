@@ -61,6 +61,8 @@ INLINED = [
 NO_WIDE_MULTIPLY_IN_LOOPS = [
     "probe_fixed_resample_linear_i16",
     "probe_fixed_stream_resample_linear_i16",
+    "probe_sbc_decode",
+    "probe_sbc_encode",
 ]
 
 SCALAR = [

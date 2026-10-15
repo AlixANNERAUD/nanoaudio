@@ -48,6 +48,7 @@ jobs:
               - 'crates/nanoaudio-dsp/**'
               - 'crates/nanoaudio-g711/**'
               - 'crates/nanoaudio-qoa/**'
+              - 'crates/nanoaudio-sbc/**'
             bench:
               - *shared
               - 'crates/**'
