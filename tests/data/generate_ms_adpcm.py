@@ -1,13 +1,15 @@
 import math
+import os
 import shutil
 import struct
+import subprocess
+import tempfile
 from pathlib import Path
 
 import numpy
 import soundfile
 
 directory = Path(__file__).parent
-encoded_directory = directory.parent.parent / "target" / "tmp"
 
 
 def chunks(file):
@@ -83,10 +85,14 @@ save("ms_adpcm_corrupt_decoded.bin", read(directory / "ms_adpcm_corrupt.wav"))
 
 (directory / "ms_adpcm_input.bin").write_bytes(signal(1000, 2).astype("<i2").tobytes())
 
-for name in ("mono", "stereo"):
-    source = encoded_directory / f"ms_adpcm_encoded_{name}.wav"
-    if not source.exists():
-        print(f"{source} is missing, run cargo test --test ms_adpcm first")
-        continue
-    shutil.copyfile(source, directory / source.name)
-    save(f"ms_adpcm_encoded_{name}_decoded.bin", read(directory / source.name))
+with tempfile.TemporaryDirectory() as encoded_directory:
+    subprocess.run(
+        ["cargo", "test", "--test", "ms_adpcm", "encoder_matches_libsndfile"],
+        cwd=directory.parent.parent,
+        env=os.environ | {"NANOAUDIO_GENERATED": encoded_directory},
+        check=False,
+    )
+    for name in ("mono", "stereo"):
+        source = Path(encoded_directory) / f"ms_adpcm_encoded_{name}.wav"
+        shutil.copyfile(source, directory / source.name)
+        save(f"ms_adpcm_encoded_{name}_decoded.bin", read(directory / source.name))

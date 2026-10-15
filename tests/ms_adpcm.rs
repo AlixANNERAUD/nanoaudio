@@ -305,12 +305,11 @@ fn encoder_matches_libsndfile(channels: u8, file: &[u8], decoded: &[u8]) {
 
     let name = if channels == 1 { "mono" } else { "stereo" };
     let generated = wav_file(&encoder, channels as u16, &encoded);
-    std::fs::write(
-        std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
-            .join(format!("ms_adpcm_encoded_{name}.wav")),
-        &generated,
-    )
-    .unwrap();
+    if let Some(directory) = std::env::var_os("NANOAUDIO_GENERATED") {
+        let path = std::path::Path::new(&directory).join(format!("ms_adpcm_encoded_{name}.wav"));
+
+        std::fs::write(path, &generated).unwrap();
+    }
     assert_eq!(generated, file);
 
     let expected = samples(decoded);
