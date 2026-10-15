@@ -1,11 +1,48 @@
 use nanoaudio_core::{Format, I24, Sample};
 
-use crate::bytes::{Bytes, pairs, read};
+use crate::bytes::{Bytes, read};
 use crate::{DefaultRepresentation, Representation, Stream};
 
 type Value<S> = <<S as Stream>::Representation as Representation>::Value;
 
-const DEFAULT_SEED: u32 = 0x9E37_79B9;
+const MULTIPLIER: u32 = 0x915F_77F5;
+const INCREMENT: u32 = 0x9E37_79B9;
+const LANES: usize = 8;
+const VECTOR: bool = cfg!(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_feature = "simd128"
+));
+
+const fn inverse(value: u32) -> u32 {
+    let mut inverse = value;
+    let mut round = 0;
+
+    while round < 5 {
+        inverse = inverse.wrapping_mul(2u32.wrapping_sub(value.wrapping_mul(inverse)));
+        round += 1;
+    }
+
+    inverse
+}
+
+const fn jump(steps: usize) -> (u32, u32) {
+    let mut multiplier = 1u32;
+    let mut increment = 0u32;
+    let mut step = 0;
+
+    while step < steps {
+        multiplier = multiplier.wrapping_mul(MULTIPLIER);
+        increment = increment.wrapping_mul(MULTIPLIER).wrapping_add(INCREMENT);
+        step += 1;
+    }
+
+    (multiplier, increment)
+}
+
+const INVERSE_MULTIPLIER: u32 = inverse(MULTIPLIER);
+const LANE_JUMP: (u32, u32) = jump(LANES);
 
 #[derive(Debug, Clone, Copy)]
 struct Noise {
@@ -24,30 +61,87 @@ impl Noise {
         };
 
         Self {
-            state: if seed == 0 { DEFAULT_SEED } else { seed },
+            state: seed,
             shift,
             mask,
         }
     }
 
     #[inline(always)]
-    fn next(&mut self) -> i32 {
-        let mut state = self.state;
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        self.state = state;
-
-        let first = (((state & 0xFFFF) << 15) >> self.shift) as i32;
-        let second = (((state >> 16) << 15) >> self.shift) as i32;
+    fn value(&self, state: u32) -> i32 {
+        let bits = state ^ (state >> 16);
+        let first = (((bits & 0xFFFF) << 15) >> self.shift) as i32;
+        let second = (((bits >> 16) << 15) >> self.shift) as i32;
 
         (first - second) & self.mask
     }
 
     #[inline(always)]
-    fn apply<R: Representation>(&mut self, value: R::Value) -> R::Value {
-        R::add(value, R::from_sample(self.next()))
+    fn next(&mut self) -> i32 {
+        self.state = self.state.wrapping_mul(MULTIPLIER).wrapping_add(INCREMENT);
+        self.value(self.state)
     }
+
+    #[inline(always)]
+    fn lanes(&self) -> [u32; LANES] {
+        let mut lanes = [self.state; LANES];
+
+        for index in (0..LANES - 1).rev() {
+            lanes[index] = lanes[index + 1]
+                .wrapping_sub(INCREMENT)
+                .wrapping_mul(INVERSE_MULTIPLIER);
+        }
+
+        lanes
+    }
+
+    #[inline(always)]
+    fn zip<A, B>(
+        &mut self,
+        input: &[A],
+        output: &mut [B],
+        mut function: impl FnMut(&A, &mut B, i32),
+    ) {
+        if !VECTOR {
+            for (input, output) in input.iter().zip(output.iter_mut()) {
+                function(input, output, self.next());
+            }
+
+            return;
+        }
+
+        let input_blocks = input.as_chunks::<LANES>().0;
+        let output_blocks = output.as_chunks_mut::<LANES>().0;
+        let mut lanes = self.lanes();
+        let mut blocks = 0;
+
+        for (input, output) in input_blocks.iter().zip(output_blocks.iter_mut()) {
+            lanes = lanes.map(|lane| lane.wrapping_mul(LANE_JUMP.0).wrapping_add(LANE_JUMP.1));
+
+            for ((input, output), lane) in input.iter().zip(output.iter_mut()).zip(lanes) {
+                function(input, output, self.value(lane));
+            }
+
+            blocks += 1;
+        }
+
+        self.state = lanes[LANES - 1];
+        let done = blocks * LANES;
+
+        for (input, output) in input[done..].iter().zip(output[done..].iter_mut()) {
+            function(input, output, self.next());
+        }
+    }
+
+    #[inline(always)]
+    fn apply<R: Representation>(&mut self, value: R::Value) -> R::Value {
+        dither::<R>(value, self.next())
+    }
+}
+
+#[inline(always)]
+fn dither<R: Representation>(value: R::Value, noise: i32) -> R::Value {
+    R::add(value, R::from_sample(noise))
 }
 
 /// The stage returned by [`Stream::dither`], which adds triangular (TPDF) dither of one LSB of the target format to every value.
@@ -89,7 +183,7 @@ impl<St: Stream> Stream for Dither<St> {
 
 /// Converts samples like [`convert`](fn@crate::convert), adding triangular (TPDF) dither of one LSB of the output format.
 ///
-/// `state` carries the noise generator between calls: seed it once, with any value, and keep passing it. Processing uses the [`DefaultRepresentation`].
+/// `state` carries the noise generator between calls: seed it once, with any value, and keep passing it. A seed gives the same noise on every target, however the input is split into calls. Processing uses the [`DefaultRepresentation`].
 pub fn convert_dithered<I: Sample, O: Sample>(
     input: &[I],
     output: &mut [O],
@@ -98,11 +192,12 @@ pub fn convert_dithered<I: Sample, O: Sample>(
     let mut noise = Noise::new(O::FORMAT, *state);
     let count = input.len().min(output.len());
 
-    for (output, input) in output.iter_mut().zip(input) {
-        *output = DefaultRepresentation::to_sample(
-            noise.apply::<DefaultRepresentation>(DefaultRepresentation::from_sample(*input)),
-        );
-    }
+    noise.zip(input, output, |input, output, noise| {
+        *output = DefaultRepresentation::to_sample(dither::<DefaultRepresentation>(
+            DefaultRepresentation::from_sample(*input),
+            noise,
+        ));
+    });
 
     *state = noise.state;
     count
@@ -153,14 +248,17 @@ fn convert_bytes_dithered_typed<
     state: &mut u32,
 ) -> usize {
     let mut noise = Noise::new(O::FORMAT, *state);
-    let count = pairs::<INPUT, OUTPUT>(input, output, |input, output| {
+    let input = input.as_chunks::<INPUT>().0;
+    let output = output.as_chunks_mut::<OUTPUT>().0;
+
+    noise.zip(input, output, |input, output, noise| {
         let value = DefaultRepresentation::from_sample(read::<I, INPUT, OUTPUT>(input));
-        DefaultRepresentation::to_sample::<O>(noise.apply::<DefaultRepresentation>(value))
+        DefaultRepresentation::to_sample::<O>(dither::<DefaultRepresentation>(value, noise))
             .store(output);
     });
 
     *state = noise.state;
-    count
+    input.len().min(output.len())
 }
 
 #[cfg(test)]
@@ -257,6 +355,55 @@ mod tests {
                     assert_eq!(actual_state, expected_state);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn noise_sequence_is_stable() {
+        let mut noise = Noise::new(Format::I16, 1);
+        let values: [i32; 8] = core::array::from_fn(|_| noise.next());
+
+        assert_eq!(
+            values,
+            [
+                44_706, -23_277, -20_996, 13_197, 9_578, 23_591, -12_512, 15_561
+            ]
+        );
+    }
+
+    #[test]
+    fn lanes_match_the_serial_sequence() {
+        for length in 0..40 {
+            for seed in [0, 1, u32::MAX] {
+                let mut serial = Noise::new(Format::U8, seed);
+                let mut lanes = Noise::new(Format::U8, seed);
+                let input = [0u8; 40];
+                let mut output = [0i32; 40];
+
+                lanes.zip(&input[..length], &mut output, |_, output, noise| {
+                    *output = noise;
+                });
+
+                assert!(output[..length].iter().all(|value| *value == serial.next()));
+                assert_eq!(lanes.state, serial.state);
+            }
+        }
+    }
+
+    #[test]
+    fn slices_continue_at_any_split() {
+        let input: [i32; 37] = core::array::from_fn(|index| index as i32 * 1_000_003);
+        let mut whole = [0i16; 37];
+        let mut state = 3;
+        convert_dithered(&input, &mut whole, &mut state);
+
+        for split in 0..input.len() {
+            let mut parts = [0i16; 37];
+            let mut state = 3;
+            convert_dithered(&input[..split], &mut parts[..split], &mut state);
+            convert_dithered(&input[split..], &mut parts[split..], &mut state);
+
+            assert_eq!(parts, whole);
         }
     }
 
