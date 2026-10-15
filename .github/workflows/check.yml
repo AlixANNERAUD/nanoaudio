@@ -22,6 +22,7 @@ jobs:
       rust: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rust == 'true' }}
       asm: ${{ github.event_name != 'pull_request' || steps.filter.outputs.asm == 'true' }}
       bench: ${{ github.event_name != 'pull_request' || steps.filter.outputs.bench == 'true' }}
+      web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.web == 'true' }}
     steps:
       - uses: actions/checkout@v4
         if: github.event_name == 'pull_request'
@@ -50,6 +51,9 @@ jobs:
               - *shared
               - 'crates/**'
               - 'tools/bench/**'
+            web:
+              - *shared
+              - 'crates/**'
 
   lint:
     needs: changes
@@ -232,6 +236,50 @@ jobs:
         env:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime --dir=/
 
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: web
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Read the wasm-bindgen Version
+        id: wasm-bindgen
+        run: echo "version=$(cargo metadata --format-version 1 --filter-platform wasm32-unknown-unknown | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')" >> "$GITHUB_OUTPUT"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@${{ steps.wasm-bindgen.outputs.version }}
+
+      - name: Clippy for the Browser
+        run: cargo clippy -p nanoaudio-web --all-targets --target wasm32-unknown-unknown -- -D warnings
+
+      - name: Documentation for the Browser
+        run: cargo doc -p nanoaudio-web --no-deps --target wasm32-unknown-unknown
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      - name: Build the Example Page
+        run: |
+          cargo build -p nanoaudio-web --example player --target wasm32-unknown-unknown --release
+          wasm-bindgen --target web --out-dir crates/nanoaudio-web/examples/www/pkg target/wasm32-unknown-unknown/release/examples/player.wasm
+          test -f crates/nanoaudio-web/examples/www/pkg/player_bg.wasm
+
+      - name: Check the Worklet Scripts
+        run: |
+          node --check crates/nanoaudio-web/src/worklet.js
+          node --check crates/nanoaudio-web/src/polyfill.js
+
   asm:
     needs: changes
     if: needs.changes.outputs.asm == 'true'
@@ -342,7 +390,7 @@ jobs:
         run: cargo package --workspace
 
   ci:
-    needs: [changes, lint, test, coverage, crates, embedded, wasm, asm, bench, miri, msrv, package]
+    needs: [changes, lint, test, coverage, crates, embedded, wasm, web, asm, bench, miri, msrv, package]
     if: always()
     runs-on: ubuntu-latest
     steps:

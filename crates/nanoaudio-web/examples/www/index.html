@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>nanoaudio-web</title>
+</head>
+<body>
+  <h1>nanoaudio-web</h1>
+  <p>
+    <button id="sine">Play a 440 Hz sine</button>
+    <label>Play a WAV file <input id="wav" type="file" accept=".wav,audio/wav"></label>
+    <button id="listen">Show the microphone level</button>
+    <button id="stop">Stop</button>
+  </p>
+  <p>Underruns: <output id="underruns">0</output></p>
+  <p>Microphone peak: <meter id="level" max="1"></meter> <output id="overruns"></output></p>
+  <script type="module">
+    import init, { play_sine, play_wav, listen } from "./pkg/player.js";
+
+    await init();
+
+    const element = (id) => document.getElementById(id);
+    let playback;
+    let capture;
+    let timer;
+
+    const stop = () => {
+      clearInterval(timer);
+      playback?.free();
+      capture?.free();
+      playback = undefined;
+      capture = undefined;
+    };
+
+    const play = async (start) => {
+      stop();
+      playback = await start();
+      timer = setInterval(() => element("underruns").value = playback.underruns(), 250);
+    };
+
+    element("sine").onclick = () => play(play_sine);
+    element("wav").onchange = async (event) => {
+      const file = event.target.files[0];
+      if (file !== undefined) {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        await play(() => play_wav(bytes));
+      }
+    };
+    element("listen").onclick = async () => {
+      stop();
+      capture = await listen((level) => element("level").value = level);
+      timer = setInterval(() => element("overruns").value = `${capture.overruns()} overruns`, 250);
+    };
+    element("stop").onclick = stop;
+  </script>
+</body>
+</html>
