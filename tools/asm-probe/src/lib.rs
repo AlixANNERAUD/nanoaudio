@@ -57,6 +57,28 @@ pub fn probe_fixed_stream_i16(input: &[i16], output: &mut [i16], volume: u16) ->
 
 #[inline(never)]
 #[no_mangle]
+pub fn probe_fixed_stream_i24(input: &[I24], output: &mut [I24], volume: u16) -> usize {
+    match samples_using::<Fixed, I24>(input, 2) {
+        Ok(stream) => stream
+            .volume(Volume::from_raw(volume))
+            .write_samples(output),
+        Err(_) => 0,
+    }
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_fixed_stream_i32(input: &[i32], output: &mut [i32], volume: u16) -> usize {
+    match samples_using::<Fixed, i32>(input, 2) {
+        Ok(stream) => stream
+            .volume(Volume::from_raw(volume))
+            .write_samples(output),
+        Err(_) => 0,
+    }
+}
+
+#[inline(never)]
+#[no_mangle]
 pub fn probe_float_volume_i16(samples: &mut [i16], volume: u16) {
     Volume::from_raw(volume).apply_to_using::<Float, i16>(samples);
 }

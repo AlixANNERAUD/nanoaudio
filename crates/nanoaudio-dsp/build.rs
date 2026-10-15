@@ -21,8 +21,13 @@ fn has_float(target: &str, architecture: &str, abi: &str, features: &str) -> boo
     }
 }
 
+fn has_narrow_multiply(target: &str) -> bool {
+    target.starts_with("thumbv6m-") || target.starts_with("thumbv8m.base-")
+}
+
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(nanoaudio_float)");
+    println!("cargo::rustc-check-cfg=cfg(nanoaudio_narrow_multiply)");
     println!("cargo::rerun-if-changed=build.rs");
 
     let target = env::var("TARGET").unwrap_or_default();
@@ -40,5 +45,9 @@ fn main() {
 
     if float {
         println!("cargo::rustc-cfg=nanoaudio_float");
+    }
+
+    if has_narrow_multiply(&target) {
+        println!("cargo::rustc-cfg=nanoaudio_narrow_multiply");
     }
 }

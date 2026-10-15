@@ -48,6 +48,14 @@ pub trait Representation: Copy + Default + Send + Sync + 'static {
     /// Multiplies a value by a gain.
     fn amplify(value: Self::Value, gain: Self::Gain) -> Self::Value;
 
+    /// Multiplies a value by a gain returned by [`gain`](Self::gain).
+    ///
+    /// Gives the same result as [`amplify`](Self::amplify), and can be faster since the gain is known to come from a [`Volume`].
+    #[inline]
+    fn amplify_volume(value: Self::Value, gain: Self::Gain) -> Self::Value {
+        Self::amplify(value, gain)
+    }
+
     /// Adds two values.
     fn add(left: Self::Value, right: Self::Value) -> Self::Value;
 
@@ -169,6 +177,30 @@ fn mix_split<S: Sample>(output: i32, input: i32, gain: i32) -> i32 {
     saturate::<S>(output + amplify_split::<S>(input, gain))
 }
 
+const HALF_BITS: u32 = 16;
+
+const HALF_MASK: i32 = (1 << HALF_BITS) - 1;
+
+const UNIT_BITS: u32 = HALF_BITS - Volume::FRACTIONAL_BITS;
+
+#[inline]
+fn amplify_halves(value: i32, gain: i32) -> i32 {
+    let high = (value >> HALF_BITS) * gain;
+    let low = ((value & HALF_MASK) as u32 * gain as u32)
+        .wrapping_add(ROUNDING as u32)
+        .wrapping_add((high >> 31) as u32)
+        >> Volume::FRACTIONAL_BITS;
+    let units = high + (low >> UNIT_BITS) as i32;
+
+    if units > i32::MAX >> UNIT_BITS {
+        i32::MAX
+    } else if units < i32::MIN >> UNIT_BITS {
+        i32::MIN
+    } else {
+        (units << UNIT_BITS) | (low & ((1 << UNIT_BITS) - 1)) as i32
+    }
+}
+
 /// Fixed-point processing, for cores without a floating-point unit.
 ///
 /// Values are full-scale `i32` (Q31) and gains are Q4.12. Every operation saturates.
@@ -200,6 +232,15 @@ impl Representation for Fixed {
     #[inline]
     fn amplify(value: i32, gain: i32) -> i32 {
         amplify_wide::<i32>(value, gain)
+    }
+
+    #[inline]
+    fn amplify_volume(value: i32, gain: i32) -> i32 {
+        if cfg!(nanoaudio_narrow_multiply) {
+            amplify_halves(value, gain)
+        } else {
+            Self::amplify(value, gain)
+        }
     }
 
     #[inline]
@@ -474,6 +515,44 @@ mod tests {
                         generic_mix(output, sample, gain)
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_halves_match_wide_path() {
+        let gain_stride = if cfg!(miri) { 4_099 } else { 1 };
+        let value_count = if cfg!(miri) { 16 } else { 96 };
+        let mut state = 0x9E37_79B9u32;
+
+        for raw in (0..=u16::MAX).step_by(gain_stride).chain(GAINS) {
+            let gain = Fixed::gain(Volume::from_raw(raw));
+            let edges = [
+                i32::MIN,
+                i32::MIN + 1,
+                -0x0001_0000,
+                -0xFFFF,
+                -1,
+                0,
+                1,
+                0xFFFF,
+                0x0001_0000,
+                i32::MAX - 1,
+                i32::MAX,
+            ];
+            let random = (0..value_count).map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as i32
+            });
+
+            for value in edges.into_iter().chain(random) {
+                assert_eq!(
+                    amplify_halves(value, gain),
+                    Fixed::amplify(value, gain),
+                    "{value} {raw}"
+                );
             }
         }
     }

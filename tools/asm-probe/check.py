@@ -63,6 +63,14 @@ NO_WIDE_MULTIPLY_IN_LOOPS = [
     "probe_fixed_stream_resample_linear_i16",
 ]
 
+NARROW_MULTIPLY = ("m0plus", "m23")
+
+NO_WIDE_MULTIPLY_IN_STAGE_LOOPS = [
+    "probe_fixed_stream_i16",
+    "probe_fixed_stream_i24",
+    "probe_fixed_stream_i32",
+]
+
 SCALAR = [
     "probe_qoa_decode",
     "probe_qoa_encode",
@@ -256,7 +264,10 @@ def analyse(name, assembly, opt_level):
         total = sum(len(instructions(bodies[member])) for member in reached)
         sizes = [len(instructions(body)) for member in reached for body in loops(bodies[member])]
         report.append("{:<8} {:<26} instructions {:>4}  loops {}".format(name, function, total, sizes))
-    expected = set(CALL_FREE + HELIUM + FIXED_I24 + FLAT + INLINED + SCALAR + NO_WIDE_MULTIPLY_IN_LOOPS)
+    expected = set(
+        CALL_FREE + HELIUM + FIXED_I24 + FLAT + INLINED + SCALAR + NO_WIDE_MULTIPLY_IN_LOOPS
+        + NO_WIDE_MULTIPLY_IN_STAGE_LOOPS
+    )
     for function in sorted(expected - set(probes)):
         failures.append(name + ": missing " + function)
     for function in FIXED_NARROW:
@@ -274,6 +285,12 @@ def analyse(name, assembly, opt_level):
             for body in loops(bodies[member]):
                 if any(WIDE_MULTIPLY.search(line) for line in body):
                     failures.append(name + ": 64-bit multiply in a loop of " + function)
+    if name in NARROW_MULTIPLY:
+        for function in NO_WIDE_MULTIPLY_IN_STAGE_LOOPS:
+            for member in closure(bodies, function):
+                for body in loops(bodies[member]):
+                    if any(WIDE_MULTIPLY.search(line) for line in body):
+                        failures.append(name + ": 64-bit multiply in a loop of " + function)
     for function in FLAT:
         for member in closure(bodies, function):
             if nested(bodies[member]):
