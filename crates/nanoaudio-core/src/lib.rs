@@ -4,6 +4,8 @@
 
 /// A bit reader for the codecs that parse bit streams.
 pub mod bits;
+/// A walker over the chunks of RIFF and IFF files, such as WAV and AIFF.
+pub mod chunk;
 /// The [`Decoder`](codec::Decoder) and [`Encoder`](codec::Encoder) traits every codec implements, and seeking.
 pub mod codec;
 /// CRC-8 and CRC-16 checksums for the codecs that verify their frames.

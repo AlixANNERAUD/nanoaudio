@@ -1,8 +1,8 @@
 use nanoaudio_adpcm::{MS_ADPCM_MAXIMUM_COEFFICIENTS, MsAdpcm, MsAdpcmCoefficients};
+use nanoaudio_core::chunk::{ByteOrder, Chunks};
 use nanoaudio_core::{Configuration, Error, Format, Result};
 
 const RIFF_HEADER_SIZE: usize = 12;
-const CHUNK_HEADER_SIZE: usize = 8;
 const FORMAT_CHUNK_MINIMUM_SIZE: usize = 16;
 const MS_ADPCM_COEFFICIENTS_OFFSET: usize = 22;
 const FORMAT_CHUNK_MAXIMUM_SIZE: usize =
@@ -81,25 +81,17 @@ impl WavHeader {
             return Err(Error::InvalidHeader);
         }
 
-        let mut offset = RIFF_HEADER_SIZE;
+        let mut chunks = Chunks::new(bytes, RIFF_HEADER_SIZE, ByteOrder::LittleEndian);
         let mut format = None;
 
         loop {
-            let chunk = bytes
-                .get(offset..offset.saturating_add(CHUNK_HEADER_SIZE))
-                .ok_or(Error::Incomplete)?;
-            let identifier = &chunk[0..4];
-            let size = read_u32(&chunk[4..8]);
-            let body = offset.saturating_add(CHUNK_HEADER_SIZE);
+            let chunk = chunks.next_chunk()?;
 
-            match identifier {
+            match chunk.identifier {
                 b"fmt " => {
-                    let length = (size as usize).min(FORMAT_CHUNK_MAXIMUM_SIZE);
-                    let chunk = bytes
-                        .get(body..body.saturating_add(length))
-                        .ok_or(Error::Incomplete)?;
+                    let length = (chunk.size as usize).min(FORMAT_CHUNK_MAXIMUM_SIZE);
 
-                    format = Some(parse_format(chunk)?);
+                    format = Some(parse_format(chunk.body(length)?)?);
                 }
                 b"data" => {
                     let (configuration, encoding) = format.ok_or(Error::InvalidHeader)?;
@@ -107,17 +99,12 @@ impl WavHeader {
                     return Ok(Self {
                         configuration,
                         encoding,
-                        data_offset: body,
-                        data_size: size,
+                        data_offset: chunk.offset,
+                        data_size: chunk.size,
                     });
                 }
                 _ => {}
             }
-
-            offset = (size as usize)
-                .checked_add(size as usize & 1)
-                .and_then(|padded| body.checked_add(padded))
-                .ok_or(Error::InvalidHeader)?;
         }
     }
 
