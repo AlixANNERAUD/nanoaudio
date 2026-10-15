@@ -8,18 +8,18 @@ type Value<S> = <<S as Stream>::Representation as Representation>::Value;
 ///
 /// It receives every frame in the representation `R`, without a copy, and keeps fixed-size state. Results are read through the analyzer's own methods, at any rate, for example once per display refresh.
 ///
-/// [`Representation::magnitude`], [`Representation::FULL_SCALE`] and [`Representation::to_sample`] interpret values without depending on `R`. An analyzer can also be implemented for [`Fixed`](crate::Fixed) and [`Float`](crate::Float) separately, to work on `i32` and `f32` directly.
+/// [`Representation::to_sample`] converts values to a common domain, such as `i32` or `f32`, without depending on `R`. An analyzer can also be implemented for [`Fixed`](crate::Fixed) and [`Float`](crate::Float) separately, to work on `i32` and `f32` directly.
 ///
 /// ```
 /// use nanoaudio_dsp::{Analyzer, Representation, Stream, samples};
 ///
 /// #[derive(Default)]
-/// struct Loudest(i16);
+/// struct Loudest(u32);
 ///
 /// impl<R: Representation> Analyzer<R> for Loudest {
 ///     fn analyze(&mut self, frame: &[R::Value]) {
 ///         for value in frame {
-///             self.0 = self.0.max(R::to_sample(R::magnitude(*value)));
+///             self.0 = self.0.max(R::to_sample::<i32>(*value).unsigned_abs());
 ///         }
 ///     }
 /// }
@@ -32,7 +32,7 @@ type Value<S> = <<S as Stream>::Representation as Representation>::Value;
 ///     .tap(&mut loudest)
 ///     .write_samples(&mut output);
 ///
-/// assert_eq!(loudest.0, 3000);
+/// assert_eq!(loudest.0, 3000 << 16);
 /// assert_eq!(output, [100, -3000, 2000, 50]);
 /// ```
 pub trait Analyzer<R: Representation> {
@@ -148,7 +148,7 @@ where
 mod tests {
     use core::marker::PhantomData;
 
-    use nanoaudio_core::{I24, MAXIMUM_CHANNELS};
+    use nanoaudio_core::MAXIMUM_CHANNELS;
 
     use super::*;
     use crate::bytes::testing::{FORMATS, LENGTH, fill};
@@ -272,37 +272,16 @@ mod tests {
         assert_eq!(sliced.values()[3], -4000 << 16);
     }
 
-    fn magnitudes<R: Representation>() {
-        assert_eq!(
-            R::to_sample::<i16>(R::magnitude(R::from_sample(-1234i16))),
-            1234
-        );
-        assert_eq!(
-            R::to_sample::<i16>(R::magnitude(R::from_sample(i16::MIN))),
-            i16::MAX
-        );
-        assert_eq!(
-            R::to_sample::<I24>(R::magnitude(R::from_sample(I24::MIN))),
-            I24::MAX
-        );
-        assert_eq!(R::to_sample::<i32>(R::FULL_SCALE), i32::MAX);
-        assert!(R::magnitude(R::from_sample(i32::MIN)) >= R::FULL_SCALE);
-        assert!(R::magnitude(R::from_sample(i16::MAX)) < R::FULL_SCALE);
-        assert!(R::magnitude(R::SILENCE) == R::SILENCE);
-    }
-
     #[test]
     fn fixed() {
         passes_through_unchanged::<Fixed>();
         sees_the_frames_of_its_position::<Fixed>();
-        magnitudes::<Fixed>();
     }
 
     #[test]
     fn float() {
         passes_through_unchanged::<Float>();
         sees_the_frames_of_its_position::<Float>();
-        magnitudes::<Float>();
     }
 
     #[test]
