@@ -5,6 +5,7 @@
 mod ballistics;
 mod bands;
 mod counter;
+mod diagnostics;
 mod goertzel;
 mod level;
 mod measure;
@@ -14,6 +15,7 @@ mod stereo;
 pub use ballistics::*;
 pub use bands::*;
 pub use counter::*;
+pub use diagnostics::*;
 pub use goertzel::*;
 pub use level::*;
 pub use measure::*;
