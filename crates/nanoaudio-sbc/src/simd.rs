@@ -2,8 +2,8 @@ use wide::{i32x4, i64x4};
 
 use crate::{
     ANALYSIS_4, ANALYSIS_8, ANALYSIS_FRACTION, COSINE_FRACTION, MAXIMUM_SUBBANDS, PARTIAL_FRACTION,
-    PROTOTYPE_4, PROTOTYPE_8, PROTOTYPE_FRACTION, SUBBAND_FRACTION, SYNTHESIS, SYNTHESIS_4,
-    SYNTHESIS_8, WINDOW,
+    PROTOTYPE_4, PROTOTYPE_8, PROTOTYPE_FRACTION, SUBBAND_FRACTION, SYNTHESIS_4, SYNTHESIS_8,
+    Synthesis, WINDOW,
 };
 
 const fn transpose<const SIZE: usize>(matrix: &[i32; SIZE], rows: usize) -> [i32; SIZE] {
@@ -29,7 +29,7 @@ fn load(values: &[i32], offset: usize) -> i32x4 {
     i32x4::new(*values[offset..].first_chunk().unwrap())
 }
 
-pub(crate) fn synthesize(state: &mut [i32; SYNTHESIS], samples: &[i32], output: &mut [i16]) {
+pub(crate) fn synthesize(state: &mut Synthesis, samples: &[i32], output: &mut [i16]) {
     if samples.len() == 4 {
         synthesize_with::<4>(state, samples, output, &SYNTHESIS_4_COLUMNS, &PROTOTYPE_4);
     } else {
@@ -39,7 +39,7 @@ pub(crate) fn synthesize(state: &mut [i32; SYNTHESIS], samples: &[i32], output: 
 
 #[inline(always)]
 fn synthesize_with<const SUBBANDS: usize>(
-    state: &mut [i32; SYNTHESIS],
+    state: &mut Synthesis,
     samples: &[i32],
     output: &mut [i16],
     matrix: &[i32],
@@ -48,7 +48,7 @@ fn synthesize_with<const SUBBANDS: usize>(
     let samples = &samples[..SUBBANDS];
     let output = &mut output[..SUBBANDS];
 
-    state.copy_within(..18 * SUBBANDS, 2 * SUBBANDS);
+    let offsets = state.advance(SUBBANDS);
 
     let mut sums = [i64x4::ZERO; MAXIMUM_SUBBANDS / 2];
 
@@ -60,7 +60,7 @@ fn synthesize_with<const SUBBANDS: usize>(
         }
     }
 
-    for (values, sum) in state
+    for (values, sum) in state.values[offsets[0]..][..2 * SUBBANDS]
         .as_chunks_mut::<4>()
         .0
         .iter_mut()
@@ -81,13 +81,9 @@ fn synthesize_with<const SUBBANDS: usize>(
     for (lane, output) in output.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         let mut sum = i64x4::ZERO;
 
-        for group in 0..5 {
-            let base = 4 * SUBBANDS * group + 4 * lane;
-            let position = 2 * SUBBANDS * group + 4 * lane;
-
-            sum += load(state, base).widening_mul(load(prototype, position));
-            sum +=
-                load(state, base + 3 * SUBBANDS).widening_mul(load(prototype, position + SUBBANDS));
+        for (block, offset) in offsets.iter().enumerate() {
+            sum += load(&state.values, offset + 4 * lane)
+                .widening_mul(load(prototype, block * SUBBANDS + 4 * lane));
         }
 
         *output = ((rounding - sum) >> shift)
@@ -264,13 +260,17 @@ mod tests {
 
         for subbands in [4, 8] {
             for round in 0..ROUNDS {
-                let mut state = [0i32; SYNTHESIS];
+                let mut state = Synthesis::new();
 
                 if round % 2 == 0 {
-                    state.iter_mut().for_each(|value| *value = random.state());
+                    state
+                        .values
+                        .iter_mut()
+                        .for_each(|value| *value = random.state());
+                    state.newest = round / 2 % crate::SYNTHESIS_BLOCKS;
                 }
 
-                let mut expected_state = state;
+                let mut expected_state = state.clone();
 
                 for _ in 0..4 {
                     let mut samples = [0i32; MAXIMUM_SUBBANDS];
