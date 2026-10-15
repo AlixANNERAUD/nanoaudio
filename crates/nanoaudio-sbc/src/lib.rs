@@ -1,7 +1,9 @@
 #![no_std]
 #![doc = include_str!("../README.md")]
 
+use nanoaudio_core::bits::BitReader;
 use nanoaudio_core::codec::{Decoder, Encoder, Progress};
+use nanoaudio_core::crc;
 use nanoaudio_core::{Configuration, Error, Format, Result, Sample};
 
 const SYNCHRONIZATION: u8 = 0x9C;
@@ -21,6 +23,8 @@ const PARTIAL_FRACTION: u32 = 15;
 
 pub const SBC_MAXIMUM_FRAME_LENGTH: usize = 524;
 pub const SBC_MAXIMUM_FRAME_SAMPLES: usize = MAXIMUM_BLOCKS * MAXIMUM_SUBBANDS * MAXIMUM_CHANNELS;
+
+type Crc8 = crc::Crc8<0x1D>;
 
 const SAMPLE_RATES: [u32; 4] = [16_000, 32_000, 44_100, 48_000];
 
@@ -477,38 +481,17 @@ fn allocate(parameters: &SbcParameters, scale_factors: &SubbandValues) -> Subban
 }
 
 fn checksum(frame: &[u8], side_bits: usize) -> u8 {
-    let positions = (8..24).chain(32..32 + side_bits);
+    let side = &frame[HEADER_SIZE..];
+    let bytes = side_bits / 8;
+    let crc = Crc8::update_bits(0x0F, frame[1], 8);
+    let crc = Crc8::update_bits(crc, frame[2], 8);
+    let crc = side[..bytes]
+        .iter()
+        .fold(crc, |crc, byte| Crc8::update_bits(crc, *byte, 8));
 
-    positions.fold(0x0F, |crc: u8, position| {
-        let bit = (frame[position / 8] >> (7 - position % 8)) & 1;
-        let feedback = (crc >> 7) ^ bit;
-        let shifted = crc << 1;
-
-        if feedback == 1 {
-            shifted ^ 0x1D
-        } else {
-            shifted
-        }
-    })
-}
-
-struct BitReader<'a> {
-    data: &'a [u8],
-    position: usize,
-}
-
-impl BitReader<'_> {
-    fn read(&mut self, count: u8) -> u32 {
-        let mut value = 0;
-
-        for _ in 0..count {
-            let byte = self.data.get(self.position / 8).copied().unwrap_or(0);
-
-            value = (value << 1) | ((byte >> (7 - self.position % 8)) & 1) as u32;
-            self.position += 1;
-        }
-
-        value
+    match side_bits % 8 {
+        0 => crc,
+        bits => Crc8::update_bits(crc, side[bytes], bits as u32),
     }
 }
 
@@ -628,16 +611,13 @@ impl SbcDecoder {
 
         let channels = parameters.channels() as usize;
         let subbands = parameters.subbands as usize;
-        let mut reader = BitReader {
-            data: frame,
-            position: HEADER_SIZE * 8,
-        };
+        let mut reader = BitReader::new(&frame[HEADER_SIZE..]);
 
         let mut join = [false; MAXIMUM_SUBBANDS];
 
         if parameters.channel_mode == SbcChannelMode::JointStereo {
             for joined in &mut join[..subbands] {
-                *joined = reader.read(1) == 1;
+                *joined = reader.read(1)? == 1;
             }
         }
 
@@ -645,7 +625,7 @@ impl SbcDecoder {
 
         for channel in &mut scale_factors[..channels] {
             for scale_factor in &mut channel[..subbands] {
-                *scale_factor = reader.read(4) as u8;
+                *scale_factor = reader.read(4)? as u8;
             }
         }
 
@@ -663,7 +643,7 @@ impl SbcDecoder {
                     }
 
                     let levels = (1i64 << bit) - 1;
-                    let quantized = reader.read(bit) as i64;
+                    let quantized = reader.read(bit.into())? as i64;
                     let shift = scale_factors[channel][subband] as u32 + 1 + SUBBAND_FRACTION;
 
                     samples[channel][subband] =

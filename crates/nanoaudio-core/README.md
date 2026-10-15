@@ -1,6 +1,6 @@
 # nanoaudio-core
 
-The shared building blocks of nanoaudio: sample formats, stream configuration, errors, and the `Decoder` and `Encoder` traits every codec implements. It is `no_std`, has no dependency and does not allocate.
+The shared building blocks of nanoaudio: sample formats, stream configuration, errors, the `Decoder` and `Encoder` traits every codec implements, and the bit reader and CRC helpers the codecs share. It is `no_std`, has no dependency and does not allocate.
 
 It is part of [nanoaudio](https://github.com/AlixANNERAUD/nanoaudio#readme), and can be used on its own:
 

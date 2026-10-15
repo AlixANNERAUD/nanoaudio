@@ -3,7 +3,9 @@
 
 use core::marker::PhantomData;
 
+use nanoaudio_core::bits::BitReader;
 use nanoaudio_core::codec::{Decoder, Progress};
+use nanoaudio_core::crc;
 use nanoaudio_core::{Configuration, Error, Result, Sample};
 
 pub const FLAC_DEFAULT_MAXIMUM_BLOCK_SIZE: usize = 4608;
@@ -24,68 +26,8 @@ const MAXIMUM_ORDER: usize = 32;
 
 const FIXED_COEFFICIENTS: [&[i32]; 5] = [&[], &[1], &[2, -1], &[3, -3, 1], &[4, -6, 4, -1]];
 
-const CRC_8_TABLE: [u8; 256] = crc_8_table();
-const CRC_16_TABLE: [u16; 256] = crc_16_table();
-
-const fn crc_8_table() -> [u8; 256] {
-    let mut table = [0; 256];
-    let mut index = 0;
-
-    while index < 256 {
-        let mut value = index as u8;
-        let mut bit = 0;
-
-        while bit < 8 {
-            value = if value & 0x80 != 0 {
-                (value << 1) ^ 0x07
-            } else {
-                value << 1
-            };
-            bit += 1;
-        }
-
-        table[index] = value;
-        index += 1;
-    }
-
-    table
-}
-
-const fn crc_16_table() -> [u16; 256] {
-    let mut table = [0; 256];
-    let mut index = 0;
-
-    while index < 256 {
-        let mut value = (index as u16) << 8;
-        let mut bit = 0;
-
-        while bit < 8 {
-            value = if value & 0x8000 != 0 {
-                (value << 1) ^ 0x8005
-            } else {
-                value << 1
-            };
-            bit += 1;
-        }
-
-        table[index] = value;
-        index += 1;
-    }
-
-    table
-}
-
-fn crc_8(bytes: &[u8]) -> u8 {
-    bytes
-        .iter()
-        .fold(0, |crc, byte| CRC_8_TABLE[(crc ^ byte) as usize])
-}
-
-fn crc_16(bytes: &[u8]) -> u16 {
-    bytes.iter().fold(0, |crc, byte| {
-        (crc << 8) ^ CRC_16_TABLE[((crc >> 8) as u8 ^ byte) as usize]
-    })
-}
+type Crc8 = crc::Crc8<0x07>;
+type Crc16 = crc::Crc16<0x8005>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FlacStreamInformation {
@@ -248,7 +190,7 @@ impl FrameHeader {
             _ => return Err(Error::InvalidData),
         };
 
-        if byte(position)? != crc_8(&bytes[..position]) {
+        if byte(position)? != Crc8::update(0, &bytes[..position]) {
             return Err(Error::InvalidData);
         }
 
@@ -276,125 +218,25 @@ impl FrameHeader {
     }
 }
 
-struct BitReader<'a> {
-    bytes: &'a [u8],
-    position: usize,
-    cache: u64,
-    available: u32,
+fn read_signed_wide(reader: &mut BitReader, count: u32) -> Result<i64> {
+    if count <= 32 {
+        return Ok(reader.read_signed(count)?.into());
+    }
+
+    let high = u64::from(reader.read(count - 32)?);
+    let low = u64::from(reader.read(32)?);
+    let shift = 64 - count;
+
+    Ok((((high << 32) | low) << shift) as i64 >> shift)
 }
 
-impl<'a> BitReader<'a> {
-    const fn new(bytes: &'a [u8]) -> Self {
-        Self {
-            bytes,
-            position: 0,
-            cache: 0,
-            available: 0,
-        }
-    }
+fn read_rice(reader: &mut BitReader, parameter: u32) -> Result<i32> {
+    let quotient = u64::from(reader.read_unary()?);
+    let remainder = u64::from(reader.read(parameter)?);
+    let folded =
+        u32::try_from((quotient << parameter) | remainder).map_err(|_| Error::InvalidData)?;
 
-    fn refill(&mut self) {
-        while self.available <= 56 {
-            let Some(&byte) = self.bytes.get(self.position) else {
-                break;
-            };
-
-            self.cache |= u64::from(byte) << (56 - self.available);
-            self.available += 8;
-            self.position += 1;
-        }
-    }
-
-    fn read(&mut self, count: u32) -> Result<u32> {
-        if count == 0 {
-            return Ok(0);
-        }
-
-        if self.available < count {
-            self.refill();
-
-            if self.available < count {
-                return Err(Error::Incomplete);
-            }
-        }
-
-        let value = (self.cache >> (64 - count)) as u32;
-        self.cache <<= count;
-        self.available -= count;
-
-        Ok(value)
-    }
-
-    fn read_signed(&mut self, count: u32) -> Result<i32> {
-        if count == 0 {
-            return Ok(0);
-        }
-
-        let shift = 32 - count;
-
-        Ok(((self.read(count)? << shift) as i32) >> shift)
-    }
-
-    fn read_signed_wide(&mut self, count: u32) -> Result<i64> {
-        if count <= 32 {
-            return Ok(self.read_signed(count)?.into());
-        }
-
-        let high = u64::from(self.read(count - 32)?);
-        let low = u64::from(self.read(32)?);
-        let shift = 64 - count;
-
-        Ok((((high << 32) | low) << shift) as i64 >> shift)
-    }
-
-    fn read_unary(&mut self) -> Result<u32> {
-        let mut zeros = 0u32;
-
-        loop {
-            if self.available == 0 {
-                self.refill();
-
-                if self.available == 0 {
-                    return Err(Error::Incomplete);
-                }
-            }
-
-            let leading = self.cache.leading_zeros();
-
-            if leading < self.available {
-                let consumed = leading + 1;
-
-                self.cache = self.cache.checked_shl(consumed).unwrap_or(0);
-                self.available -= consumed;
-
-                return Ok(zeros.saturating_add(leading));
-            }
-
-            zeros = zeros.saturating_add(self.available);
-            self.cache = 0;
-            self.available = 0;
-        }
-    }
-
-    fn read_rice(&mut self, parameter: u32) -> Result<i32> {
-        let quotient = u64::from(self.read_unary()?);
-        let remainder = u64::from(self.read(parameter)?);
-        let folded =
-            u32::try_from((quotient << parameter) | remainder).map_err(|_| Error::InvalidData)?;
-
-        Ok((folded >> 1) as i32 ^ -((folded & 1) as i32))
-    }
-
-    fn align(&mut self) {
-        let padding = self.available % 8;
-
-        self.cache <<= padding;
-        self.available -= padding;
-    }
-
-    fn byte_position(&self) -> usize {
-        self.position - (self.available / 8) as usize
-    }
+    Ok((folded >> 1) as i32 ^ -((folded & 1) as i32))
 }
 
 struct SubframeHeader {
@@ -525,7 +367,7 @@ fn decode_residual(reader: &mut BitReader, samples: &mut [i32], order: usize) ->
             }
         } else {
             for sample in partition {
-                *sample = reader.read_rice(parameter)?;
+                *sample = read_rice(reader, parameter)?;
             }
         }
 
@@ -826,14 +668,14 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
 
         let Some(mut predictor) = read_predictor(header.kind)? else {
             if header.kind == 0 {
-                let value = reader.read_signed_wide(bits)?;
+                let value = read_signed_wide(reader, bits)?;
 
                 for index in 0..block_size {
                     store(samples, index, value);
                 }
             } else {
                 for index in 0..block_size {
-                    let value = reader.read_signed_wide(bits)?;
+                    let value = read_signed_wide(reader, bits)?;
 
                     store(samples, index, value);
                 }
@@ -851,7 +693,7 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
         let mut history = [0i64; MAXIMUM_ORDER];
 
         for index in 0..order {
-            history[order - 1 - index] = reader.read_signed_wide(bits)?;
+            history[order - 1 - index] = read_signed_wide(reader, bits)?;
         }
 
         predictor.read_parameters(reader)?;
@@ -964,7 +806,7 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
             .get(footer..footer + FRAME_FOOTER_SIZE)
             .ok_or(Error::Incomplete)?;
 
-        if u16::from_be_bytes([crc[0], crc[1]]) != crc_16(&input[..footer]) {
+        if u16::from_be_bytes([crc[0], crc[1]]) != Crc16::update(0, &input[..footer]) {
             return Err(Error::InvalidData);
         }
 
