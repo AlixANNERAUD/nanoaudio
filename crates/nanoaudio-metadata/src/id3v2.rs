@@ -370,6 +370,7 @@ pub struct Frame<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Content<'a> {
     Text(Text<'a>),
     UserText {

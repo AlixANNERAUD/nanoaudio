@@ -17,6 +17,7 @@ const FORMAT_IMA_ADPCM: u16 = 0x0011;
 const FORMAT_EXTENSIBLE: u16 = 0xFFFE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Encoding {
     Pcm,
     ALaw,

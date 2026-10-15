@@ -1,6 +1,7 @@
 use core::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Error {
     InvalidSource,
     InvalidHeader,

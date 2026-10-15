@@ -129,6 +129,7 @@ pub struct StreamInfo {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum BlockContent<'a> {
     StreamInfo(StreamInfo),
     Padding,

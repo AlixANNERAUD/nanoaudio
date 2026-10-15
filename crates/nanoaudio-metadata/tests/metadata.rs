@@ -1098,7 +1098,7 @@ fn walk(bytes: &[u8], offset: usize) {
         Ok(Container::Mpeg(frame)) => {
             let _ = frame.frame_length();
         }
-        Err(_) => {}
+        Ok(_) | Err(_) => {}
     }
 }
 
