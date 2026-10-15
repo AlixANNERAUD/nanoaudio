@@ -1,4 +1,5 @@
-const HEADER_SIZE: usize = 4;
+pub(crate) const HEADER_SIZE: usize = 4;
+pub(crate) const LARGEST_FRAME: usize = 1729;
 const SYNC_MATCHES: usize = 10;
 const XING_FRAMES: u32 = 1;
 const XING_BYTES: u32 = 2;

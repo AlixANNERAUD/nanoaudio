@@ -1,7 +1,18 @@
 use nanoaudio_core::Configuration;
 use nanoaudio_core::Format;
 use nanoaudio_core::codec::Decoder;
-use nanoaudio_mp3::{Mp3Decoder, Mp3Sample};
+use nanoaudio_mp3::{MP3_DEFAULT_MINIMUM_INPUT, Mp3Decoder, Mp3Sample};
+
+const FIXTURES: [&[u8]; 6] = [
+    include_bytes!("data/mono_440.mp3"),
+    include_bytes!("data/stereo_440_1000.mp3"),
+    include_bytes!("data/seek_cbr_info.mp3"),
+    include_bytes!("data/seek_cbr_low.mp3"),
+    include_bytes!("data/seek_vbr_xing.mp3"),
+    include_bytes!("data/seek_vbr_vbri.mp3"),
+];
+
+const WINDOWS: [usize; 4] = [1_445, 1_800, 2_048, MP3_DEFAULT_MINIMUM_INPUT];
 
 fn decode<S: nanoaudio_core::Sample + Mp3Sample>(
     file: &[u8],
@@ -114,7 +125,7 @@ fn waits_for_enough_input() {
 
     assert!(
         decoder
-            .decode(&file[..4_096], &mut output)
+            .decode(&file[..MP3_DEFAULT_MINIMUM_INPUT - 1], &mut output)
             .unwrap()
             .is_stalled()
     );
@@ -123,8 +134,80 @@ fn waits_for_enough_input() {
     decoder.finish();
     assert!(
         !decoder
-            .decode(&file[..4_096], &mut output)
+            .decode(&file[..MP3_DEFAULT_MINIMUM_INPUT - 1], &mut output)
             .unwrap()
             .is_stalled()
     );
+}
+
+fn stream(window: usize, file: &[u8], chunk: usize) -> Vec<i16> {
+    let mut decoder = Mp3Decoder::<i16>::with_minimum_input(window);
+    let mut output = vec![0; decoder.minimum_output()];
+    let mut decoded = Vec::new();
+    let mut position = 0;
+    let mut end = chunk.min(file.len());
+
+    loop {
+        if end == file.len() {
+            decoder.finish();
+        }
+
+        let progress = decoder.decode(&file[position..end], &mut output).unwrap();
+
+        assert!(end - position <= window.max(chunk) + chunk);
+        decoded.extend_from_slice(&output[..progress.produced]);
+        position += progress.consumed;
+
+        if progress.is_stalled() {
+            if end == file.len() {
+                return decoded;
+            }
+
+            end = (end + chunk).min(file.len());
+        }
+    }
+}
+
+#[test]
+fn small_windows_match_a_single_pass() {
+    for file in FIXTURES {
+        let (_, reference) = decode::<i16>(file, file.len());
+
+        assert!(!reference.is_empty());
+
+        for window in WINDOWS {
+            for chunk in [1, 7, 333, window] {
+                assert!(
+                    stream(window, file, chunk) == reference,
+                    "window {window}, chunk {chunk}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn small_windows_skip_junk_without_losing_frames() {
+    let audio = include_bytes!("data/stereo_440_1000.mp3");
+
+    for length in [100, 1_500, 3_000, 3_900, 4_000, 5_000, 9_000] {
+        for byte in [0x00, 0x55, 0xFF] {
+            let mut file = vec![byte; length];
+
+            file.extend_from_slice(audio);
+
+            let (_, reference) = decode::<i16>(&file, file.len());
+
+            assert!(reference.len() >= 44_100);
+
+            for window in WINDOWS {
+                for chunk in [7, 512] {
+                    assert!(
+                        stream(window, &file, chunk) == reference,
+                        "{length} bytes of {byte:#x}, window {window}, chunk {chunk}"
+                    );
+                }
+            }
+        }
+    }
 }

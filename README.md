@@ -130,7 +130,7 @@ fn decode_wav(file: &[u8]) -> Result<Vec<i16>, Error> {
 | PCM WAV             | `WavDecoder`          |         | a few bytes                                               | 8, 16, 24 and 32-bit integer and 32-bit float                      |
 | G.711 A-law / µ-law | `G711`, `WavDecoder`  |         | a few bytes                                               | Encoder and decoder, bit-exact with the reference implementation  |
 | IMA ADPCM           | `ImaAdpcm`, `WavDecoder` |      | 40 bytes                                                  | Encoder and decoder, WAV block layout, bit-exact sample codec     |
-| MP3                 | `Mp3Decoder`          | `mp3`   | ~23 KiB, plus 16 KiB of input and one frame of output     | MPEG-1/2/2.5 Layer III, decodes in floating point                  |
+| MP3                 | `Mp3Decoder`          | `mp3`   | ~23 KiB, plus 4 KiB of input and one frame of output      | MPEG-1/2/2.5 Layer III, decodes in floating point                  |
 
 ## Choosing a Codec
 
@@ -143,7 +143,7 @@ fn decode_wav(file: &[u8]) -> Result<Vec<i16>, Error> {
 | G.722     | lossy    | 64 kbit/s (16 kHz mono)                             | 0.3 KiB                                   | 3.5 KiB          | fast           | Wideband voice                          |
 | SBC       | lossy    | 60 kbit/s (mSBC) to 330 kbit/s (A2DP)               | 1.9 KiB                                   | 8.4 KiB          | fast           | Bluetooth                               |
 | FLAC      | lossless | 50 to 70 % of PCM, by material                      | ~50 KiB for 16-bit stereo                 | 13.8 KiB         | moderate       | Lossless playback                       |
-| MP3       | lossy    | 128 kbit/s                                          | ~44 KiB, less with a smaller input window | 46.7 KiB         | moderate       | Music files                             |
+| MP3       | lossy    | 128 kbit/s                                          | ~32 KiB, less with a smaller input window | 46.7 KiB         | moderate       | Music files                             |
 
 - For the lowest CPU and flash use G.711 at 8 kHz, or IMA ADPCM at higher sample rates.
 - On a microcontroller, QOA gives the best quality per byte: about the same signal-to-noise ratio as IMA ADPCM at 80 % of the size, in integer arithmetic and under 1 KiB of RAM.
