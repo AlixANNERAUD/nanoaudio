@@ -13,30 +13,37 @@ impl Volume {
     pub const UNITY: Self = Self(1 << Self::FRACTIONAL_BITS);
     pub const MAXIMUM: Self = Self(u16::MAX);
 
+    #[inline]
     pub const fn from_raw(raw: u16) -> Self {
         Self(raw)
     }
 
+    #[inline]
     pub const fn raw(self) -> u16 {
         self.0
     }
 
+    #[inline]
     pub const fn from_percent(percent: u8) -> Self {
         Self(((percent as u32 * Self::UNITY.0 as u32) / 100) as u16)
     }
 
+    #[inline]
     pub const fn percent(self) -> u16 {
         ((self.0 as u32 * 100 + Self::UNITY.0 as u32 / 2) / Self::UNITY.0 as u32) as u16
     }
 
+    #[inline]
     pub const fn is_mute(self) -> bool {
         self.0 == 0
     }
 
+    #[inline]
     pub const fn is_unity(self) -> bool {
         self.0 == Self::UNITY.0
     }
 
+    #[inline]
     pub const fn combine(self, other: Self) -> Self {
         let combined = (self.0 as u32 * other.0 as u32) >> Self::FRACTIONAL_BITS;
 
@@ -47,12 +54,14 @@ impl Volume {
         }
     }
 
+    #[inline]
     pub fn apply<S: Sample>(self, sample: S) -> S {
         self.apply_using::<DefaultRepresentation, S>(sample)
     }
 
+    #[inline]
     pub fn apply_using<R: Representation, S: Sample>(self, sample: S) -> S {
-        R::to_sample(R::amplify(R::from_sample(sample), R::gain(self)))
+        R::amplify_sample(sample, R::gain(self))
     }
 
     pub fn apply_to<S: Sample>(self, samples: &mut [S]) {
@@ -72,7 +81,7 @@ impl Volume {
         let gain = R::gain(self);
 
         for sample in samples {
-            *sample = R::to_sample(R::amplify(R::from_sample(*sample), gain));
+            *sample = R::amplify_sample(*sample, gain);
         }
     }
 
@@ -105,7 +114,7 @@ impl Volume {
         let gain = R::gain(self);
 
         for chunk in bytes.chunks_exact_mut(S::SIZE) {
-            R::to_sample::<S>(R::amplify(R::from_sample(S::read_le(chunk)), gain)).write_le(chunk);
+            R::amplify_sample(S::read_le(chunk), gain).write_le(chunk);
         }
     }
 }

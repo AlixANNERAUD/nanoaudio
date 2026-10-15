@@ -1,2 +1,4 @@
 /target
+/tools/asm-probe/target
 lcov.info
+/tools/asm-probe/Cargo.lock

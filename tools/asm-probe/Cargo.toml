@@ -1,0 +1,18 @@
+[package]
+name = "nanoaudio-asm-probe"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.89"
+license = "MIT"
+publish = false
+
+[dependencies]
+nanoaudio-core = { path = "../../crates/nanoaudio-core" }
+nanoaudio-dsp = { path = "../../crates/nanoaudio-dsp" }
+nanoaudio-g711 = { path = "../../crates/nanoaudio-g711" }
+
+[profile.release]
+codegen-units = 1
+panic = "abort"
+
+[workspace]

@@ -22,7 +22,7 @@ pub fn mix_using<R: Representation, S: Sample>(
     let gain = R::gain(volume);
 
     for (output, input) in output.iter_mut().zip(input) {
-        *output = mix_sample::<R, S>(*output, *input, gain);
+        *output = R::mix_sample(*output, *input, gain);
     }
 
     count
@@ -77,17 +77,10 @@ fn mix_bytes_typed<R: Representation, S: Sample>(
         .chunks_exact_mut(S::SIZE)
         .zip(input.chunks_exact(S::SIZE))
     {
-        mix_sample::<R, S>(S::read_le(output), S::read_le(input), gain).write_le(output);
+        R::mix_sample(S::read_le(output), S::read_le(input), gain).write_le(output);
     }
 
     count
-}
-
-fn mix_sample<R: Representation, S: Sample>(output: S, input: S, gain: R::Gain) -> S {
-    R::to_sample(R::add(
-        R::from_sample(output),
-        R::amplify(R::from_sample(input), gain),
-    ))
 }
 
 pub fn fill_silence(output: &mut [u8], format: Format) {
