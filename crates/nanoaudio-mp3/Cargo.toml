@@ -21,6 +21,7 @@ nanoaudio-core.workspace = true
 nanomp3-core.workspace = true
 
 [features]
+default = ["simd"]
 simd = ["nanomp3-core/wide"]
 layer12 = ["nanomp3-core/layer12"]
 

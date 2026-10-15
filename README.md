@@ -50,7 +50,7 @@ Every feature except MP3 is enabled by default. With `default-features = false`,
 | `aiff`         | `AiffHeader` and `codec::AiffDecoder` (`nanoaudio-aiff`). Implies `g711`.                                  |
 | `metadata`     | The `metadata` module (`nanoaudio-metadata`).                                                              |
 | `mp3`          | `codec::Mp3Decoder`, MP3 decoding with [`nanomp3-core`](https://crates.io/crates/nanomp3-core). Not default. |
-| `mp3-simd`     | SIMD in the MP3 decoder. Implies `mp3`.                                                                    |
+| `mp3-simd`     | SIMD in the MP3 decoder, already on with `mp3`. Implies `mp3`.                                             |
 | `mpeg-layer12` | MPEG Layer I and II (MP1, MP2) decoding. Implies `mp3`.                                                    |
 | `fixed`        | Forces fixed-point processing by default. See [Integer or Floating Point](#integer-or-floating-point).    |
 | `float`        | Forces floating-point processing by default. If `fixed` is also enabled, `fixed` takes precedence.        |
