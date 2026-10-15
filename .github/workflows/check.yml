@@ -22,6 +22,7 @@ jobs:
       rust: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rust == 'true' }}
       asm: ${{ github.event_name != 'pull_request' || steps.filter.outputs.asm == 'true' }}
       bench: ${{ github.event_name != 'pull_request' || steps.filter.outputs.bench == 'true' }}
+      desktop: ${{ github.event_name != 'pull_request' || steps.filter.outputs.desktop == 'true' }}
       web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.web == 'true' }}
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +52,12 @@ jobs:
               - *shared
               - 'crates/**'
               - 'tools/bench/**'
+            desktop:
+              - *shared
+              - 'crates/nanoaudio-cpal/**'
+              - 'crates/nanoaudio-core/**'
+              - 'crates/nanoaudio-buffer/**'
+              - 'crates/nanoaudio-dsp/**'
             web:
               - *shared
               - 'crates/**'
@@ -65,6 +72,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Install ALSA
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -92,6 +102,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install ALSA
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -121,6 +134,9 @@ jobs:
           components: llvm-tools-preview
 
       - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Install ALSA
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -163,6 +179,9 @@ jobs:
         with:
           targets: thumbv6m-none-eabi
 
+      - name: Install ALSA
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -172,7 +191,9 @@ jobs:
           for crate in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name'); do
             echo "::group::$crate"
             cargo test -p "$crate"
-            cargo build -p "$crate" --target thumbv6m-none-eabi
+            if cargo metadata --no-deps --format-version 1 | jq -e --arg crate "$crate" '.packages[] | select(.name == $crate) | .categories | index("no-std")' > /dev/null; then
+              cargo build -p "$crate" --target thumbv6m-none-eabi
+            fi
             echo "::endgroup::"
           done
 
@@ -200,10 +221,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build
-        run: cargo build --workspace --target ${{ matrix.target }}
+        run: cargo build --workspace --exclude nanoaudio-cpal --target ${{ matrix.target }}
 
       - name: Build with all Features
-        run: cargo build --workspace --target ${{ matrix.target }} --all-features
+        run: cargo build --workspace --exclude nanoaudio-cpal --target ${{ matrix.target }} --all-features
 
   wasm:
     needs: changes
@@ -347,6 +368,9 @@ jobs:
 
       - uses: taiki-e/install-action@cargo-nextest
 
+      - name: Install ALSA
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -362,6 +386,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@1.89
+
+      - name: Install ALSA
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -382,6 +409,9 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Install ALSA
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -389,8 +419,34 @@ jobs:
       - name: Package
         run: cargo package --workspace
 
+  desktop:
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Clippy
+        run: cargo clippy -p nanoaudio-cpal --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test -p nanoaudio-cpal --all-features
+
   ci:
-    needs: [changes, lint, test, coverage, crates, embedded, wasm, web, asm, bench, miri, msrv, package]
+    needs: [changes, lint, test, coverage, crates, embedded, wasm, web, asm, bench, miri, msrv, package, desktop]
     if: always()
     runs-on: ubuntu-latest
     steps:
