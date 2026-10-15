@@ -1,7 +1,7 @@
 use crate::{
     ANALYSIS_4, ANALYSIS_8, ANALYSIS_FRACTION, COSINE_FRACTION, MAXIMUM_SUBBANDS, PARTIAL_FRACTION,
     PROTOTYPE_4, PROTOTYPE_8, PROTOTYPE_FRACTION, SUBBAND_FRACTION, SYNTHESIS_4, SYNTHESIS_8,
-    SYNTHESIS_BLOCKS, Synthesis, WINDOW,
+    SYNTHESIS_BLOCKS, Synthesis, WINDOW, unique_row,
 };
 
 const PARTIAL_SPLIT: u32 = 14;
@@ -24,14 +24,6 @@ const fn split<const SIZE: usize>(values: &[i32], bits: u32) -> [Halves; SIZE] {
     }
 
     result
-}
-
-const fn unique_row(row: usize, subbands: usize) -> usize {
-    if row < subbands / 2 {
-        row
-    } else {
-        row + subbands / 2 + 1
-    }
 }
 
 const fn synthesis<const SIZE: usize>(matrix: &[i32]) -> [Halves; SIZE] {
