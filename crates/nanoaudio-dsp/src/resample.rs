@@ -81,7 +81,7 @@ mod sealed {
         fn configure(state: &mut Self::State, input_rate: u32, output_rate: u32) -> Result<u32>;
         fn clear(state: &mut Self::State);
         fn delay(state: &Self::State) -> usize;
-        fn push(state: &mut Self::State, frame: &[R::Value]);
+        fn push(state: &mut Self::State, frame: &[R::Value; CHANNELS]);
         fn produce(state: &Self::State, fraction: u32, frame: &mut [R::Value]);
     }
 }
@@ -243,12 +243,9 @@ impl<R: Arithmetic, const CHANNELS: usize> Kernel<R, CHANNELS> for Linear {
     }
 
     #[inline(always)]
-    fn push(state: &mut Self::State, frame: &[R::Value]) {
+    fn push(state: &mut Self::State, frame: &[R::Value; CHANNELS]) {
         state.previous = state.current;
-
-        for (current, value) in state.current.iter_mut().zip(frame) {
-            *current = *value;
-        }
+        state.current = *frame;
     }
 
     #[inline(always)]
@@ -327,14 +324,11 @@ impl<R: Arithmetic, const CHANNELS: usize, const FRAMES: usize> SincState<R, CHA
 
     #[inline(always)]
     fn blend_row(
-        coefficients: &mut [R::Coefficient; HALF_LENGTH],
         low: &[R::Entry; HALF_LENGTH],
         high: &[R::Entry; HALF_LENGTH],
         weight: u32,
-    ) {
-        for ((coefficient, low), high) in coefficients.iter_mut().zip(low).zip(high) {
-            *coefficient = R::blend(*low, *high, weight);
-        }
+    ) -> [R::Coefficient; HALF_LENGTH] {
+        core::array::from_fn(|tap| R::blend(low[tap], high[tap], weight))
     }
 
     #[inline(always)]
@@ -348,16 +342,8 @@ impl<R: Arithmetic, const CHANNELS: usize, const FRAMES: usize> SincState<R, CHA
         } else {
             (PHASES - 1 - phase, (1 << FRACTION_BITS) - weight)
         };
-        let mut left = [R::ZERO; HALF_LENGTH];
-        let mut right = [R::ZERO; HALF_LENGTH];
-
-        Self::blend_row(&mut left, &table[phase], &table[phase + 1], weight);
-        Self::blend_row(
-            &mut right,
-            &table[row],
-            &table[(row + 1).min(PHASES)],
-            opposite,
-        );
+        let left = Self::blend_row(&table[phase], &table[phase + 1], weight);
+        let right = Self::blend_row(&table[row], &table[(row + 1).min(PHASES)], opposite);
 
         let past = &self.history[center + 1 - HALF_LENGTH..=center];
         let future = &self.history[center + 1..center + 1 + HALF_LENGTH];
@@ -466,19 +452,13 @@ impl<R: Arithmetic, const CHANNELS: usize, const FRAMES: usize> Kernel<R, CHANNE
     }
 
     #[inline]
-    fn push(state: &mut Self::State, frame: &[R::Value]) {
+    fn push(state: &mut Self::State, frame: &[R::Value; CHANNELS]) {
         if state.end == FRAMES {
             state.history.copy_within(FRAMES - state.keep..FRAMES, 0);
             state.end = state.keep;
         }
 
-        let slot = &mut state.history[state.end];
-        *slot = [R::STORED_SILENCE; CHANNELS];
-
-        for (stored, value) in slot.iter_mut().zip(frame) {
-            *stored = R::store(*value);
-        }
-
+        state.history[state.end] = frame.map(R::store);
         state.end += 1;
     }
 
@@ -729,13 +709,13 @@ where
                 let Some(frame) = frames.next() else {
                     return Progress::new(consumed, produced);
                 };
-                let mut values = [R::SILENCE; CHANNELS];
+                let values = core::array::from_fn(|channel| {
+                    frame
+                        .get(channel)
+                        .map_or(R::SILENCE, |sample| R::from_sample(*sample))
+                });
 
-                for (value, sample) in values.iter_mut().zip(frame) {
-                    *value = R::from_sample(*sample);
-                }
-
-                K::push(&mut self.state, &values[..channels]);
+                K::push(&mut self.state, &values);
                 self.clock.pending -= 1;
                 consumed += channels;
             }
@@ -768,7 +748,14 @@ where
                 return false;
             }
 
-            K::push(&mut self.state, &values[..channels]);
+            let values = core::array::from_fn(|channel| {
+                values[..channels]
+                    .get(channel)
+                    .copied()
+                    .unwrap_or(R::SILENCE)
+            });
+
+            K::push(&mut self.state, &values);
             self.clock.pending -= 1;
         }
 

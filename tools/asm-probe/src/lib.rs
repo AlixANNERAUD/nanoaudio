@@ -2,7 +2,9 @@
 
 use nanoaudio_core::codec::{Decoder, Encoder};
 use nanoaudio_core::I24;
-use nanoaudio_dsp::{convert, mix_using, samples_using, Fixed, Float, Stream, Volume};
+use nanoaudio_dsp::{
+    convert, mix_using, samples_using, Fixed, Float, Linear, Resampler, Sinc, Stream, Volume,
+};
 use nanoaudio_g711::{Law, G711};
 use nanoaudio_qoa::{QoaDecoder, QoaEncoder};
 
@@ -138,4 +140,44 @@ pub fn probe_qoa_encode(encoder: &mut QoaEncoder, input: &[i16], output: &mut [u
     encoder
         .encode(input, output)
         .map_or(0, |progress| progress.produced)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_fixed_resample_linear_i16(
+    resampler: &mut Resampler<Linear, Fixed, 2>,
+    input: &[i16],
+    output: &mut [i16],
+) -> usize {
+    resampler.process(input, output).produced
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_fixed_resample_sinc_i16(
+    resampler: &mut Resampler<Sinc, Fixed, 2>,
+    input: &[i16],
+    output: &mut [i16],
+) -> usize {
+    resampler.process(input, output).produced
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_float_resample_linear_f32(
+    resampler: &mut Resampler<Linear, Float, 2>,
+    input: &[f32],
+    output: &mut [f32],
+) -> usize {
+    resampler.process(input, output).produced
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_float_resample_sinc_f32(
+    resampler: &mut Resampler<Sinc, Float, 2>,
+    input: &[f32],
+    output: &mut [f32],
+) -> usize {
+    resampler.process(input, output).produced
 }
