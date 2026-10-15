@@ -1,9 +1,11 @@
+mod flac;
 mod g711;
 mod ima_adpcm;
 #[cfg(feature = "mp3")]
 mod mp3;
 mod wav;
 
+pub use flac::*;
 pub use g711::*;
 pub use ima_adpcm::*;
 #[cfg(feature = "mp3")]
