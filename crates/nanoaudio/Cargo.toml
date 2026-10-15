@@ -37,6 +37,7 @@ default = ["buffer", "dsp", "analysis", "g711", "adpcm", "qoa", "flac", "g722", 
 buffer = ["dep:nanoaudio-buffer"]
 dsp = ["dep:nanoaudio-dsp"]
 analysis = ["dsp", "dep:nanoaudio-analysis"]
+analysis-fft = ["analysis", "nanoaudio-analysis/fft"]
 fixed = ["dsp", "nanoaudio-dsp/fixed"]
 float = ["dsp", "nanoaudio-dsp/float"]
 g711 = ["dep:nanoaudio-g711"]
