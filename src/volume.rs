@@ -35,6 +35,16 @@ impl Volume {
         self.0 == Self::UNITY.0
     }
 
+    pub const fn combine(self, other: Self) -> Self {
+        let combined = (self.0 as u32 * other.0 as u32) >> Self::FRACTIONAL_BITS;
+
+        if combined > u16::MAX as u32 {
+            Self::MAXIMUM
+        } else {
+            Self(combined as u16)
+        }
+    }
+
     pub fn apply<S: Sample>(self, sample: S) -> S {
         let scaled = (sample.to_i32() as i64 * self.0 as i64) >> Self::FRACTIONAL_BITS;
 
@@ -92,6 +102,22 @@ mod tests {
         assert_eq!(Volume::from_percent(0), Volume::MUTE);
         assert_eq!(Volume::from_percent(50).percent(), 50);
         assert_eq!(Volume::from_percent(200).percent(), 200);
+    }
+
+    #[test]
+    fn combine() {
+        assert_eq!(
+            Volume::UNITY.combine(Volume::from_percent(40)),
+            Volume::from_percent(40)
+        );
+        assert_eq!(
+            Volume::from_percent(50)
+                .combine(Volume::from_percent(50))
+                .percent(),
+            25
+        );
+        assert_eq!(Volume::MAXIMUM.combine(Volume::MAXIMUM), Volume::MAXIMUM);
+        assert_eq!(Volume::MUTE.combine(Volume::MAXIMUM), Volume::MUTE);
     }
 
     #[test]

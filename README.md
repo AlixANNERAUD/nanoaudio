@@ -9,11 +9,11 @@ Allocation-free, `no_std` building blocks for PCM audio on microcontrollers and 
 - Sample formats (`U8`, `I16`, `I32`, `F32`) and stream configuration (`#[repr(C)]`, ready to cross an ABI)
 - Sample conversion between formats and channel layouts, on typed slices or raw little-endian bytes
 - Fixed-point volume (Q4.12), applied in place
-- Saturating mixing
+- Saturating mixing, and a fixed-size mixer with per-source and master volumes
 
 - Single-producer/single-consumer ring buffer with contiguous grants, for DMA and audio callbacks
 
-Planned: a fixed-size mixer and a WAV header parser.
+Planned: a WAV header parser.
 
 ## Design rules
 
