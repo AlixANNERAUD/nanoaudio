@@ -58,5 +58,7 @@ pub struct SeekRequest {
 /// Decoders that can jump to an arbitrary frame.
 pub trait Seek {
     /// Prepares the decoder to produce `frame`, counted per channel from the start of the audio, and returns where the caller must resume feeding input.
+    ///
+    /// Decoders that cannot compute the position directly may then return [`Error::SeekTo`](crate::Error::SeekTo) from `decode` until they reach it.
     fn seek(&mut self, frame: u64) -> Result<SeekRequest>;
 }
