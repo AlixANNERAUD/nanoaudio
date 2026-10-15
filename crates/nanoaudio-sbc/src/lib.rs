@@ -2,7 +2,7 @@
 #![doc = include_str!("../README.md")]
 
 use nanoaudio_core::bits::BitReader;
-use nanoaudio_core::codec::{Decoder, Encoder, Progress};
+use nanoaudio_core::codec::{Decoder, Encoder, Progress, Seek, SeekRequest};
 use nanoaudio_core::crc;
 use nanoaudio_core::{Configuration, Error, Format, Result, Sample};
 
@@ -20,6 +20,7 @@ const COSINE_FRACTION: u32 = 30;
 const PROTOTYPE_FRACTION: u32 = 30;
 const ANALYSIS_FRACTION: u32 = 12;
 const PARTIAL_FRACTION: u32 = 15;
+const SYNTHESIS_HISTORY_BLOCKS: usize = SYNTHESIS / (2 * MAXIMUM_SUBBANDS) - 1;
 
 pub const SBC_MAXIMUM_FRAME_LENGTH: usize = 524;
 pub const SBC_MAXIMUM_FRAME_SAMPLES: usize = MAXIMUM_BLOCKS * MAXIMUM_SUBBANDS * MAXIMUM_CHANNELS;
@@ -517,6 +518,7 @@ pub struct SbcDecoder {
     parameters: Option<SbcParameters>,
     synthesis: [[i32; SYNTHESIS]; MAXIMUM_CHANNELS],
     finishing: bool,
+    skip: usize,
 }
 
 impl Default for SbcDecoder {
@@ -531,6 +533,7 @@ impl SbcDecoder {
             parameters: None,
             synthesis: [[0; SYNTHESIS]; MAXIMUM_CHANNELS],
             finishing: false,
+            skip: 0,
         }
     }
 
@@ -587,7 +590,17 @@ impl SbcDecoder {
 
         self.decode_frame(&parameters, &input[..length], output)?;
 
-        Ok(Some((length, samples)))
+        if self.skip == 0 {
+            return Ok(Some((length, samples)));
+        }
+
+        let channels = parameters.channels() as usize;
+        let discarded = self.skip.min(parameters.samples_per_channel()) * channels;
+
+        output.copy_within(discarded..samples, 0);
+        self.skip -= discarded / channels;
+
+        Ok(Some((length, samples - discarded)))
     }
 
     fn decode_frame<S: Sample>(
@@ -735,6 +748,38 @@ impl Decoder for SbcDecoder {
 
     fn decode(&mut self, input: &[u8], output: &mut [i16]) -> Result<Progress> {
         self.decode_into(input, output)
+    }
+}
+
+impl Seek for SbcDecoder {
+    fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
+        let Some(parameters) = self.parameters else {
+            if frame != 0 {
+                return Err(Error::Incomplete);
+            }
+
+            self.reset();
+
+            return Ok(SeekRequest::default());
+        };
+
+        let subbands = parameters.subbands as u64;
+        let samples = parameters.samples_per_channel() as u64;
+        let first_block = (frame / subbands).saturating_sub(SYNTHESIS_HISTORY_BLOCKS as u64);
+        let index = first_block / parameters.blocks as u64;
+        let skip = frame - index * samples;
+        let byte_offset = index
+            .checked_mul(parameters.frame_length() as u64)
+            .ok_or(Error::InvalidParameter)?;
+
+        self.synthesis = [[0; SYNTHESIS]; MAXIMUM_CHANNELS];
+        self.finishing = false;
+        self.skip = skip as usize;
+
+        Ok(SeekRequest {
+            byte_offset,
+            skip_frames: skip as u32,
+        })
     }
 }
 
