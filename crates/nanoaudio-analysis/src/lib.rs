@@ -10,6 +10,8 @@ mod goertzel;
 mod level;
 mod measure;
 mod silence;
+#[cfg(feature = "fft")]
+mod spectrum;
 mod stereo;
 mod voice;
 
@@ -24,5 +26,7 @@ pub use nanoaudio_dsp::{
     Analyzer, Tap, analyze, analyze_bytes, analyze_bytes_using, analyze_using,
 };
 pub use silence::*;
+#[cfg(feature = "fft")]
+pub use spectrum::*;
 pub use stereo::*;
 pub use voice::*;

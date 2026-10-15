@@ -40,6 +40,7 @@ Every feature except MP3 is enabled by default. With `default-features = false`,
 | -------------- | --------------------------------------------------------------------------------------------------------- |
 | `dsp`          | Conversion, volume, mixing and pipelines (`nanoaudio-dsp`).                                                |
 | `analysis`     | The `analysis` module of analyzers for `tap` (`nanoaudio-analysis`). Implies `dsp`.                     |
+| `analysis-fft` | `analysis::Spectrum`, an FFT spectrum analyzer with [`microfft`](https://crates.io/crates/microfft). Implies `analysis`. Not default. |
 | `buffer`       | `RingBuffer`, `Producer` and `Consumer` (`nanoaudio-buffer`).                                              |
 | `g711`         | `codec::G711` and the A-law and µ-law functions (`nanoaudio-g711`).                                        |
 | `adpcm`        | `codec::ImaAdpcm` and `codec::MsAdpcm` (`nanoaudio-adpcm`).                                                |

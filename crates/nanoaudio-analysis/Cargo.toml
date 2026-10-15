@@ -12,9 +12,16 @@ readme = "README.md"
 keywords = ["audio", "no-std", "embedded", "meter", "analysis"]
 categories = ["multimedia::audio", "embedded", "no-std", "no-std::no-alloc"]
 
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 nanoaudio-core.workspace = true
 nanoaudio-dsp.workspace = true
+microfft = { version = "0.6", default-features = false, features = ["size-1024"], optional = true }
+
+[features]
+fft = ["dep:microfft"]
 
 [lints]
 workspace = true
