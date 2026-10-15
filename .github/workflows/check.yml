@@ -51,7 +51,7 @@ jobs:
               - 'crates/**'
               - 'tools/bench/**'
 
-  check:
+  lint:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
@@ -62,7 +62,9 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -78,6 +80,19 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
+  test:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Test
         run: cargo test --workspace
 
@@ -90,6 +105,23 @@ jobs:
       - name: Test with float
         run: cargo test -p nanoaudio -p nanoaudio-dsp --features float
 
+  coverage:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Test with all Features and Coverage
         run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
 
@@ -101,6 +133,21 @@ jobs:
           files: lcov.info
           fail_ci_if_error: true
 
+  coverage-skipped:
+    needs: changes
+    if: needs.changes.outputs.rust != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tell Codecov there is no code change
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: AlixANNERAUD/nanoaudio
+          run_command: empty-upload
+          fail_ci_if_error: false
+
   crates:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
@@ -111,6 +158,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: thumbv6m-none-eabi
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Test and build each Crate on its own
         run: |
@@ -139,6 +190,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Build
         run: cargo build --workspace --target ${{ matrix.target }}
 
@@ -149,6 +205,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        simd: [false, true]
+    env:
+      RUSTFLAGS: ${{ matrix.simd && '-C target-feature=+simd128' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -156,26 +217,20 @@ jobs:
         with:
           targets: wasm32-unknown-unknown, wasm32-wasip1
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: simd-${{ matrix.simd }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - uses: bytecodealliance/actions/wasmtime/setup@v1
 
       - name: Build for the browser
         run: cargo build --workspace --all-features --target wasm32-unknown-unknown
 
-      - name: Build for the browser with SIMD
-        run: cargo build --workspace --all-features --target wasm32-unknown-unknown
-        env:
-          RUSTFLAGS: -C target-feature=+simd128
-
       - name: Test on WASI
         run: cargo test --workspace --all-features --target wasm32-wasip1
         env:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime --dir=/
-
-      - name: Test on WASI with SIMD
-        run: cargo test --workspace --all-features --target wasm32-wasip1
-        env:
-          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime --dir=/
-          RUSTFLAGS: -C target-feature=+simd128
 
   asm:
     needs: changes
@@ -187,6 +242,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: thumbv6m-none-eabi, thumbv7em-none-eabihf, riscv32imc-unknown-none-elf, thumbv8m.main-none-eabihf
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/asm-probe
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check Hot Loops
         run: python3 tools/asm-probe/check.py
@@ -204,6 +264,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: thumbv6m-none-eabi
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            tools/bench
+            tools/bench/flash
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build the Benchmarks
         run: cargo build --release --manifest-path tools/bench/Cargo.toml
@@ -230,8 +297,14 @@ jobs:
         with:
           components: miri
 
+      - uses: taiki-e/install-action@cargo-nextest
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Miri
-        run: cargo miri test --workspace --lib
+        run: cargo miri nextest run --workspace --lib
 
   msrv:
     needs: changes
@@ -241,6 +314,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@1.89
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Test
         run: cargo test --workspace
@@ -257,26 +334,15 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Package
         run: cargo package --workspace
 
-  coverage-skipped:
-    needs: changes
-    if: needs.changes.outputs.rust != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Tell Codecov there is no code change
-        uses: codecov/codecov-action@v5
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          slug: AlixANNERAUD/nanoaudio
-          run_command: empty-upload
-          fail_ci_if_error: false
-
   ci:
-    needs: [changes, check, crates, embedded, wasm, asm, bench, miri, msrv, package]
+    needs: [changes, lint, test, coverage, crates, embedded, wasm, asm, bench, miri, msrv, package]
     if: always()
     runs-on: ubuntu-latest
     steps:
