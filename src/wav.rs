@@ -83,9 +83,13 @@ impl WavHeader {
             Encoding::Pcm => self.configuration.bytes_to_frames(size),
             Encoding::ALaw | Encoding::MuLaw => size / channels,
             Encoding::ImaAdpcm { block_align } => {
-                let groups = (block_align as usize - 4 * channels) / (4 * channels);
+                let block = block_align as usize;
+                let samples = |length: usize| match length.checked_sub(4 * channels) {
+                    Some(data) => data / (4 * channels) * 8 + 1,
+                    None => 0,
+                };
 
-                size / block_align as usize * (groups * 8 + 1)
+                size / block * samples(block) + samples(size % block)
             }
         }
     }
@@ -240,6 +244,15 @@ mod tests {
         let adpcm = WavHeader::parse(&bytes).unwrap();
         assert_eq!(adpcm.encoding, Encoding::ImaAdpcm { block_align: 256 });
         assert_eq!(adpcm.frames(), 2 * 505);
+
+        for (remainder, frames) in [(0, 0), (3, 0), (4, 1), (11, 9), (12, 17), (255, 1 + 62 * 8)] {
+            let partial = WavHeader {
+                data_size: 512 + remainder,
+                ..adpcm
+            };
+
+            assert_eq!(partial.frames(), 2 * 505 + frames);
+        }
     }
 
     #[test]
