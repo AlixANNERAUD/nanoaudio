@@ -23,11 +23,18 @@ mod simd;
 ))]
 use simd::{analyze as analyze_block, synthesize as synthesize_block};
 
+#[cfg(any(test, nanoaudio_no_long_multiply))]
+mod split;
+
+#[cfg(nanoaudio_no_long_multiply)]
+use split::{analyze as analyze_block, synthesize as synthesize_block};
+
 #[cfg(not(any(
     target_arch = "x86",
     target_arch = "x86_64",
     target_arch = "aarch64",
-    all(target_arch = "wasm32", target_feature = "simd128")
+    all(target_arch = "wasm32", target_feature = "simd128"),
+    nanoaudio_no_long_multiply
 )))]
 use self::{analyze as analyze_block, synthesize as synthesize_block};
 
@@ -155,7 +162,8 @@ const ANALYSIS_8: [i32; 128] = modulation(8, true);
         target_arch = "x86",
         target_arch = "x86_64",
         target_arch = "aarch64",
-        all(target_arch = "wasm32", target_feature = "simd128")
+        all(target_arch = "wasm32", target_feature = "simd128"),
+        nanoaudio_no_long_multiply
     ))
 ))]
 struct Filterbank {
@@ -170,7 +178,8 @@ struct Filterbank {
         target_arch = "x86",
         target_arch = "x86_64",
         target_arch = "aarch64",
-        all(target_arch = "wasm32", target_feature = "simd128")
+        all(target_arch = "wasm32", target_feature = "simd128"),
+        nanoaudio_no_long_multiply
     ))
 ))]
 impl Filterbank {
@@ -781,7 +790,8 @@ impl SbcDecoder {
         target_arch = "x86",
         target_arch = "x86_64",
         target_arch = "aarch64",
-        all(target_arch = "wasm32", target_feature = "simd128")
+        all(target_arch = "wasm32", target_feature = "simd128"),
+        nanoaudio_no_long_multiply
     ))
 ))]
 fn synthesize(state: &mut [i32; SYNTHESIS], samples: &[i32], output: &mut [i16]) {
@@ -889,7 +899,8 @@ impl Seek for SbcDecoder {
         target_arch = "x86",
         target_arch = "x86_64",
         target_arch = "aarch64",
-        all(target_arch = "wasm32", target_feature = "simd128")
+        all(target_arch = "wasm32", target_feature = "simd128"),
+        nanoaudio_no_long_multiply
     ))
 ))]
 fn analyze(history: &mut [i16; WINDOW], input: impl Iterator<Item = i16>, output: &mut [i32]) {
@@ -902,7 +913,7 @@ fn analyze(history: &mut [i16; WINDOW], input: impl Iterator<Item = i16>, output
         history[subbands - 1 - index] = sample;
     }
 
-    let mut partial = [0i64; 2 * MAXIMUM_SUBBANDS];
+    let mut partial = [0i32; 2 * MAXIMUM_SUBBANDS];
 
     for (row, partial) in partial[..2 * subbands].iter_mut().enumerate() {
         let sum: i64 = (row..10 * subbands)
@@ -910,7 +921,7 @@ fn analyze(history: &mut [i16; WINDOW], input: impl Iterator<Item = i16>, output
             .map(|index| filterbank.prototype[index] as i64 * history[index] as i64)
             .sum();
 
-        *partial = sum >> (PROTOTYPE_FRACTION - PARTIAL_FRACTION);
+        *partial = (sum >> (PROTOTYPE_FRACTION - PARTIAL_FRACTION)) as i32;
     }
 
     for (output, row) in output
@@ -920,7 +931,7 @@ fn analyze(history: &mut [i16; WINDOW], input: impl Iterator<Item = i16>, output
         let sum: i64 = row
             .iter()
             .zip(&partial)
-            .map(|(cosine, partial)| *cosine as i64 * partial)
+            .map(|(cosine, partial)| *cosine as i64 * *partial as i64)
             .sum();
 
         *output = (sum >> (COSINE_FRACTION + PARTIAL_FRACTION - ANALYSIS_FRACTION)) as i32;
@@ -934,11 +945,22 @@ fn scale_factor(maximum: i32) -> u8 {
 }
 
 fn quantize(sample: i32, scale_factor: u8, bits: u8) -> u32 {
-    let levels = (1i64 << bits) - 1;
+    let levels = (1u32 << bits) - 1;
     let shift = scale_factor as u32 + 1 + ANALYSIS_FRACTION;
-    let quantized = ((sample as i64 + (1 << shift)) * levels) >> (shift + 1);
 
-    quantized.clamp(0, levels) as u32
+    if sample >= 1 << shift {
+        return levels;
+    }
+
+    if sample < -(1 << shift) {
+        return 0;
+    }
+
+    let value = (sample + (1 << shift)) as u32;
+    let high = (value >> 16) * levels;
+    let low = (value & 0xFFFF) * levels;
+
+    ((high << 2) + (low >> 14)) >> scale_factor
 }
 
 type SubbandSamples = [[[i32; MAXIMUM_SUBBANDS]; MAXIMUM_CHANNELS]; MAXIMUM_BLOCKS];
@@ -1126,5 +1148,45 @@ impl Encoder for SbcEncoder {
         }
 
         Ok(progress)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn quantize_wide(sample: i32, scale_factor: u8, bits: u8) -> u32 {
+        let levels = (1i64 << bits) - 1;
+        let shift = scale_factor as u32 + 1 + ANALYSIS_FRACTION;
+        let quantized = ((sample as i64 + (1 << shift)) * levels) >> (shift + 1);
+
+        quantized.clamp(0, levels) as u32
+    }
+
+    #[test]
+    fn quantize_matches_wide() {
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+
+        for round in 0..if cfg!(miri) { 1_000 } else { 2_000_000 } {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+
+            let scale_factor = (state % 16) as u8;
+            let bits = (state >> 4) as u8 % 16 + 1;
+            let limit = 1i64 << (scale_factor as u32 + 1 + ANALYSIS_FRACTION);
+            let sample = match round % 4 {
+                0 => (state >> 32) as i32,
+                1 => ((state >> 32) as i64 % (limit + 2)) as i32,
+                2 => (-limit + (round as i64 / 4) % 3 - 1) as i32,
+                _ => (limit + (round as i64 / 4) % 3 - 1).min(i32::MAX as i64) as i32,
+            };
+
+            assert_eq!(
+                quantize(sample, scale_factor, bits),
+                quantize_wide(sample, scale_factor, bits),
+                "{sample} {scale_factor} {bits}"
+            );
+        }
     }
 }
