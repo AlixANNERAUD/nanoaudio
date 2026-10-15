@@ -125,6 +125,21 @@ jobs:
         env:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime --dir=/
 
+  asm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv6m-none-eabi, thumbv7em-none-eabihf, riscv32imc-unknown-none-elf, thumbv8m.main-none-eabihf
+
+      - name: Check Hot Loops
+        run: python3 tools/asm-probe/check.py
+
+      - name: Check Hot Loops optimized for Size
+        run: python3 tools/asm-probe/check.py --opt-level s
+
   miri:
     runs-on: ubuntu-latest
     steps:

@@ -1,0 +1,111 @@
+#![no_std]
+
+use nanoaudio_core::codec::Encoder;
+use nanoaudio_dsp::{convert, mix_using, samples_using, Fixed, Float, Stream, Volume};
+use nanoaudio_g711::{Law, G711};
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_fixed_volume_i16(samples: &mut [i16], volume: u16) {
+    Volume::from_raw(volume).apply_to_using::<Fixed, i16>(samples);
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_fixed_mix_i16(output: &mut [i16], input: &[i16], volume: u16) -> usize {
+    mix_using::<Fixed, i16>(output, input, Volume::from_raw(volume))
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_fixed_volume_u8(samples: &mut [u8], volume: u16) {
+    Volume::from_raw(volume).apply_to_using::<Fixed, u8>(samples);
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_fixed_volume_i32(samples: &mut [i32], volume: u16) {
+    Volume::from_raw(volume).apply_to_using::<Fixed, i32>(samples);
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_fixed_stream_i16(input: &[i16], output: &mut [i16], volume: u16) -> usize {
+    match samples_using::<Fixed, i16>(input, 2) {
+        Ok(stream) => stream
+            .volume(Volume::from_raw(volume))
+            .write_samples(output),
+        Err(_) => 0,
+    }
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_float_volume_i16(samples: &mut [i16], volume: u16) {
+    Volume::from_raw(volume).apply_to_using::<Float, i16>(samples);
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_float_mix_i16(output: &mut [i16], input: &[i16], volume: u16) -> usize {
+    mix_using::<Float, i16>(output, input, Volume::from_raw(volume))
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_float_convert_i16(input: &[i16], output: &mut [f32]) -> usize {
+    convert::<i16, f32>(input, output)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_float_stream_i16(input: &[i16], output: &mut [i16], volume: u16) -> usize {
+    match samples_using::<Float, i16>(input, 2) {
+        Ok(stream) => stream
+            .volume(Volume::from_raw(volume))
+            .write_samples(output),
+        Err(_) => 0,
+    }
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_g711_decode_mu_law(input: &[u8], output: &mut [i16]) -> usize {
+    decode(Law::Mu, input, output)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_g711_decode_a_law(input: &[u8], output: &mut [i16]) -> usize {
+    decode(Law::A, input, output)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_g711_encode_mu_law(input: &[i16], output: &mut [u8]) -> usize {
+    encode(Law::Mu, input, output)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_g711_encode_a_law(input: &[i16], output: &mut [u8]) -> usize {
+    encode(Law::A, input, output)
+}
+
+fn decode(law: Law, input: &[u8], output: &mut [i16]) -> usize {
+    match G711::new(law, 8000, 1) {
+        Ok(mut codec) => codec
+            .decode_into(input, output)
+            .map_or(0, |progress| progress.produced),
+        Err(_) => 0,
+    }
+}
+
+fn encode(law: Law, input: &[i16], output: &mut [u8]) -> usize {
+    match G711::new(law, 8000, 1) {
+        Ok(mut codec) => codec
+            .encode(input, output)
+            .map_or(0, |progress| progress.produced),
+        Err(_) => 0,
+    }
+}
