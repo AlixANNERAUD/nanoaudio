@@ -165,7 +165,7 @@ fn deep_files_match_reference() {
         decode::<i16>(STEREO_24),
         expected_24
             .iter()
-            .map(|sample| (sample >> 8) as i16)
+            .map(|sample| (sample.signum() * ((sample.abs() + 0x80) >> 8)).min(0x7FFF) as i16)
             .collect::<Vec<_>>()
     );
     assert_eq!(decode::<i32>(STEREO_32), expected_32);

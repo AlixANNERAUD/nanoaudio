@@ -148,7 +148,7 @@ mod tests {
         let mut samples = [1000i16, -1000, i16::MAX];
 
         Volume::from_percent(50).apply_to_using::<R, _>(&mut samples);
-        assert_eq!(samples, [500, -500, i16::MAX / 2]);
+        assert_eq!(samples, [500, -500, 16_384]);
 
         Volume::MAXIMUM.apply_to_using::<R, _>(&mut samples);
         assert!((7999..=8000).contains(&samples[0]));
