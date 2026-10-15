@@ -211,3 +211,16 @@ fn small_windows_skip_junk_without_losing_frames() {
         }
     }
 }
+
+#[test]
+fn skips_headers_with_a_reserved_layer() {
+    let audio = include_bytes!("data/stereo_440_1000.mp3");
+    let (_, reference) = decode::<i16>(audio, audio.len());
+    let mut file = [0xFF, 0xF1, 0x90, 0x44].repeat(300);
+
+    file.extend_from_slice(audio);
+
+    for window in WINDOWS {
+        assert!(stream(window, &file, 512) == reference, "window {window}");
+    }
+}
