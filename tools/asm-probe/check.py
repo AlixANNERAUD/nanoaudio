@@ -22,6 +22,11 @@ FIXED_NARROW = [
     "probe_fixed_volume_u8",
 ]
 
+FIXED_I24 = [
+    "probe_fixed_volume_i24",
+    "probe_fixed_mix_i24",
+]
+
 SATURATING = [
     "probe_fixed_volume_i16",
     "probe_fixed_mix_i16",
@@ -218,7 +223,7 @@ def analyse(name, assembly, opt_level):
         total = sum(len(instructions(bodies[member])) for member in reached)
         sizes = [len(instructions(body)) for member in reached for body in loops(bodies[member])]
         report.append("{:<8} {:<26} instructions {:>4}  loops {}".format(name, function, total, sizes))
-    expected = set(CALL_FREE + HELIUM)
+    expected = set(CALL_FREE + HELIUM + FIXED_I24)
     for function in sorted(expected - set(probes)):
         failures.append(name + ": missing " + function)
     for function in FIXED_NARROW:
@@ -227,6 +232,10 @@ def analyse(name, assembly, opt_level):
             failures.append(name + ": 64-bit multiply in " + function)
         if name == "m4" and function in SATURATING and not any(line.startswith("ssat") for line in lines):
             failures.append(name + ": no ssat in " + function)
+    for function in FIXED_I24:
+        lines = [line for member in closure(bodies, function) for line in bodies[member]]
+        if any(WIDE_MULTIPLY.search(line) for line in lines):
+            failures.append(name + ": 64-bit multiply in " + function)
     for function in CALL_FREE:
         for member in closure(bodies, function):
             for body in loops(bodies[member]):

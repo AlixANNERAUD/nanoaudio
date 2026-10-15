@@ -136,6 +136,21 @@ fn mix_wide<S: Sample>(output: i32, input: i32, gain: i32) -> i32 {
     saturate::<S>(output.saturating_add(amplify_wide::<S>(input, gain)))
 }
 
+const LOW_MASK: i32 = (1 << Volume::FRACTIONAL_BITS) - 1;
+
+#[inline]
+fn amplify_split<S: Sample>(value: i32, gain: i32) -> i32 {
+    let high = (value >> Volume::FRACTIONAL_BITS) * gain;
+    let low = ((value & LOW_MASK) * gain + ROUNDING + (value >> 31)) >> Volume::FRACTIONAL_BITS;
+
+    saturate::<S>(high + low)
+}
+
+#[inline]
+fn mix_split<S: Sample>(output: i32, input: i32, gain: i32) -> i32 {
+    saturate::<S>(output + amplify_split::<S>(input, gain))
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Fixed;
 
@@ -186,7 +201,8 @@ impl Representation for Fixed {
     fn amplify_sample<S: Sample>(sample: S, gain: i32) -> S {
         match S::FORMAT {
             Format::U8 | Format::I16 => from_integer(amplify_narrow::<S>(to_integer(sample), gain)),
-            Format::I24 | Format::I32 => from_integer(amplify_wide::<S>(to_integer(sample), gain)),
+            Format::I24 => from_integer(amplify_split::<S>(to_integer(sample), gain)),
+            Format::I32 => from_integer(amplify_wide::<S>(to_integer(sample), gain)),
             Format::F32 => Self::to_sample(Self::amplify(Self::from_sample(sample), gain)),
         }
     }
@@ -197,9 +213,10 @@ impl Representation for Fixed {
             Format::U8 | Format::I16 => {
                 from_integer(mix_narrow::<S>(to_integer(output), to_integer(input), gain))
             }
-            Format::I24 | Format::I32 => {
-                from_integer(mix_wide::<S>(to_integer(output), to_integer(input), gain))
+            Format::I24 => {
+                from_integer(mix_split::<S>(to_integer(output), to_integer(input), gain))
             }
+            Format::I32 => from_integer(mix_wide::<S>(to_integer(output), to_integer(input), gain)),
             Format::F32 => Self::to_sample(Self::add(
                 Self::from_sample(output),
                 Self::amplify(Self::from_sample(input), gain),
@@ -470,6 +487,33 @@ mod tests {
                         saturating(output.value() as i64 + expected, 24)
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_i24_split_matches_wide_arithmetic() {
+        let stride = if cfg!(miri) { 4_093 } else { 1 };
+        let outputs = [I24::MIN, I24::new(-1), I24::SILENCE, I24::new(1), I24::MAX];
+
+        for raw in GAINS {
+            let gain = Fixed::gain(Volume::from_raw(raw));
+            let samples = (I24::MIN.value()..=I24::MAX.value())
+                .step_by(stride)
+                .chain([I24::MIN.value(), -1, 0, 1, I24::MAX.value()]);
+
+            for (index, sample) in samples.enumerate() {
+                let input = I24::new(sample);
+                let output = outputs[index % outputs.len()];
+
+                assert_eq!(
+                    Fixed::amplify_sample(input, gain),
+                    from_integer::<I24>(amplify_wide::<I24>(sample, gain))
+                );
+                assert_eq!(
+                    Fixed::mix_sample(output, input, gain),
+                    from_integer::<I24>(mix_wide::<I24>(output.value(), sample, gain))
+                );
             }
         }
     }
