@@ -2,12 +2,14 @@ mod g711;
 mod ima_adpcm;
 #[cfg(feature = "mp3")]
 mod mp3;
+mod qoa;
 mod wav;
 
 pub use g711::*;
 pub use ima_adpcm::*;
 #[cfg(feature = "mp3")]
 pub use mp3::*;
+pub use qoa::*;
 pub use wav::*;
 
 use crate::{Configuration, Result, Sample};
@@ -52,6 +54,8 @@ pub trait Encoder {
     fn minimum_input(&self) -> usize;
 
     fn minimum_output(&self) -> usize;
+
+    fn finish(&mut self) {}
 
     fn encode(&mut self, input: &[Self::Sample], output: &mut [u8]) -> Result<Progress>;
 }
