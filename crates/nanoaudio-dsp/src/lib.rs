@@ -2,12 +2,14 @@
 #![doc = include_str!("../README.md")]
 
 mod convert;
+mod dither;
 mod mixer;
 mod representation;
 mod stream;
 mod volume;
 
 pub use convert::*;
+pub use dither::*;
 pub use mixer::*;
 pub use representation::*;
 pub use stream::*;

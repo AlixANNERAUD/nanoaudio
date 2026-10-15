@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use nanoaudio_core::{Error, Format, I24, MAXIMUM_CHANNELS, Result, Sample};
 
-use crate::{DefaultRepresentation, Representation, Volume};
+use crate::{DefaultRepresentation, Dither, Representation, Volume};
 
 type Value<S> = <<S as Stream>::Representation as Representation>::Value;
 
@@ -68,6 +68,15 @@ pub trait Stream {
             stream: self,
             function,
         }
+    }
+
+    /// Adds triangular (TPDF) dither of one LSB of `target`, seeded with `seed`.
+    /// Use it as the last stage when writing to a narrower format, to turn quantisation distortion into noise.
+    fn dither(self, target: Format, seed: u32) -> Dither<Self>
+    where
+        Self: Sized,
+    {
+        Dither::new(self, target, seed)
     }
 
     fn write_samples<S: Sample>(&mut self, output: &mut [S]) -> usize
