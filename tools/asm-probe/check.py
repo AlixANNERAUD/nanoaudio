@@ -87,6 +87,10 @@ NO_WIDE_MULTIPLY_IN_STAGE_LOOPS = [
     "probe_fixed_mix_i32",
 ]
 
+NO_WIDE_DIVISION_IN_LOOPS = [
+    "probe_sbc_decode",
+]
+
 SCALAR = [
     "probe_qoa_decode",
     "probe_qoa_encode",
@@ -97,6 +101,7 @@ SCALAR = [
 SAMPLE_CONVERSION = re.compile(r"6Sample\d+(from_f32|to_f32|from_i32|to_i32|convert)")
 WIDE_MULTIPLY = re.compile(r"__aeabi_lmul|__muldi3")
 WIDE_PRODUCT = re.compile(r"__aeabi_lmul|__muldi3|^(smull|umull|smlal|umlal|mulh|mulhu|mulhsu)\s")
+WIDE_DIVISION = re.compile(r"__aeabi_ldivmod|__aeabi_uldivmod|__divdi3|__udivdi3|__moddi3|__umoddi3|__divmoddi4|__udivmoddi4")
 CALL = re.compile(r"^(bl|blx|call|jal|jalr|tail)$")
 LABEL = re.compile(r"^(\.L\w+):")
 BRANCH_TARGET = re.compile(r"^\.LBB\w+$")
@@ -284,7 +289,7 @@ def analyse(name, assembly, opt_level):
         report.append("{:<8} {:<26} instructions {:>4}  loops {}".format(name, function, total, sizes))
     expected = set(
         CALL_FREE + HELIUM + FIXED_I24 + FLAT + INLINED + SCALAR + NO_WIDE_MULTIPLY_IN_LOOPS
-        + NO_WIDE_MULTIPLY_IN_STAGE_LOOPS
+        + NO_WIDE_MULTIPLY_IN_STAGE_LOOPS + NO_WIDE_DIVISION_IN_LOOPS
     )
     for function in sorted(expected - set(probes)):
         failures.append(name + ": missing " + function)
@@ -309,6 +314,11 @@ def analyse(name, assembly, opt_level):
                 for body in loops(bodies[member]):
                     if any(WIDE_PRODUCT.search(line) for line in body):
                         failures.append(name + ": 64-bit multiply in a loop of " + function)
+    for function in NO_WIDE_DIVISION_IN_LOOPS:
+        for member in closure(bodies, function):
+            for body in loops(bodies[member]):
+                if any(WIDE_DIVISION.search(line) for line in body):
+                    failures.append(name + ": 64-bit division in a loop of " + function)
     for function in FLAT:
         for member in closure(bodies, function):
             if nested(bodies[member]):

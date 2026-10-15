@@ -430,6 +430,54 @@ impl SbcParameters {
 
 type SubbandValues = [[u8; MAXIMUM_SUBBANDS]; MAXIMUM_CHANNELS];
 
+const RECIPROCALS: [u32; 17] = reciprocals();
+
+const fn reciprocals() -> [u32; 17] {
+    let mut result = [0; 17];
+    let mut bits = 1;
+
+    while bits <= 16 {
+        result[bits] = if bits == 1 {
+            1 << 31
+        } else {
+            (u32::MAX >> 1) / ((1 << bits) - 1)
+        };
+        bits += 1;
+    }
+
+    result
+}
+
+#[derive(Clone, Copy, Default)]
+struct Dequantizer {
+    multiplier: u32,
+    tail: u32,
+    offset: i32,
+}
+
+impl Dequantizer {
+    fn new(bits: u8, scale_factor: u8) -> Self {
+        let bits = bits as u32;
+        let shift = scale_factor as u32 + 2 + SUBBAND_FRACTION;
+
+        Self {
+            multiplier: RECIPROCALS[bits as usize] >> (31 - shift),
+            tail: bits - shift % bits,
+            offset: (1 << (bits - 1)) - 1,
+        }
+    }
+
+    #[inline(always)]
+    fn apply(self, quantized: u32) -> i32 {
+        let offset = quantized as i32 - self.offset;
+        let sign = offset >> 31;
+        let magnitude = ((offset ^ sign) - sign) as u32;
+        let value = (magnitude * self.multiplier + (magnitude >> self.tail)) as i32;
+
+        (value ^ sign) - sign
+    }
+}
+
 fn bit_need(parameters: &SbcParameters, scale_factor: u8, subband: usize) -> i32 {
     let scale_factor = scale_factor as i32;
 
@@ -735,6 +783,16 @@ impl SbcDecoder {
         }
 
         let bits = allocate(parameters, &scale_factors);
+        let mut dequantizers = [[Dequantizer::default(); MAXIMUM_SUBBANDS]; MAXIMUM_CHANNELS];
+
+        for channel in 0..channels {
+            for subband in 0..subbands {
+                if bits[channel][subband] != 0 {
+                    dequantizers[channel][subband] =
+                        Dequantizer::new(bits[channel][subband], scale_factors[channel][subband]);
+                }
+            }
+        }
 
         for block in 0..parameters.blocks as usize {
             let mut samples = [[0i32; MAXIMUM_SUBBANDS]; MAXIMUM_CHANNELS];
@@ -747,12 +805,9 @@ impl SbcDecoder {
                         continue;
                     }
 
-                    let levels = (1i64 << bit) - 1;
-                    let quantized = reader.read(bit.into())? as i64;
-                    let shift = scale_factors[channel][subband] as u32 + 1 + SUBBAND_FRACTION;
+                    let quantized = reader.read(bit.into())?;
 
-                    samples[channel][subband] =
-                        (((2 * quantized + 1 - levels) << shift) / levels) as i32;
+                    samples[channel][subband] = dequantizers[channel][subband].apply(quantized);
                 }
             }
 
@@ -1161,6 +1216,26 @@ mod tests {
         let quantized = ((sample as i64 + (1 << shift)) * levels) >> (shift + 1);
 
         quantized.clamp(0, levels) as u32
+    }
+
+    #[test]
+    fn dequantize_matches_division() {
+        for bits in 1..=if cfg!(miri) { 5 } else { 16u8 } {
+            let levels = (1i64 << bits) - 1;
+
+            for quantized in 0..=levels {
+                for scale_factor in 0..16u8 {
+                    let shift = scale_factor as u32 + 1 + SUBBAND_FRACTION;
+                    let expected = ((2 * quantized + 1 - levels) << shift) / levels;
+
+                    assert_eq!(
+                        Dequantizer::new(bits, scale_factor).apply(quantized as u32) as i64,
+                        expected,
+                        "{quantized} {bits} {scale_factor}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
