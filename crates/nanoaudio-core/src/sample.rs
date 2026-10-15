@@ -59,6 +59,7 @@ impl Sample for u8 {
         Self::from_i32(truncate(value))
     }
 
+    #[inline]
     fn read_le(bytes: &[u8]) -> Self {
         bytes[0]
     }
@@ -88,6 +89,7 @@ impl Sample for i16 {
         Self::from_i32(truncate(value))
     }
 
+    #[inline]
     fn read_le(bytes: &[u8]) -> Self {
         i16::from_le_bytes([bytes[0], bytes[1]])
     }
