@@ -25,7 +25,9 @@ The proposed bump is derived from these commits since the last release:
 | `feat:` | minor | patch |
 | `feat!:`, `fix!:` or `BREAKING CHANGE:` footer | major | minor |
 
-[cargo-semver-checks](https://github.com/obi1kenobi/cargo-semver-checks) runs on the Release PR and reports public API breaking changes in the PR body. If it detects a breaking change, the bump is raised accordingly. The maintainer has the final say and may change the version in the Release PR.
+The maintainer has the final say and may change the version in the Release PR.
+
+[cargo-semver-checks](https://github.com/obi1kenobi/cargo-semver-checks) is disabled for now: release-plz runs it with every feature enabled, and the published 0.1.0 does not build that way (its `fixed` and `float` features were mutually exclusive). Re-enable `semver_check` in `release-plz.toml` once a release without that restriction is published.
 
 ## Changelog
 
