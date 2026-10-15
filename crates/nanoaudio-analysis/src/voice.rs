@@ -24,10 +24,10 @@ pub struct VoiceSettings {
 }
 
 impl VoiceSettings {
-    /// Blocks of 10 ms, 9 dB above the floor and above -60 dBFS, 150 to 3000 crossings per second, 30 ms onset, 300 ms hangover and a 3 s floor window.
+    /// Blocks of 10 ms, 6 dB above the floor and above -60 dBFS, 150 to 3000 crossings per second, 30 ms onset, 300 ms hangover and a 3 s floor window.
     pub const DEFAULT: Self = Self {
         block: 10,
-        threshold: 9,
+        threshold: 6,
         minimum: -60,
         lowest_crossings: 150,
         highest_crossings: 3000,
@@ -50,9 +50,9 @@ const MIX_SHIFTS: [u8; 9] = [0, 0, 1, 2, 2, 3, 3, 3, 3];
 
 /// Tells when someone is talking, from the short-term energy and zero-crossing rate of the signal.
 ///
-/// The channels are mixed, the DC offset removed, and the signal cut into blocks of about 10 ms. A block is voiced when its level is above the noise floor by the threshold, above the minimum level, and its zero-crossing rate is in the range of voiced speech, which leaves out hum, rumble, hiss and white noise. Voice starts after a run of voiced blocks as long as the onset, and lasts while blocks stay at least half the threshold above the floor, so the unvoiced sounds and short pauses between words keep it, and ends after a run of other blocks as long as the hangover.
+/// The channels are mixed, the DC and the low end below about 100 Hz removed, and the signal cut into blocks of about 10 ms. A block is voiced when its level is above the noise floor by the threshold and above the minimum level, and its zero-crossing rate is in the range of voiced speech, which leaves out hum, rumble, hiss and white noise. Crossings are counted only when the signal swings past the noise floor amplitude, so noise riding on a voice does not add any. Voice starts after a run of voiced blocks as long as the onset, lasts while blocks stay above the threshold whatever their crossing rate, so unvoiced sounds and short pauses between words keep it, and ends after a run of quieter blocks as long as the hangover.
 ///
-/// The noise floor is the level of the quietest block over the last few seconds, so it follows a changing background and assumes the signal is not voice all the time. Until the first block ends, it reads -100 dBFS, and the first blocks are taken as background.
+/// The noise floor is the lowest level over the last few seconds, averaged over about four blocks, so it follows a changing background and assumes the signal is not voice all the time. It reads -100 dBFS until the first block ends, and the first blocks are taken as background.
 ///
 /// Each frame costs a handful of 32-bit integer operations and one 32 × 32-bit multiply, also with [`Float`], where samples are converted to 16 bits first: NaN counts as silence and infinities as full scale. The decision runs once per block, also without floating point or division. Positions are counted in frames analyzed since creation or the last [`reset`](Self::reset).
 ///
@@ -95,8 +95,10 @@ pub struct VoiceActivityDetector {
     energy: u64,
     crossings: u32,
     level: i32,
-    rate: u32,
+    counted: u32,
     floor: i32,
+    dead: i32,
+    smooth: i32,
     minima: [i32; FLOOR_SLOTS],
     current: i32,
     slot: u8,
@@ -139,7 +141,7 @@ impl VoiceActivityDetector {
         } as u64;
         let mut shift = 1;
 
-        while shift < DC_BITS && sample_rate >> (shift + 1) >= 160 {
+        while shift < DC_BITS && sample_rate >> (shift + 1) >= 400 {
             shift += 1;
         }
 
@@ -171,8 +173,10 @@ impl VoiceActivityDetector {
             energy: 0,
             crossings: 0,
             level: MINIMUM_LEVEL,
-            rate: 0,
+            counted: 0,
             floor: MINIMUM_LEVEL,
+            dead: 0,
+            smooth: MINIMUM_LEVEL,
             minima: [i32::MAX; FLOOR_SLOTS],
             current: i32::MAX,
             slot: 0,
@@ -236,13 +240,13 @@ impl VoiceActivityDetector {
 
     /// Returns the zero-crossing rate of the last block, in crossings per second.
     pub const fn crossing_rate(&self) -> u32 {
-        ((self.rate as u64 * self.sample_rate as u64 + self.length as u64 / 2) / self.length as u64)
-            as u32
+        ((self.counted as u64 * self.sample_rate as u64 + self.length as u64 / 2)
+            / self.length as u64) as u32
     }
 
     /// Returns the number of zero crossings in the last block.
     pub const fn crossings(&self) -> u32 {
-        self.rate
+        self.counted
     }
 
     /// Returns the number of frames analyzed.
@@ -275,7 +279,13 @@ impl VoiceActivityDetector {
 
         let filtered = mixed - (self.dc >> DC_BITS);
         let magnitude = filtered.unsigned_abs();
-        let sign = filtered >> 31;
+        let sign = if filtered > self.dead {
+            0
+        } else if filtered < -self.dead {
+            -1
+        } else {
+            self.sign
+        };
 
         self.energy += (magnitude * magnitude) as u64;
         self.crossings += (sign ^ self.sign) as u32 & 1;
@@ -297,9 +307,14 @@ impl VoiceActivityDetector {
         self.crossings = 0;
         self.blocks += 1;
         self.level = level;
-        self.rate = crossings;
+        self.counted = crossings;
 
-        self.current = self.current.min(level);
+        self.smooth = if self.blocks == 1 {
+            level
+        } else {
+            self.smooth + ((level - self.smooth) >> 2)
+        };
+        self.current = self.current.min(self.smooth);
         self.count += 1;
 
         if self.count >= self.window {
@@ -318,14 +333,13 @@ impl VoiceActivityDetector {
         }
 
         self.floor = floor;
+        self.dead = amplitude(floor);
 
         let above = level - floor;
         let audible = level >= self.minimum;
-        let voiced = audible
-            && above >= self.threshold
-            && crossings >= self.lowest
-            && crossings <= self.highest;
-        let target = if audible && crossings >= self.lowest && crossings <= self.highest {
+        let loud = audible && above >= self.threshold;
+        let ranged = crossings >= self.lowest && crossings <= self.highest;
+        let target = if audible && ranged {
             ((above.clamp(0, span(self.threshold)) * self.scale) >> 16).min(255)
         } else {
             0
@@ -333,11 +347,7 @@ impl VoiceActivityDetector {
 
         self.score += (target - self.score) >> 2;
 
-        let keeps = if self.voice {
-            audible && 2 * above >= self.threshold
-        } else {
-            !voiced
-        };
+        let keeps = if self.voice { loud } else { !(loud && ranged) };
 
         if keeps {
             self.pending = 0;
@@ -447,6 +457,416 @@ const fn logarithm(value: u64) -> i32 {
     (exponent << 12) + ((fraction + bend) >> 4) as i32
 }
 
+const fn amplitude(decibels: i32) -> i32 {
+    let exponent = ((decibels * 10885) >> 16) + (15 << 8);
+
+    if exponent < 0 {
+        0
+    } else {
+        ((256 + (exponent & 255)) << (exponent >> 8)) >> 8
+    }
+}
+
 const fn decibels(logarithm: i32) -> i32 {
     ((logarithm - (30 << 12)) * 3083) >> 14
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use std::vec;
+    use std::vec::Vec;
+
+    use nanoaudio_core::Format;
+    use nanoaudio_dsp::{
+        Fixed, Float, Representation, Stream, analyze_bytes_using, analyze_using, samples_using,
+    };
+
+    use super::*;
+
+    const TAU: f64 = core::f64::consts::TAU;
+
+    struct Random(u64);
+
+    impl Random {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        fn uniform(&mut self) -> f64 {
+            (self.next() >> 11) as f64 / (1u64 << 53) as f64
+        }
+
+        fn between(&mut self, low: f64, high: f64) -> f64 {
+            low + (high - low) * self.uniform()
+        }
+
+        fn gaussian(&mut self) -> f64 {
+            let radius = (-2.0 * (1.0 - self.uniform()).ln()).sqrt();
+            radius * (TAU * self.uniform()).cos()
+        }
+    }
+
+    struct Resonator {
+        first: f64,
+        second: f64,
+        gain: f64,
+        previous: f64,
+        before: f64,
+    }
+
+    impl Resonator {
+        fn new(frequency: f64, bandwidth: f64, rate: f64) -> Self {
+            let radius = (-core::f64::consts::PI * bandwidth / rate).exp();
+            let first = 2.0 * radius * (TAU * frequency / rate).cos();
+            let second = -radius * radius;
+            Self {
+                first,
+                second,
+                gain: 1.0 - first - second,
+                previous: 0.0,
+                before: 0.0,
+            }
+        }
+
+        fn process(&mut self, input: f64) -> f64 {
+            let output = self.gain * input + self.first * self.previous + self.second * self.before;
+            self.before = self.previous;
+            self.previous = output;
+            output
+        }
+    }
+
+    const VOWELS: [[f64; 3]; 6] = [
+        [730.0, 1090.0, 2440.0],
+        [270.0, 2290.0, 3010.0],
+        [300.0, 870.0, 2240.0],
+        [530.0, 1840.0, 2480.0],
+        [570.0, 840.0, 2410.0],
+        [660.0, 1720.0, 2410.0],
+    ];
+
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    pub(super) enum Voice {
+        Formants,
+        Tones,
+    }
+
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    pub(super) enum Noise {
+        White,
+        Pink,
+        Hum,
+    }
+
+    pub(super) struct Scene {
+        pub(super) speech: Vec<f64>,
+        pub(super) truth: Vec<(usize, usize)>,
+    }
+
+    fn envelope(position: usize, length: usize, ramp: usize) -> f64 {
+        let ramp = ramp.min(length / 2).max(1);
+        let distance = position.min(length - 1 - position);
+
+        if distance >= ramp {
+            1.0
+        } else {
+            0.5 - 0.5 * (core::f64::consts::PI * distance as f64 / ramp as f64).cos()
+        }
+    }
+
+    fn syllable(
+        output: &mut [f64],
+        voice: Voice,
+        rate: f64,
+        pitch: f64,
+        vowel: [f64; 3],
+        random: &mut Random,
+    ) {
+        let length = output.len();
+        let glide = random.between(-0.15, 0.15);
+        let ramp = (0.03 * rate) as usize;
+        let mut formants = vowel.map(|frequency| Resonator::new(frequency, 90.0, rate));
+        let mut glottis = 0.0;
+        let mut phase = 0.0f64;
+
+        for (index, sample) in output.iter_mut().enumerate() {
+            let progress = index as f64 / length as f64;
+            let frequency = pitch * (1.0 + glide * progress) * (1.0 + 0.01 * random.gaussian());
+            let value = match voice {
+                Voice::Formants => {
+                    phase += frequency / rate;
+                    let pulse = if phase >= 1.0 {
+                        phase -= 1.0;
+                        1.0
+                    } else {
+                        0.0
+                    };
+                    glottis = 0.9 * glottis + pulse;
+                    formants
+                        .iter_mut()
+                        .fold(glottis, |signal, formant| formant.process(signal))
+                }
+                Voice::Tones => {
+                    phase += frequency / rate;
+                    (1..=5)
+                        .map(|harmonic| (TAU * phase * harmonic as f64).sin() / harmonic as f64)
+                        .sum()
+                }
+            };
+            *sample = value;
+        }
+
+        let power = output.iter().map(|sample| sample * sample).sum::<f64>() / length as f64;
+        let gain = 1.0 / power.sqrt().max(1e-12);
+
+        for (index, sample) in output.iter_mut().enumerate() {
+            *sample *= gain * envelope(index, length, ramp);
+        }
+    }
+
+    fn fricative(output: &mut [f64], rate: f64, random: &mut Random) {
+        let length = output.len();
+        let ramp = (0.015 * rate) as usize;
+        let mut previous = 0.0;
+
+        for (index, sample) in output.iter_mut().enumerate() {
+            let white = random.gaussian();
+            *sample = 0.15 * (white - previous) * envelope(index, length, ramp);
+            previous = white;
+        }
+    }
+
+    pub(super) fn scene(voice: Voice, rate: u32, seconds: f64, seed: u64) -> Scene {
+        let rate_f = rate as f64;
+        let total = (seconds * rate_f) as usize;
+        let mut speech = vec![0.0; total];
+        let mut truth = Vec::new();
+        let mut random = Random(seed);
+        let mut position = (1.5 * rate_f) as usize;
+
+        while position < total {
+            let pitch = random.between(95.0, 230.0);
+            let words = 2 + (random.next() % 5) as usize;
+            let begin = position;
+
+            for word in 0..words {
+                if word > 0 {
+                    position =
+                        (position + (random.between(0.04, 0.22) * rate_f) as usize).min(total);
+                }
+
+                if voice == Voice::Formants && random.uniform() < 0.3 {
+                    let length = (random.between(0.05, 0.11) * rate_f) as usize;
+                    let end = (position + length).min(total);
+                    fricative(&mut speech[position..end], rate_f, &mut random);
+                    position = end;
+                }
+
+                for _ in 0..1 + random.next() % 3 {
+                    let length = (random.between(0.12, 0.28) * rate_f) as usize;
+                    let end = (position + length).min(total);
+                    let vowel = VOWELS[(random.next() % VOWELS.len() as u64) as usize];
+                    let loudness = random.between(0.5, 1.0);
+                    syllable(
+                        &mut speech[position..end],
+                        voice,
+                        rate_f,
+                        pitch,
+                        vowel,
+                        &mut random,
+                    );
+                    speech[position..end]
+                        .iter_mut()
+                        .for_each(|sample| *sample *= loudness);
+                    position = end;
+                }
+
+                if voice == Voice::Formants && random.uniform() < 0.3 {
+                    let length = (random.between(0.05, 0.11) * rate_f) as usize;
+                    let end = (position + length).min(total);
+                    fricative(&mut speech[position..end], rate_f, &mut random);
+                    position = end;
+                }
+
+                if position >= total {
+                    break;
+                }
+            }
+
+            truth.push((begin, position.min(total)));
+            position += (random.between(0.8, 1.6) * rate_f) as usize;
+        }
+
+        let active: f64 = truth.iter().map(|(begin, end)| end - begin).sum::<usize>() as f64;
+        let power = speech.iter().map(|sample| sample * sample).sum::<f64>() / active;
+        let gain = 10f64.powf(-26.0 / 20.0) / power.sqrt();
+
+        speech.iter_mut().for_each(|sample| *sample *= gain);
+
+        Scene { speech, truth }
+    }
+
+    pub(super) fn noise(kind: Noise, rate: u32, length: usize, seed: u64) -> Vec<f64> {
+        let mut random = Random(seed);
+        let mut poles = [0.0f64; 3];
+        let mut signal: Vec<f64> = (0..length)
+            .map(|index| {
+                let white = random.gaussian();
+                match kind {
+                    Noise::White => white,
+                    Noise::Pink => {
+                        poles[0] = 0.99765 * poles[0] + white * 0.0990460;
+                        poles[1] = 0.96300 * poles[1] + white * 0.2965164;
+                        poles[2] = 0.57000 * poles[2] + white * 1.0526913;
+                        poles.iter().sum::<f64>() + white * 0.1848
+                    }
+                    Noise::Hum => {
+                        let time = index as f64 / rate as f64;
+                        (TAU * 50.0 * time).sin() + 0.3 * (TAU * 150.0 * time).sin() + 0.1 * white
+                    }
+                }
+            })
+            .collect();
+        let power = signal.iter().map(|sample| sample * sample).sum::<f64>() / length as f64;
+
+        signal.iter_mut().for_each(|sample| *sample /= power.sqrt());
+        signal
+    }
+
+    pub(super) fn quantize(signal: &[f64]) -> Vec<i16> {
+        signal
+            .iter()
+            .map(|sample| (sample * 32768.0).round().clamp(-32768.0, 32767.0) as i16)
+            .collect()
+    }
+
+    fn decisions<R: Representation>(
+        samples: &[i16],
+        channels: u8,
+        detector: &mut VoiceActivityDetector,
+    ) -> Vec<bool>
+    where
+        VoiceActivityDetector: Analyzer<R>,
+    {
+        let chunk = detector.block_frames() as usize * channels as usize;
+
+        samples
+            .chunks(chunk)
+            .map(|block| {
+                analyze_using::<R, _, _>(block, channels, &mut *detector).unwrap();
+                detector.is_voice()
+            })
+            .collect()
+    }
+
+    struct Score {
+        accuracy: f64,
+        recall: f64,
+        false_alarms: f64,
+    }
+
+    fn evaluate(
+        truth: &[(usize, usize)],
+        decided: &[bool],
+        length: usize,
+        settings: VoiceSettings,
+        rate: u32,
+    ) -> Score {
+        let grace_before = (settings.onset + 2 * settings.block) as usize * rate as usize / 1000;
+        let grace_after = (settings.hangover + settings.block) as usize * rate as usize / 1000;
+        let (mut correct, mut scored, mut hits, mut speech, mut alarms, mut quiet) =
+            (0, 0, 0, 0, 0, 0);
+
+        for (index, decision) in decided.iter().enumerate() {
+            let begin = index * length;
+            let end = begin + length;
+            let inside = truth
+                .iter()
+                .any(|(start, stop)| begin >= *start && end <= *stop);
+            let near = truth.iter().any(|(start, stop)| {
+                (begin < start + grace_before && end > *start)
+                    || (begin < stop + grace_after && end > *stop)
+            });
+
+            if near || index * length < settings.floor as usize * rate as usize / 1000 / 4 {
+                continue;
+            }
+
+            if inside {
+                speech += 1;
+                hits += *decision as usize;
+            } else {
+                quiet += 1;
+                alarms += *decision as usize;
+            }
+
+            scored += 1;
+            correct += (*decision == inside) as usize;
+        }
+
+        Score {
+            accuracy: correct as f64 / scored as f64,
+            recall: hits as f64 / speech.max(1) as f64,
+            false_alarms: alarms as f64 / quiet.max(1) as f64,
+        }
+    }
+
+    #[test]
+    fn detects_synthetic_speech() {
+        let seconds = if cfg!(miri) { 4.0 } else { 30.0 };
+        let rates: &[u32] = if cfg!(miri) {
+            &[8000]
+        } else {
+            &[8000, 16000, 48000]
+        };
+        let ratios: &[f64] = if cfg!(miri) {
+            &[20.0]
+        } else {
+            &[30.0, 20.0, 10.0, 5.0, 0.0]
+        };
+        let settings = VoiceSettings::DEFAULT;
+
+        for voice in [Voice::Formants, Voice::Tones] {
+            for (index, rate) in rates.iter().enumerate() {
+                let scene = scene(voice, *rate, seconds, 7 + index as u64);
+
+                for kind in [Noise::White, Noise::Pink, Noise::Hum] {
+                    let background = noise(kind, *rate, scene.speech.len(), 99 + index as u64);
+
+                    for ratio in ratios {
+                        let gain = 10f64.powf((-26.0 - ratio) / 20.0);
+                        let mixed: Vec<f64> = scene
+                            .speech
+                            .iter()
+                            .zip(&background)
+                            .map(|(speech, noise)| speech + gain * noise)
+                            .collect();
+                        let samples = quantize(&mixed);
+                        let mut detector = VoiceActivityDetector::new(*rate);
+                        let decided = decisions::<Fixed>(&samples, 1, &mut detector);
+                        let score = evaluate(
+                            &scene.truth,
+                            &decided,
+                            detector.block_frames() as usize,
+                            settings,
+                            *rate,
+                        );
+
+                        std::println!(
+                            "{voice:?} {rate} Hz {kind:?} {ratio} dB: accuracy {:.3} recall {:.3} false alarms {:.3} floor {:.1}",
+                            score.accuracy,
+                            score.recall,
+                            score.false_alarms,
+                            detector.noise_floor()
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
