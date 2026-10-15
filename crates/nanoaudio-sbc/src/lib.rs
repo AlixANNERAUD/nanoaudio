@@ -6,6 +6,30 @@ use nanoaudio_core::codec::{Decoder, Encoder, Progress, Seek, SeekRequest};
 use nanoaudio_core::crc;
 use nanoaudio_core::{Configuration, Error, Format, Result, Sample};
 
+#[cfg(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "wasm32", target_feature = "simd128")
+))]
+mod simd;
+
+#[cfg(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "wasm32", target_feature = "simd128")
+))]
+use simd::{analyze as analyze_block, synthesize as synthesize_block};
+
+#[cfg(not(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "wasm32", target_feature = "simd128")
+)))]
+use self::{analyze as analyze_block, synthesize as synthesize_block};
+
 const SYNCHRONIZATION: u8 = 0x9C;
 const MSBC_SYNCHRONIZATION: u8 = 0xAD;
 const HEADER_SIZE: usize = 4;
@@ -122,12 +146,30 @@ const SYNTHESIS_8: [i32; 128] = modulation(8, false);
 const ANALYSIS_4: [i32; 32] = modulation(4, true);
 const ANALYSIS_8: [i32; 128] = modulation(8, true);
 
+#[cfg(any(
+    test,
+    not(any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    ))
+))]
 struct Filterbank {
     prototype: &'static [i32],
     synthesis: &'static [i32],
     analysis: &'static [i32],
 }
 
+#[cfg(any(
+    test,
+    not(any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    ))
+))]
 impl Filterbank {
     const fn new(subbands: usize) -> Self {
         if subbands == 4 {
@@ -676,7 +718,7 @@ impl SbcDecoder {
             for (channel, samples) in samples[..channels].iter().enumerate() {
                 let mut pcm = [0i16; MAXIMUM_SUBBANDS];
 
-                synthesize(
+                synthesize_block(
                     &mut self.synthesis[channel],
                     &samples[..subbands],
                     &mut pcm[..subbands],
@@ -692,6 +734,15 @@ impl SbcDecoder {
     }
 }
 
+#[cfg(any(
+    test,
+    not(any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    ))
+))]
 fn synthesize(state: &mut [i32; SYNTHESIS], samples: &[i32], output: &mut [i16]) {
     let subbands = samples.len();
     let filterbank = Filterbank::new(subbands);
@@ -783,6 +834,15 @@ impl Seek for SbcDecoder {
     }
 }
 
+#[cfg(any(
+    test,
+    not(any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    ))
+))]
 fn analyze(history: &mut [i16; WINDOW], input: impl Iterator<Item = i16>, output: &mut [i32]) {
     let subbands = output.len();
     let filterbank = Filterbank::new(subbands);
@@ -875,7 +935,7 @@ impl SbcEncoder {
                     .take(subbands)
                     .copied();
 
-                analyze(&mut self.analysis[channel], input, &mut samples[..subbands]);
+                analyze_block(&mut self.analysis[channel], input, &mut samples[..subbands]);
             }
         }
 

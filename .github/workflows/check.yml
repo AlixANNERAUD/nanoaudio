@@ -125,6 +125,12 @@ jobs:
         env:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime --dir=/
 
+      - name: Test on WASI with SIMD
+        run: cargo test --workspace --all-features --target wasm32-wasip1
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime --dir=/
+          RUSTFLAGS: -C target-feature=+simd128
+
   asm:
     runs-on: ubuntu-latest
     steps:
