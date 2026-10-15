@@ -268,6 +268,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        all(target_family = "wasm", not(target_feature = "atomics")),
+        ignore = "threads are not available"
+    )]
     fn concurrent_transfer() {
         let mut buffer = RingBuffer::<7>::new();
         let (mut producer, mut consumer) = buffer.split();

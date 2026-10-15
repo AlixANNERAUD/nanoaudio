@@ -81,8 +81,9 @@ impl WavHeader {
                 _ => {}
             }
 
-            offset = body
-                .checked_add(size as usize + (size as usize & 1))
+            offset = (size as usize)
+                .checked_add(size as usize & 1)
+                .and_then(|padded| body.checked_add(padded))
                 .ok_or(Error::InvalidHeader)?;
         }
     }
