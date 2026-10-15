@@ -1,5 +1,6 @@
 #![no_std]
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 
 #[cfg(any(
     target_arch = "x86",
@@ -16,7 +17,11 @@ use nanoaudio_core::codec::{Decoder, Progress, Seek, SeekRequest};
 use nanoaudio_core::crc;
 use nanoaudio_core::{Configuration, Error, Result, Sample};
 
+/// Default largest block size, in samples per channel, that [`FlacDecoder`] accepts.
+///
+/// 4608 covers the blocks written by common encoders at every compression level.
 pub const FLAC_DEFAULT_MAXIMUM_BLOCK_SIZE: usize = 4608;
+/// Default largest channel count that [`FlacDecoder`] accepts.
 pub const FLAC_DEFAULT_MAXIMUM_CHANNELS: usize = 2;
 /// Seek points kept from a SEEKTABLE block; a larger table keeps a regular subset of its points.
 pub const FLAC_SEEK_POINTS: usize = 32;
@@ -45,19 +50,33 @@ const FIXED_COEFFICIENTS: [&[i32]; 5] = [&[], &[1], &[2, -1], &[3, -3, 1], &[4, 
 type Crc8 = crc::Crc8<0x07>;
 type Crc16 = crc::Crc16<0x8005>;
 
+/// The contents of a STREAMINFO metadata block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FlacStreamInformation {
+    /// Smallest block size in the stream, in samples per channel.
     pub minimum_block_size: u16,
+    /// Largest block size in the stream, in samples per channel.
     pub maximum_block_size: u16,
+    /// Smallest frame size in bytes, or 0 when unknown.
     pub minimum_frame_size: u32,
+    /// Largest frame size in bytes, or 0 when unknown.
     pub maximum_frame_size: u32,
+    /// Sample rate in Hz.
     pub sample_rate: u32,
+    /// Number of channels, from 1 to 8.
     pub channels: u8,
+    /// Bits per sample, from 4 to 32.
     pub bits_per_sample: u8,
+    /// Total number of frames (samples per channel), or 0 when unknown.
     pub total_samples: u64,
 }
 
 impl FlacStreamInformation {
+    /// Parses the 34-byte body of a STREAMINFO block, without its block header.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Incomplete`] with fewer than 34 bytes, and [`Error::InvalidHeader`] when a field is out of range.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let bytes = bytes
             .get(..STREAM_INFORMATION_SIZE)
@@ -597,6 +616,38 @@ struct Search {
     rounds: u32,
 }
 
+/// A FLAC decoder that does not allocate.
+///
+/// `MAXIMUM_BLOCK_SIZE` (in samples per channel) and `MAXIMUM_CHANNELS` size the block buffer, which holds one `i32` per sample: `size_of` grows with their product, about 37 KiB with the defaults (4608 samples, 2 channels) and 33 KiB for 4096-sample stereo blocks. A stream whose STREAMINFO announces larger blocks is rejected with [`Error::UnsupportedFormat`], and one with more channels with [`Error::TooManyChannels`].
+///
+/// Streams of 4 to 32 bits per sample decode to any [`Sample`] type, scaled to its full range: a narrower type is rounded (24-bit audio to `i16`), a wider one is shifted up, and `f32` stays within -1.0 to 1.0. Use `i32` to keep every bit of any stream.
+///
+/// Seeking goes through [`Seek`] once the metadata is read. After a request, `decode` can return [`Error::SeekTo`] a few times while the search narrows: drop buffered input and resume from that offset each time.
+///
+/// ```
+/// use nanoaudio_core::Error;
+/// use nanoaudio_core::codec::{Decoder, Seek};
+/// use nanoaudio_flac::FlacDecoder;
+///
+/// let file = include_bytes!("../tests/data/flac_seek_table.flac");
+/// let mut decoder = FlacDecoder::<i16>::new();
+/// let mut output = [0; 4096];
+///
+/// decoder.set_stream_length(file.len() as u64);
+/// decoder.decode(file, &mut output)?;
+///
+/// let mut offset = decoder.seek(20_000)?.byte_offset as usize;
+/// let progress = loop {
+///     decoder.finish();
+///     match decoder.decode(&file[offset..], &mut output) {
+///         Err(Error::SeekTo(next)) => offset = next as usize,
+///         result => break result?,
+///     }
+/// };
+///
+/// assert!(progress.produced > 0);
+/// # Ok::<(), Error>(())
+/// ```
 #[derive(Clone)]
 pub struct FlacDecoder<
     S: Sample = i16,
@@ -632,6 +683,9 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize> 
 impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
     FlacDecoder<S, MAXIMUM_BLOCK_SIZE, MAXIMUM_CHANNELS>
 {
+    /// Creates a decoder waiting for the `fLaC` marker.
+    ///
+    /// Fails to compile unless `MAXIMUM_BLOCK_SIZE` is between 16 and 65535 and `MAXIMUM_CHANNELS` between 1 and 8.
     pub const fn new() -> Self {
         const {
             assert!(
@@ -673,6 +727,7 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
         }
     }
 
+    /// Returns to the state of [`new`](Self::new), to decode another stream from its `fLaC` marker.
     pub fn reset(&mut self) {
         self.state = State::Marker;
         self.information = None;
@@ -693,6 +748,7 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
         self.length = Some(length);
     }
 
+    /// Returns the STREAMINFO block, once the decoder has read it.
     pub const fn stream_information(&self) -> Option<FlacStreamInformation> {
         self.information
     }
@@ -1204,6 +1260,9 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize> 
         })
     }
 
+    /// Returns the input needed to make progress, in bytes.
+    ///
+    /// Once the metadata is read, this is STREAMINFO's maximum frame size, or a worst-case bound from the block size, channels and bit depth when the stream does not give it. A smaller input works while each frame fits in it; when one does not, `decode` consumes nothing until the caller passes more input or calls `finish`.
     fn minimum_input(&self) -> usize {
         match (self.state, self.information) {
             (State::Marker, _) => MARKER_SIZE,
@@ -1227,6 +1286,9 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize> 
         self.finishing = true;
     }
 
+    /// Decodes metadata and frames from `input` into interleaved samples in `output`.
+    ///
+    /// A frame whose CRC does not match returns [`Error::InvalidData`] without being consumed. After a seek, `decode` can return [`Error::SeekTo`] until it reaches the requested frame.
     fn decode(&mut self, input: &[u8], output: &mut [S]) -> Result<Progress> {
         if output.len() < self.minimum_output() {
             return Err(Error::BufferTooSmall);
@@ -1292,6 +1354,11 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize> 
 impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize> Seek
     for FlacDecoder<S, MAXIMUM_BLOCK_SIZE, MAXIMUM_CHANNELS>
 {
+    /// Starts a search for `frame`, from the seek table when there is one, and returns the byte offset to resume from, counted from `fLaC`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Incomplete`] before the metadata is read, unless `frame` is 0, and [`Error::InvalidParameter`] past the end of the stream.
     fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
         let information = match (self.state, self.information) {
             (State::Frames | State::Search, Some(information)) => information,
