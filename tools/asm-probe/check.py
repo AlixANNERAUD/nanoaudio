@@ -77,12 +77,14 @@ NO_WIDE_MULTIPLY_IN_LOOPS = [
     "probe_sbc_encode",
 ]
 
-NARROW_MULTIPLY = ("m0plus", "m23")
+SPLIT_GAIN = ("m0plus", "m23", "m4", "esp32c3")
 
 NO_WIDE_MULTIPLY_IN_STAGE_LOOPS = [
     "probe_fixed_stream_i16",
     "probe_fixed_stream_i24",
     "probe_fixed_stream_i32",
+    "probe_fixed_volume_i32",
+    "probe_fixed_mix_i32",
 ]
 
 SCALAR = [
@@ -94,6 +96,7 @@ SCALAR = [
 
 SAMPLE_CONVERSION = re.compile(r"6Sample\d+(from_f32|to_f32|from_i32|to_i32|convert)")
 WIDE_MULTIPLY = re.compile(r"__aeabi_lmul|__muldi3")
+WIDE_PRODUCT = re.compile(r"__aeabi_lmul|__muldi3|^(smull|umull|smlal|umlal|mulh|mulhu|mulhsu)\s")
 CALL = re.compile(r"^(bl|blx|call|jal|jalr|tail)$")
 LABEL = re.compile(r"^(\.L\w+):")
 BRANCH_TARGET = re.compile(r"^\.LBB\w+$")
@@ -300,11 +303,11 @@ def analyse(name, assembly, opt_level):
             for body in loops(bodies[member]):
                 if any(WIDE_MULTIPLY.search(line) for line in body):
                     failures.append(name + ": 64-bit multiply in a loop of " + function)
-    if name in NARROW_MULTIPLY:
+    if name in SPLIT_GAIN:
         for function in NO_WIDE_MULTIPLY_IN_STAGE_LOOPS:
             for member in closure(bodies, function):
                 for body in loops(bodies[member]):
-                    if any(WIDE_MULTIPLY.search(line) for line in body):
+                    if any(WIDE_PRODUCT.search(line) for line in body):
                         failures.append(name + ": 64-bit multiply in a loop of " + function)
     for function in FLAT:
         for member in closure(bodies, function):

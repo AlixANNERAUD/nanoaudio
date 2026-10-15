@@ -21,13 +21,21 @@ fn has_float(target: &str, architecture: &str, abi: &str, features: &str) -> boo
     }
 }
 
-fn has_narrow_multiply(target: &str) -> bool {
-    target.starts_with("thumbv6m-") || target.starts_with("thumbv8m.base-")
+fn has_split_gain(target: &str) -> bool {
+    [
+        "thumbv6m-",
+        "thumbv8m.base-",
+        "thumbv7m-",
+        "thumbv7em-",
+        "riscv32",
+    ]
+    .iter()
+    .any(|prefix| target.starts_with(prefix))
 }
 
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(nanoaudio_float)");
-    println!("cargo::rustc-check-cfg=cfg(nanoaudio_narrow_multiply)");
+    println!("cargo::rustc-check-cfg=cfg(nanoaudio_split_gain)");
     println!("cargo::rerun-if-changed=build.rs");
 
     let target = env::var("TARGET").unwrap_or_default();
@@ -54,7 +62,7 @@ fn main() {
         println!("cargo::rustc-cfg=nanoaudio_float");
     }
 
-    if has_narrow_multiply(&target) {
-        println!("cargo::rustc-cfg=nanoaudio_narrow_multiply");
+    if has_split_gain(&target) {
+        println!("cargo::rustc-cfg=nanoaudio_split_gain");
     }
 }

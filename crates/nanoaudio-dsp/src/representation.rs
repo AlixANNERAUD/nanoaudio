@@ -172,7 +172,7 @@ fn amplify_wide<S: Sample>(value: i32, gain: i32) -> i32 {
     ) as i32
 }
 
-#[inline]
+#[cfg(test)]
 fn mix_wide<S: Sample>(output: i32, input: i32, gain: i32) -> i32 {
     saturate::<S>(output.saturating_add(amplify_wide::<S>(input, gain)))
 }
@@ -251,7 +251,7 @@ impl Representation for Fixed {
 
     #[inline]
     fn amplify_volume(value: i32, gain: i32) -> i32 {
-        if cfg!(nanoaudio_narrow_multiply) {
+        if cfg!(nanoaudio_split_gain) {
             amplify_halves(value, gain)
         } else {
             Self::amplify(value, gain)
@@ -279,7 +279,7 @@ impl Representation for Fixed {
         match S::FORMAT {
             Format::U8 | Format::I16 => from_integer(amplify_narrow::<S>(to_integer(sample), gain)),
             Format::I24 => from_integer(amplify_split::<S>(to_integer(sample), gain)),
-            Format::I32 => from_integer(amplify_wide::<S>(to_integer(sample), gain)),
+            Format::I32 => from_integer(Self::amplify_volume(to_integer(sample), gain)),
             Format::F32 => Self::to_sample(Self::amplify(Self::from_sample(sample), gain)),
         }
     }
@@ -293,7 +293,9 @@ impl Representation for Fixed {
             Format::I24 => {
                 from_integer(mix_split::<S>(to_integer(output), to_integer(input), gain))
             }
-            Format::I32 => from_integer(mix_wide::<S>(to_integer(output), to_integer(input), gain)),
+            Format::I32 => from_integer(
+                to_integer(output).saturating_add(Self::amplify_volume(to_integer(input), gain)),
+            ),
             Format::F32 => Self::to_sample(Self::add(
                 Self::from_sample(output),
                 Self::amplify(Self::from_sample(input), gain),
