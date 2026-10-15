@@ -56,6 +56,7 @@ def save(name, path, dtype, little_endian_dtype):
 
 save("aiff_pcm_s8_decoded.bin", write("aiff_pcm_s8.aiff", 301, 1, 8000, "PCM_S8"), "int32", "<i4")
 pcm_16 = save("aiff_pcm_16_decoded.bin", write("aiff_pcm_16.aiff", 300, 2, 44100, "PCM_16"), "int32", "<i4")
+save("aiff_pcm_24_decoded.bin", write("aiff_pcm_24.aiff", 300, 2, 48000, "PCM_24"), "int32", "<i4")
 save("aiff_pcm_32_decoded.bin", write("aiff_pcm_32.aiff", 300, 2, 96000, "PCM_32"), "int32", "<i4")
 save("aiff_float_decoded.bin", write("aiff_float.aifc", 300, 2, 48000, "FLOAT"), "float32", "<f4")
 save("aiff_alaw_decoded.bin", write("aiff_alaw.aifc", 301, 1, 8000, "ALAW"), "int16", "<i2")

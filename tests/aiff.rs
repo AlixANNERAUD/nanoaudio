@@ -96,6 +96,13 @@ fn big_endian_pcm_matches_libsndfile() {
         300,
     );
     check_integer(
+        include_bytes!("data/aiff_pcm_24.aiff"),
+        include_bytes!("data/aiff_pcm_24_decoded.bin"),
+        Configuration::new(48_000, 2, Format::I24),
+        AiffEncoding::BigEndian,
+        300,
+    );
+    check_integer(
         include_bytes!("data/aiff_pcm_32.aiff"),
         include_bytes!("data/aiff_pcm_32_decoded.bin"),
         Configuration::new(96_000, 2, Format::I32),
