@@ -167,7 +167,9 @@ impl Default for Volume {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytes::testing::{FORMATS, GAINS, LENGTH, ROUNDS, fill, length};
+    use crate::bytes::testing::{
+        FORMATS, GAINS, LENGTH, ROUNDS, assert_same_samples, fill, length,
+    };
 
     fn reference<R: Representation>(volume: Volume, bytes: &mut [u8], format: Format) {
         match format {
@@ -205,7 +207,7 @@ mod tests {
                     volume.apply_to_bytes_using::<R>(&mut actual[..length], format);
                     reference::<R>(volume, &mut expected[..length], format);
 
-                    assert_eq!(actual, expected);
+                    assert_same_samples(&actual, &expected, format);
                 }
             }
         }

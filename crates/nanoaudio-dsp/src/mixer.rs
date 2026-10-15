@@ -219,7 +219,9 @@ impl<const SOURCES: usize, R: Representation> Default for Mixer<SOURCES, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytes::testing::{FORMATS, GAINS, LENGTH, ROUNDS, fill, length};
+    use crate::bytes::testing::{
+        FORMATS, GAINS, LENGTH, ROUNDS, assert_same_samples, fill, length,
+    };
 
     fn reference<R: Representation>(
         output: &mut [u8],
@@ -277,7 +279,7 @@ mod tests {
                         mix_bytes_using::<R>(&mut actual[..output_length], input, format, volume),
                         reference::<R>(&mut expected[..output_length], input, format, volume)
                     );
-                    assert_eq!(actual, expected);
+                    assert_same_samples(&actual, &expected, format);
                 }
             }
         }
