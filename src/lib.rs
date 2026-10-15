@@ -7,6 +7,7 @@ mod mixer;
 mod ring_buffer;
 mod sample;
 mod volume;
+mod wav;
 
 pub use convert::*;
 pub use error::*;
@@ -15,3 +16,4 @@ pub use mixer::*;
 pub use ring_buffer::*;
 pub use sample::*;
 pub use volume::*;
+pub use wav::*;
