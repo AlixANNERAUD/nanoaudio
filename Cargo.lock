@@ -105,6 +105,7 @@ name = "nanoaudio-sbc"
 version = "0.1.0"
 dependencies = [
  "nanoaudio-core",
+ "wide",
 ]
 
 [[package]]
