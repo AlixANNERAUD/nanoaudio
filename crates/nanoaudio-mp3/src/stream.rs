@@ -51,7 +51,7 @@ impl Header {
 
         first == 0xFF
             && (second & 0xF0 == 0xF0 || second & 0xFE == 0xE2)
-            && self.layer() != 0
+            && second & 0x06 != 0
             && third >> 4 != 15
             && (third >> 2) & 3 != 3
     }
