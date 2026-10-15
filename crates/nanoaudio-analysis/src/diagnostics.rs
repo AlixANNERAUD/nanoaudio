@@ -154,7 +154,7 @@ impl<R: Measure> Analyzer<R> for ClipCounter<R> {
 ///
 /// It is a one-pole low-pass filter, an exponential moving average, the part a one-pole DC-blocking high-pass would remove. Its time constant is rounded to a power of two frames, so the filter needs no multiplication, and it settles to 63% of a step in DC after one time constant. It starts at 0.
 ///
-/// It runs in fixed point for both representations and is exact for a constant input. In [`Float`](nanoaudio_dsp::Float), values beyond full scale count as full scale and NaN counts as 0.
+/// It runs in fixed point for both representations and settles exactly on a constant input. In [`Float`](nanoaudio_dsp::Float), values beyond full scale count as full scale and NaN counts as 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DcOffset<R: Representation> {
     shift: u32,
