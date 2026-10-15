@@ -1,20 +1,12 @@
-use core::f32::consts::{LN_2, LOG10_E, SQRT_2};
 use core::fmt::Debug;
 
 use nanoaudio_dsp::{Analyzer, DefaultRepresentation, Fixed, Float};
 
-use crate::Measure;
+use crate::{Measure, math, sealed};
 
 const LEFT: usize = 0;
 const RIGHT: usize = 1;
 const PRODUCT: usize = 2;
-
-mod sealed {
-    pub trait Sealed {}
-
-    impl Sealed for nanoaudio_dsp::Fixed {}
-    impl Sealed for nanoaudio_dsp::Float {}
-}
 
 /// A [`Measure`] that a [`StereoMeter`] can accumulate, implemented for [`Fixed`] and [`Float`].
 ///
@@ -152,7 +144,7 @@ impl Correlate for Float {
             return 0.0;
         }
 
-        (product / largest / sqrt(norm)).clamp(-1.0, 1.0)
+        (product / largest / math::square_root_f32(norm)).clamp(-1.0, 1.0)
     }
 
     fn to_f32(sum: f32) -> f32 {
@@ -162,51 +154,6 @@ impl Correlate for Float {
 
 fn saturate(value: i128) -> i32 {
     value.clamp(-(i32::MAX as i128), i32::MAX as i128) as i32
-}
-
-fn sqrt(value: f32) -> f32 {
-    let mut root = f32::from_bits((value.to_bits() >> 1) + 0x1fbd_1df5);
-
-    for _ in 0..3 {
-        root = 0.5 * (root + value / root);
-    }
-
-    root
-}
-
-fn log10(value: f32) -> f32 {
-    if value.is_nan() || value < 0.0 {
-        return f32::NAN;
-    }
-
-    if value == 0.0 {
-        return f32::NEG_INFINITY;
-    }
-
-    if value == f32::INFINITY {
-        return value;
-    }
-
-    let (value, offset) = if value < f32::MIN_POSITIVE {
-        (value * 8_388_608.0, -23)
-    } else {
-        (value, 0)
-    };
-    let bits = value.to_bits();
-    let mut exponent = (bits >> 23) as i32 - 127 + offset;
-    let mut mantissa = f32::from_bits((bits & 0x007f_ffff) | 0x3f80_0000);
-
-    if mantissa > SQRT_2 {
-        mantissa *= 0.5;
-        exponent += 1;
-    }
-
-    let ratio = (mantissa - 1.0) / (mantissa + 1.0);
-    let square = ratio * ratio;
-    let logarithm =
-        2.0 * ratio * (1.0 + square * (1.0 / 3.0 + square * (1.0 / 5.0 + square * (1.0 / 7.0))));
-
-    (exponent as f32 * LN_2 + logarithm) * LOG10_E
 }
 
 /// A stereo meter that measures the balance and the phase correlation of a pair of channels.
@@ -305,7 +252,7 @@ impl<R: Correlate> StereoMeter<R> {
             return 0.0;
         }
 
-        10.0 * log10(right / left)
+        math::power_decibels(right / left)
     }
 
     /// Returns the mean square of the left channel, [`FULL_SCALE`](Measure::FULL_SCALE) for a full-scale square wave.
@@ -785,29 +732,5 @@ mod tests {
 
         assert_eq!(meter.correlation(), -1.0);
         assert_eq!(meter.left_energy(), 6.5);
-    }
-
-    #[test]
-    fn logarithms_and_roots() {
-        let mut value = f32::from_bits(7);
-
-        while value < 1e38 {
-            close(log10(value) as f64, (value as f64).log10(), 2e-5);
-            value *= 1.37;
-        }
-
-        let mut value = f32::MIN_POSITIVE;
-
-        while value < 2.0 {
-            let root = sqrt(value) as f64;
-            close(root / (value as f64).sqrt(), 1.0, 2e-7);
-            value *= 1.21;
-        }
-
-        assert_eq!(log10(0.0), f32::NEG_INFINITY);
-        assert_eq!(log10(f32::INFINITY), f32::INFINITY);
-        assert_eq!(log10(1.0), 0.0);
-        assert!(log10(-1.0).is_nan());
-        assert!(log10(f32::NAN).is_nan());
     }
 }

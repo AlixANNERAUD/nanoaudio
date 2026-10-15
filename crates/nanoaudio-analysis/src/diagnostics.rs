@@ -3,41 +3,7 @@ use core::marker::PhantomData;
 use nanoaudio_core::MAXIMUM_CHANNELS;
 use nanoaudio_dsp::{Analyzer, Representation};
 
-use crate::Measure;
-
-fn log2(value: f32) -> f32 {
-    if value.is_nan() || value == f32::INFINITY {
-        return value;
-    }
-
-    if value <= 0.0 {
-        return f32::NEG_INFINITY;
-    }
-
-    if value < f32::MIN_POSITIVE {
-        return log2(value * 16_777_216.0) - 24.0;
-    }
-
-    let bits = value.to_bits();
-    let mut exponent = ((bits >> 23) as i32) - 127;
-    let mut mantissa = f32::from_bits((bits & 0x007F_FFFF) | 0x3F80_0000);
-
-    if mantissa > core::f32::consts::SQRT_2 {
-        mantissa *= 0.5;
-        exponent += 1;
-    }
-
-    let ratio = (mantissa - 1.0) / (mantissa + 1.0);
-    let square = ratio * ratio;
-    let series =
-        1.0 + square * (1.0 / 3.0 + square * (1.0 / 5.0 + square * (1.0 / 7.0 + square / 9.0)));
-
-    exponent as f32 + 2.0 * ratio * series * core::f32::consts::LOG2_E
-}
-
-fn decibels(ratio: f32) -> f32 {
-    20.0 * core::f32::consts::LOG10_2 * log2(ratio)
-}
+use crate::{Measure, math};
 
 #[inline]
 fn shift_right(sum: i64, shift: u32) -> i32 {
@@ -207,7 +173,7 @@ impl<R: Representation> DcOffset<R> {
 
     /// Returns the magnitude of the DC offset of `channel` in dBFS, or negative infinity when it is 0.
     pub fn offset_decibels(&self, channel: usize) -> f32 {
-        decibels(R::to_sample::<f32>(self.offset(channel)).abs())
+        math::amplitude_decibels(R::to_sample::<f32>(self.offset(channel)).abs())
     }
 
     /// Sets the offsets back to 0 and keeps the time constant.
@@ -310,7 +276,9 @@ impl<R: Measure> CrestFactor<R> {
             return None;
         }
 
-        Some(decibels(R::to_sample::<f32>(self.peak(channel)) / rms))
+        Some(math::amplitude_decibels(
+            R::to_sample::<f32>(self.peak(channel)) / rms,
+        ))
     }
 
     /// Clears the results and the current window, and keeps the window length.
@@ -422,27 +390,6 @@ mod tests {
                 (offset + amplitude * phase.sin()).round() as i16
             })
             .collect()
-    }
-
-    #[test]
-    fn logarithm() {
-        let mut value = 1.0e-40f32;
-
-        while value < 1.0e30 {
-            let expected = 20.0 * (value as f64).log10();
-
-            assert!(
-                (decibels(value) as f64 - expected).abs() < 1.0e-5 + 2.0e-7 * expected.abs(),
-                "{value} {} {expected}",
-                decibels(value)
-            );
-            value *= 1.37;
-        }
-
-        assert_eq!(decibels(1.0), 0.0);
-        assert_eq!(decibels(0.0), f32::NEG_INFINITY);
-        assert_eq!(decibels(f32::INFINITY), f32::INFINITY);
-        assert!(decibels(f32::NAN).is_nan());
     }
 
     fn reference_clips(samples: &[i16], run_length: u32) -> (u64, u64, u32) {

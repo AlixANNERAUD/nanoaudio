@@ -4,14 +4,7 @@ use core::time::Duration;
 use nanoaudio_core::MAXIMUM_CHANNELS;
 use nanoaudio_dsp::{Analyzer, Fixed, Float};
 
-use crate::{Level, LevelMeter, Power};
-
-mod sealed {
-    pub trait Sealed {}
-
-    impl Sealed for nanoaudio_dsp::Fixed {}
-    impl Sealed for nanoaudio_dsp::Float {}
-}
+use crate::{Level, LevelMeter, Power, math, sealed};
 
 const NEPERS_TO_DECIBELS: f64 = 8.685_889_638_065_035;
 const BURST_TO_TIME_CONSTANT: f64 = 0.632_321_591_075_894_3;
@@ -91,22 +84,11 @@ const fn scale(duration: Duration, factor: f64) -> Duration {
 }
 
 fn exponential(exponent: f64) -> f64 {
-    if exponent.is_nan() || exponent >= 700.0 {
+    if exponent.is_nan() {
         return 0.0;
     }
 
-    let exponent = exponent.max(0.0) * core::f64::consts::LOG2_E;
-    let octaves = exponent as u64;
-    let fraction = (exponent - octaves as f64) * core::f64::consts::LN_2;
-    let mut term = 1.0;
-    let mut sum = 1.0;
-
-    for index in 1..24 {
-        term *= -fraction / index as f64;
-        sum += term;
-    }
-
-    sum * f64::from_bits((1023 - octaves) << 52)
+    math::exp(-exponent.max(0.0))
 }
 
 /// A representation whose levels a [`BallisticMeter`] can smooth, [`Fixed`] or [`Float`].
@@ -179,24 +161,6 @@ impl Smooth for Fixed {
     }
 }
 
-fn sqrt(value: f32) -> f32 {
-    if value.is_nan() || value <= 0.0 || value.is_infinite() {
-        return value;
-    }
-
-    if value < f32::MIN_POSITIVE {
-        return sqrt(value * (1u64 << 48) as f32) / (1u32 << 24) as f32;
-    }
-
-    let mut root = f32::from_bits((value.to_bits() >> 1) + 0x1fbd_1df5);
-
-    for _ in 0..3 {
-        root = 0.5 * (root + value / root);
-    }
-
-    root
-}
-
 impl Smooth for Float {
     type State = f32;
     type Coefficient = f32;
@@ -228,7 +192,7 @@ impl Smooth for Float {
     fn linear(state: f32, detector: Detector) -> f32 {
         match detector {
             Detector::Peak => state,
-            Detector::Rms => sqrt(state),
+            Detector::Rms => math::square_root_f32(state),
         }
     }
 
@@ -981,9 +945,5 @@ mod tests {
         }
         assert!(meter.level(0).is_finite() && meter.level(0) > 1e18);
         assert!(meter.decibels(0).is_finite());
-
-        assert_eq!(sqrt(0.0), 0.0);
-        assert!((sqrt(1e-40) as f64 / 1e-20 - 1.0).abs() < 1e-5);
-        assert!((sqrt(2.0) - core::f32::consts::SQRT_2).abs() < 1e-7);
     }
 }

@@ -4,14 +4,9 @@ use core::time::Duration;
 use nanoaudio_core::MAXIMUM_CHANNELS;
 use nanoaudio_dsp::{Analyzer, Fixed, Float};
 
-use crate::Measure;
+use crate::{Measure, math, sealed};
 
-mod sealed {
-    pub trait Sealed {}
-
-    impl Sealed for nanoaudio_dsp::Fixed {}
-    impl Sealed for nanoaudio_dsp::Float {}
-
+mod state {
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct FloatSum {
         pub(super) block: f32,
@@ -20,9 +15,7 @@ mod sealed {
     }
 }
 
-use sealed::FloatSum;
-
-const DECIBELS_PER_OCTAVE: f32 = 3.010_3;
+use state::FloatSum;
 
 /// A representation whose values a [`LevelMeter`] can square and sum, [`Fixed`] or [`Float`].
 ///
@@ -84,14 +77,16 @@ impl Power for Fixed {
     fn power_decibels(sum: u64, frames: u32) -> f32 {
         match fixed_power(sum, frames) {
             0 => f32::NEG_INFINITY,
-            power => DECIBELS_PER_OCTAVE * (log2(power as f32) - 62.0),
+            power => math::DECIBELS_PER_OCTAVE_F32 * (math::log2_f32(power as f32) - 62.0),
         }
     }
 
     fn amplitude_decibels(value: i32) -> f32 {
         match value.saturating_abs() {
             0 => f32::NEG_INFINITY,
-            magnitude => 2.0 * DECIBELS_PER_OCTAVE * (log2(magnitude as f32) - 31.0),
+            magnitude => {
+                2.0 * math::DECIBELS_PER_OCTAVE_F32 * (math::log2_f32(magnitude as f32) - 31.0)
+            }
         }
     }
 }
@@ -145,70 +140,16 @@ impl Power for Float {
     }
 
     fn root_mean_square(sum: FloatSum, frames: u32) -> f32 {
-        sqrt(Self::mean_square(sum, frames))
+        math::square_root_f32(Self::mean_square(sum, frames))
     }
 
     fn power_decibels(sum: FloatSum, frames: u32) -> f32 {
-        DECIBELS_PER_OCTAVE * log2(Self::mean_square(sum, frames))
+        math::power_decibels(Self::mean_square(sum, frames))
     }
 
     fn amplitude_decibels(value: f32) -> f32 {
-        2.0 * DECIBELS_PER_OCTAVE * log2(value.abs())
+        math::amplitude_decibels(value.abs())
     }
-}
-
-fn log2(value: f32) -> f32 {
-    if value.is_nan() || value < 0.0 {
-        return f32::NAN;
-    }
-
-    if value == 0.0 {
-        return f32::NEG_INFINITY;
-    }
-
-    if value.is_infinite() {
-        return value;
-    }
-
-    let (value, offset) = if value < f32::MIN_POSITIVE {
-        (value * (1u32 << 31) as f32, -31.0)
-    } else {
-        (value, 0.0)
-    };
-    let bits = value.to_bits();
-    let mut exponent = ((bits >> 23) & 0xff) as i32 - 127;
-    let mut mantissa = f32::from_bits((bits & 0x007f_ffff) | 0x3f80_0000);
-
-    if mantissa > core::f32::consts::SQRT_2 {
-        mantissa *= 0.5;
-        exponent += 1;
-    }
-
-    let ratio = (mantissa - 1.0) / (mantissa + 1.0);
-    let square = ratio * ratio;
-    let logarithm = 2.0
-        * ratio
-        * (1.0 + square * (1.0 / 3.0 + square * (1.0 / 5.0 + square * (1.0 / 7.0 + square / 9.0))));
-
-    exponent as f32 + offset + logarithm * core::f32::consts::LOG2_E
-}
-
-fn sqrt(value: f32) -> f32 {
-    if value.is_nan() || value <= 0.0 || value.is_infinite() {
-        return value;
-    }
-
-    if value < f32::MIN_POSITIVE {
-        return sqrt(value * (1u64 << 48) as f32) / (1u32 << 24) as f32;
-    }
-
-    let mut root = f32::from_bits((value.to_bits() >> 1) + 0x1fbd_1df5);
-
-    for _ in 0..3 {
-        root = 0.5 * (root + value / root);
-    }
-
-    root
 }
 
 /// The peak and mean square of one channel over one window.
@@ -811,25 +752,5 @@ mod tests {
         assert!((tiny.rms_decibels() as f64 + 400.0).abs() < 1e-2);
         assert!((linear::<Float>(level(0.0).rms())).abs() < 1e-12);
         assert!(((tiny.rms() as f64) / 1e-20 - 1.0).abs() < 1e-5);
-    }
-
-    #[test]
-    fn helpers() {
-        for index in 1..2000 {
-            let value = 1.000_37f64.powi(index * 37) * 1e-30;
-            let approximation = log2(value as f32) as f64;
-            let exact = (value as f32 as f64).log2();
-            assert!((approximation - exact).abs() < 1e-6 + exact.abs() * 6e-8);
-            let root = sqrt(value as f32) as f64;
-            assert!((root / (value as f32 as f64).sqrt() - 1.0).abs() < 2e-7);
-        }
-
-        assert!(log2(-1.0).is_nan());
-        assert!(log2(f32::NAN).is_nan());
-        assert_eq!(log2(0.0), f32::NEG_INFINITY);
-        assert_eq!(log2(f32::INFINITY), f32::INFINITY);
-        assert_eq!(sqrt(0.0), 0.0);
-        assert_eq!(sqrt(f32::INFINITY), f32::INFINITY);
-        assert!(sqrt(f32::NAN).is_nan());
     }
 }

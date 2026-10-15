@@ -1,5 +1,7 @@
 use nanoaudio_dsp::{Analyzer, Fixed, Float};
 
+use crate::math;
+
 /// Settings of a [`VoiceActivityDetector`], in units that do not depend on the sample rate.
 ///
 /// The [`DEFAULT`](Self::DEFAULT) settings are meant for speech at any sample rate from 8 to 48 kHz.
@@ -46,7 +48,6 @@ impl Default for VoiceSettings {
 const MINIMUM_LEVEL: i32 = -100 << 8;
 const FLOOR_SLOTS: usize = 4;
 const DC_BITS: u32 = 12;
-const MIX_SHIFTS: [u8; 9] = [0, 0, 1, 2, 2, 3, 3, 3, 3];
 const MIX_SCALES: [f32; 9] = [
     32768.0, 32768.0, 16384.0, 8192.0, 8192.0, 4096.0, 4096.0, 4096.0, 4096.0,
 ];
@@ -380,7 +381,7 @@ impl VoiceActivityDetector {
 impl Analyzer<Fixed> for VoiceActivityDetector {
     #[inline]
     fn analyze(&mut self, frame: &[i32]) {
-        let shift = MIX_SHIFTS[frame.len().min(8)];
+        let shift = math::MIX_SHIFTS[frame.len().min(8)];
         let sum = frame
             .iter()
             .fold(0i32, |sum, value| sum.wrapping_add(value >> 16));

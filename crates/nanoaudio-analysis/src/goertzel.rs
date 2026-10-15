@@ -1,5 +1,7 @@
 use nanoaudio_dsp::{Analyzer, Fixed, Float, Representation};
 
+use crate::math;
+
 /// Measures the level of a few chosen frequencies with the Goertzel algorithm, a cheap alternative to an FFT for tone detection.
 ///
 /// It analyzes blocks of a fixed number of frames, one selected channel or the mix of all channels, and reports the frequencies of the last completed block. Each frequency is measured at its exact value, not rounded to a DFT bin, and a full-scale sine at that frequency reads full scale, 0 dBFS, when the block holds a whole number of its periods. Off-centre tones and other frequencies leak in as they would in a rectangular-window DFT.
@@ -247,7 +249,9 @@ impl<const F: usize> Goertzel<Float, F> {
     pub fn magnitudes(&self) -> [f32; F] {
         let divisor = self.divisor();
 
-        core::array::from_fn(|index| (2.0 * math::square_root(self.power(index)) / divisor) as f32)
+        core::array::from_fn(|index| {
+            (2.0 * math::square_root(positive(self.power(index))) / divisor) as f32
+        })
     }
 
     /// Returns the squared amplitude of each frequency in the last block, 1.0 for a full-scale sine.
@@ -302,11 +306,9 @@ const fn headroom(coefficient: i32, frames: u16) -> u8 {
     shift
 }
 
-const MIX_SHIFTS: [u8; 9] = [0, 0, 1, 2, 2, 3, 3, 3, 3];
-
 #[inline]
 fn mix_shift(channels: usize) -> u32 {
-    MIX_SHIFTS[channels.min(8)] as u32
+    math::MIX_SHIFTS[channels.min(8)] as u32
 }
 
 #[inline]
@@ -568,99 +570,6 @@ fn decide(magnitudes: [u32; 8]) -> Option<char> {
 
     (low * UNIT <= high * DTMF_NORMAL_TWIST && high * UNIT <= low * DTMF_REVERSE_TWIST)
         .then_some(DTMF_DIGITS[row][column])
-}
-
-mod math {
-    pub const DECIBELS_PER_OCTAVE: f64 = 3.010_299_956_639_812;
-
-    pub const fn round(value: f64) -> i64 {
-        if value >= 0.0 {
-            (value + 0.5) as i64
-        } else {
-            (value - 0.5) as i64
-        }
-    }
-
-    pub const fn cosine(angle: f64) -> f64 {
-        let half = core::f64::consts::FRAC_PI_2;
-
-        if angle > half {
-            return -cosine(core::f64::consts::PI - angle);
-        }
-
-        let square = angle * angle;
-        let mut term = 1.0;
-        let mut sum = 1.0;
-        let mut index = 1;
-
-        while index <= 12 {
-            term = -term * square / ((2 * index - 1) * (2 * index)) as f64;
-            sum += term;
-            index += 1;
-        }
-
-        sum
-    }
-
-    pub fn square_root(value: f64) -> f64 {
-        if value.is_nan() {
-            return f64::NAN;
-        }
-
-        if value < f64::MIN_POSITIVE || value == f64::INFINITY {
-            return value.max(0.0);
-        }
-
-        let mut root = f64::from_bits((value.to_bits() >> 1) + 0x1FF8_0000_0000_0000);
-
-        for _ in 0..5 {
-            root = 0.5 * (root + value / root);
-        }
-
-        root
-    }
-
-    pub fn log2(value: f64) -> f64 {
-        if value.is_nan() || value < 0.0 {
-            return f64::NAN;
-        }
-
-        if value == 0.0 {
-            return f64::NEG_INFINITY;
-        }
-
-        if value == f64::INFINITY {
-            return f64::INFINITY;
-        }
-
-        let (value, offset) = if value < f64::MIN_POSITIVE {
-            (value * (1u128 << 64) as f64, -64.0)
-        } else {
-            (value, 0.0)
-        };
-        let bits = value.to_bits();
-        let mut exponent = ((bits >> 52) & 0x7FF) as i64 - 1023;
-        let mut mantissa = f64::from_bits((bits & ((1 << 52) - 1)) | (1023 << 52));
-
-        if mantissa > core::f64::consts::SQRT_2 {
-            mantissa /= 2.0;
-            exponent += 1;
-        }
-
-        let ratio = (mantissa - 1.0) / (mantissa + 1.0);
-        let square = ratio * ratio;
-        let mut term = ratio;
-        let mut sum = 0.0;
-        let mut index = 0;
-
-        while index < 8 {
-            sum += term / (2 * index + 1) as f64;
-            term *= square;
-            index += 1;
-        }
-
-        exponent as f64 + offset + 2.0 * sum / core::f64::consts::LN_2
-    }
 }
 
 #[cfg(test)]
@@ -1162,40 +1071,6 @@ mod tests {
                 ((coefficient as i64 * state as i64 + (1 << 29)) >> 30) as i32
             );
         }
-    }
-
-    #[test]
-    fn math_matches_the_standard_library() {
-        for step in 0..=1000 {
-            let angle = PI * step as f64 / 1000.0;
-
-            assert!((math::cosine(angle) - angle.cos()).abs() < 1e-15);
-        }
-
-        for value in [
-            1e-300,
-            1e-10,
-            0.3,
-            1.0,
-            1.5,
-            2.0,
-            3.0,
-            1e10,
-            (1u128 << 100) as f64,
-            5e-324,
-        ] {
-            assert!((math::log2(value) - value.log2()).abs() < 1e-12, "{value}");
-            assert!(
-                (math::square_root(value) / value.sqrt() - 1.0).abs() < 1e-15
-                    || value < f64::MIN_POSITIVE
-            );
-        }
-
-        assert_eq!(math::log2(0.0), f64::NEG_INFINITY);
-        assert!(math::log2(f64::NAN).is_nan());
-        assert_eq!(math::square_root(0.0), 0.0);
-        assert_eq!(math::square_root(f64::INFINITY), f64::INFINITY);
-        assert!(math::square_root(f64::NAN).is_nan());
     }
 
     const ROWS: [f64; 4] = [697.0, 770.0, 852.0, 941.0];

@@ -8,7 +8,9 @@ mod counter;
 mod diagnostics;
 mod goertzel;
 mod level;
+mod math;
 mod measure;
+mod sealed;
 mod silence;
 #[cfg(feature = "fft")]
 mod spectrum;
