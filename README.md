@@ -11,7 +11,9 @@ Allocation-free, `no_std` building blocks for PCM audio on microcontrollers and 
 - Fixed-point volume (Q4.12), applied in place
 - Saturating mixing
 
-Planned: a single-producer/single-consumer ring buffer on caller-provided storage, a fixed-size mixer and a WAV header parser.
+- Single-producer/single-consumer ring buffer with contiguous grants, for DMA and audio callbacks
+
+Planned: a fixed-size mixer and a WAV header parser.
 
 ## Design rules
 
