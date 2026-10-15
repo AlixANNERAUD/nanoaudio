@@ -1,8 +1,10 @@
 mod g711;
 mod ima_adpcm;
+mod wav;
 
 pub use g711::*;
 pub use ima_adpcm::*;
+pub use wav::*;
 
 use crate::{Configuration, Result, Sample};
 

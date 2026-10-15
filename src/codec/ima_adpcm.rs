@@ -1,4 +1,4 @@
-use crate::{Configuration, Error, Format, MAXIMUM_CHANNELS, Result};
+use crate::{Configuration, Error, Format, MAXIMUM_CHANNELS, Result, Sample};
 
 use super::{Decoder, Encoder, Progress};
 
@@ -166,7 +166,7 @@ impl ImaAdpcm {
         Configuration::new(self.sample_rate, self.channels, Format::I16)
     }
 
-    fn decode_block(&mut self, block: &[u8], output: &mut [i16]) {
+    fn decode_block<S: Sample>(&mut self, block: &[u8], output: &mut [S]) {
         let channels = self.channels as usize;
         let (headers, data) = block.split_at(CHANNEL_HEADER_SIZE * channels);
 
@@ -174,7 +174,7 @@ impl ImaAdpcm {
             let predictor = i16::from_le_bytes([header[0], header[1]]);
 
             self.states[channel] = ImaAdpcmState::new(predictor, header[2]);
-            output[channel] = predictor;
+            output[channel] = predictor.convert();
         }
 
         for (group, bytes) in data.chunks_exact(CHANNEL_GROUP_SIZE * channels).enumerate() {
@@ -185,8 +185,8 @@ impl ImaAdpcm {
                 for (offset, byte) in bytes.iter().enumerate() {
                     let sample = first + offset * 2;
 
-                    output[sample * channels + channel] = state.decode(byte & 0x0F);
-                    output[(sample + 1) * channels + channel] = state.decode(byte >> 4);
+                    output[sample * channels + channel] = state.decode(byte & 0x0F).convert();
+                    output[(sample + 1) * channels + channel] = state.decode(byte >> 4).convert();
                 }
             }
         }
@@ -237,6 +237,12 @@ impl Decoder for ImaAdpcm {
     }
 
     fn decode(&mut self, input: &[u8], output: &mut [i16]) -> Result<Progress> {
+        self.decode_into(input, output)
+    }
+}
+
+impl ImaAdpcm {
+    pub fn decode_into<S: Sample>(&mut self, input: &[u8], output: &mut [S]) -> Result<Progress> {
         let block_samples = self.block_samples();
 
         if output.len() < block_samples {

@@ -1,4 +1,4 @@
-use crate::{Configuration, Error, Format, Result};
+use crate::{Configuration, Error, Format, Result, Sample};
 
 use super::{Decoder, Encoder, Progress};
 
@@ -130,6 +130,22 @@ impl G711 {
     }
 }
 
+impl G711 {
+    pub fn decode_into<S: Sample>(&mut self, input: &[u8], output: &mut [S]) -> Result<Progress> {
+        let count = self.whole_samples(input.len().min(output.len()));
+        let decode = match self.law {
+            Law::A => decode_a_law,
+            Law::Mu => decode_mu_law,
+        };
+
+        for (output, input) in output[..count].iter_mut().zip(input) {
+            *output = decode(*input).convert();
+        }
+
+        Ok(Progress::new(count, count))
+    }
+}
+
 impl Decoder for G711 {
     type Sample = i16;
 
@@ -142,17 +158,7 @@ impl Decoder for G711 {
     }
 
     fn decode(&mut self, input: &[u8], output: &mut [i16]) -> Result<Progress> {
-        let count = self.whole_samples(input.len().min(output.len()));
-        let decode = match self.law {
-            Law::A => decode_a_law,
-            Law::Mu => decode_mu_law,
-        };
-
-        for (output, input) in output[..count].iter_mut().zip(input) {
-            *output = decode(*input);
-        }
-
-        Ok(Progress::new(count, count))
+        self.decode_into(input, output)
     }
 }
 

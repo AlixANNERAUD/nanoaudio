@@ -7,11 +7,23 @@ const FORMAT_CHUNK_EXTENSIBLE_SIZE: usize = 40;
 
 const FORMAT_PCM: u16 = 0x0001;
 const FORMAT_IEEE_FLOAT: u16 = 0x0003;
+const FORMAT_A_LAW: u16 = 0x0006;
+const FORMAT_MU_LAW: u16 = 0x0007;
+const FORMAT_IMA_ADPCM: u16 = 0x0011;
 const FORMAT_EXTENSIBLE: u16 = 0xFFFE;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Encoding {
+    Pcm,
+    ALaw,
+    MuLaw,
+    ImaAdpcm { block_align: u16 },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WavHeader {
     pub configuration: Configuration,
+    pub encoding: Encoding,
     pub data_offset: usize,
     pub data_size: u32,
 }
@@ -25,7 +37,7 @@ impl WavHeader {
         }
 
         let mut offset = RIFF_HEADER_SIZE;
-        let mut configuration = None;
+        let mut format = None;
 
         loop {
             let chunk = bytes
@@ -38,15 +50,18 @@ impl WavHeader {
             match identifier {
                 b"fmt " => {
                     let length = (size as usize).min(FORMAT_CHUNK_EXTENSIBLE_SIZE);
-                    let format = bytes
+                    let chunk = bytes
                         .get(body..body.saturating_add(length))
                         .ok_or(Error::Incomplete)?;
 
-                    configuration = Some(parse_format(format)?);
+                    format = Some(parse_format(chunk)?);
                 }
                 b"data" => {
+                    let (configuration, encoding) = format.ok_or(Error::InvalidHeader)?;
+
                     return Ok(Self {
-                        configuration: configuration.ok_or(Error::InvalidHeader)?,
+                        configuration,
+                        encoding,
                         data_offset: body,
                         data_size: size,
                     });
@@ -61,11 +76,22 @@ impl WavHeader {
     }
 
     pub fn frames(&self) -> usize {
-        self.configuration.bytes_to_frames(self.data_size as usize)
+        let size = self.data_size as usize;
+        let channels = self.configuration.channels as usize;
+
+        match self.encoding {
+            Encoding::Pcm => self.configuration.bytes_to_frames(size),
+            Encoding::ALaw | Encoding::MuLaw => size / channels,
+            Encoding::ImaAdpcm { block_align } => {
+                let groups = (block_align as usize - 4 * channels) / (4 * channels);
+
+                size / block_align as usize * (groups * 8 + 1)
+            }
+        }
     }
 }
 
-fn parse_format(chunk: &[u8]) -> Result<Configuration> {
+fn parse_format(chunk: &[u8]) -> Result<(Configuration, Encoding)> {
     if chunk.len() < FORMAT_CHUNK_MINIMUM_SIZE {
         return Err(Error::InvalidHeader);
     }
@@ -73,6 +99,7 @@ fn parse_format(chunk: &[u8]) -> Result<Configuration> {
     let mut tag = read_u16(&chunk[0..2]);
     let channels = read_u16(&chunk[2..4]);
     let sample_rate = read_u32(&chunk[4..8]);
+    let block_align = read_u16(&chunk[12..14]);
     let bits_per_sample = read_u16(&chunk[14..16]);
 
     if tag == FORMAT_EXTENSIBLE {
@@ -81,11 +108,14 @@ fn parse_format(chunk: &[u8]) -> Result<Configuration> {
         tag = read_u16(subformat);
     }
 
-    let format = match (tag, bits_per_sample) {
-        (FORMAT_PCM, 8) => Format::U8,
-        (FORMAT_PCM, 16) => Format::I16,
-        (FORMAT_PCM, 32) => Format::I32,
-        (FORMAT_IEEE_FLOAT, 32) => Format::F32,
+    let (format, encoding) = match (tag, bits_per_sample) {
+        (FORMAT_PCM, 8) => (Format::U8, Encoding::Pcm),
+        (FORMAT_PCM, 16) => (Format::I16, Encoding::Pcm),
+        (FORMAT_PCM, 32) => (Format::I32, Encoding::Pcm),
+        (FORMAT_IEEE_FLOAT, 32) => (Format::F32, Encoding::Pcm),
+        (FORMAT_A_LAW, 8) => (Format::I16, Encoding::ALaw),
+        (FORMAT_MU_LAW, 8) => (Format::I16, Encoding::MuLaw),
+        (FORMAT_IMA_ADPCM, 4) => (Format::I16, Encoding::ImaAdpcm { block_align }),
         _ => return Err(Error::UnsupportedFormat),
     };
 
@@ -95,7 +125,16 @@ fn parse_format(chunk: &[u8]) -> Result<Configuration> {
         return Err(Error::InvalidHeader);
     }
 
-    Ok(Configuration::new(sample_rate, channels, format))
+    if let Encoding::ImaAdpcm { block_align } = encoding {
+        let header = 4 * channels as usize;
+        let block = block_align as usize;
+
+        if block <= header || (block - header) % header != 0 {
+            return Err(Error::InvalidHeader);
+        }
+    }
+
+    Ok((Configuration::new(sample_rate, channels, format), encoding))
 }
 
 fn read_u16(bytes: &[u8]) -> u16 {
@@ -176,6 +215,31 @@ mod tests {
             WavHeader::parse(&bytes).unwrap().configuration,
             Configuration::new(16_000, 2, Format::U8)
         );
+    }
+
+    #[test]
+    fn compressed() {
+        let a_law = WavHeader::parse(&header(FORMAT_A_LAW, 1, 8_000, 8, &[0, 0])).unwrap();
+        assert_eq!(a_law.encoding, Encoding::ALaw);
+        assert_eq!(
+            a_law.configuration,
+            Configuration::new(8_000, 1, Format::I16)
+        );
+        assert_eq!(a_law.frames(), 8);
+
+        let mu_law = WavHeader::parse(&header(FORMAT_MU_LAW, 2, 8_000, 8, &[0, 0])).unwrap();
+        assert_eq!(mu_law.encoding, Encoding::MuLaw);
+        assert_eq!(mu_law.frames(), 4);
+
+        let mut bytes = header(FORMAT_IMA_ADPCM, 1, 8_000, 4, &[2, 0, 0xF9, 0x01]);
+        let block_align = 12 + 12 + 8 + 12;
+        bytes[block_align..block_align + 2].copy_from_slice(&256u16.to_le_bytes());
+        let size = bytes.len() - 4;
+        bytes[size..].copy_from_slice(&512u32.to_le_bytes());
+
+        let adpcm = WavHeader::parse(&bytes).unwrap();
+        assert_eq!(adpcm.encoding, Encoding::ImaAdpcm { block_align: 256 });
+        assert_eq!(adpcm.frames(), 2 * 505);
     }
 
     #[test]

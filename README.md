@@ -13,7 +13,7 @@ Allocation-free, `no_std` building blocks for PCM audio on microcontrollers and 
 - Saturating mixing, and a fixed-size mixer with per-source and master volumes
 - Single-producer/single-consumer ring buffer with contiguous grants, for DMA and audio callbacks
 - WAV header parser that works on a partial buffer and reports when it needs more bytes
-- Codecs (`codec` module), behind allocation-free `Decoder` and `Encoder` traits: G.711 A-law and µ-law, IMA ADPCM (WAV block layout)
+- Codecs (`codec` module), behind allocation-free `Decoder` and `Encoder` traits: G.711 A-law and µ-law, IMA ADPCM (WAV block layout), and `WavDecoder` for PCM, A-law, µ-law and IMA ADPCM WAV files, writing any sample type
 
 ## Number representation
 

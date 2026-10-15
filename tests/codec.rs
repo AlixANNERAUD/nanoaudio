@@ -1,5 +1,5 @@
 use nanoaudio::codec::{
-    Decoder, Encoder, G711, ImaAdpcm, ImaAdpcmState, Law, decode_a_law, decode_mu_law,
+    Decoder, Encoder, G711, ImaAdpcm, ImaAdpcmState, Law, WavDecoder, decode_a_law, decode_mu_law,
     encode_a_law, encode_mu_law,
 };
 
@@ -193,4 +193,116 @@ fn ima_adpcm_waits_for_whole_blocks() {
     assert!(codec.decode(&[0; 12], &mut output[..16]).is_err());
     assert!(ImaAdpcm::new(8_000, 2, 12).is_err());
     assert!(ImaAdpcm::with_samples_per_block(8_000, 1, 10).is_err());
+}
+
+fn wav_file(
+    tag: u16,
+    channels: u16,
+    bits: u16,
+    block_align: u16,
+    extra: &[u8],
+    data: &[u8],
+) -> Vec<u8> {
+    let mut format = Vec::new();
+    format.extend_from_slice(&tag.to_le_bytes());
+    format.extend_from_slice(&channels.to_le_bytes());
+    format.extend_from_slice(&8_000u32.to_le_bytes());
+    format.extend_from_slice(&0u32.to_le_bytes());
+    format.extend_from_slice(&block_align.to_le_bytes());
+    format.extend_from_slice(&bits.to_le_bytes());
+    format.extend_from_slice(extra);
+
+    let mut file = Vec::new();
+    file.extend_from_slice(b"RIFF");
+    file.extend_from_slice(&0u32.to_le_bytes());
+    file.extend_from_slice(b"WAVE");
+    file.extend_from_slice(b"fmt ");
+    file.extend_from_slice(&(format.len() as u32).to_le_bytes());
+    file.extend_from_slice(&format);
+    file.extend_from_slice(b"data");
+    file.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    file.extend_from_slice(data);
+    file
+}
+
+fn decode_file<S: nanoaudio::Sample>(file: &[u8]) -> (nanoaudio::WavHeader, Vec<S>) {
+    let header = nanoaudio::WavHeader::parse(file).unwrap();
+    let mut decoder = WavDecoder::<S>::new(&header).unwrap();
+    let mut input = &file[header.data_offset..];
+    let mut output = vec![S::SILENCE; header.frames() * header.configuration.channels as usize];
+    let mut produced = 0;
+
+    while !input.is_empty() {
+        let progress = decoder.decode(input, &mut output[produced..]).unwrap();
+
+        if progress.is_stalled() {
+            break;
+        }
+
+        input = &input[progress.consumed..];
+        produced += progress.produced;
+    }
+
+    assert_eq!(produced, output.len());
+    (header, output)
+}
+
+#[test]
+fn wav_decoder_g711() {
+    let data = [0x00u8, 0x7F, 0x80, 0xFF, 0x55, 0xD5];
+    let file = wav_file(7, 2, 8, 2, &[0, 0], &data);
+
+    let (header, decoded) = decode_file::<i16>(&file);
+    assert_eq!(header.frames(), 3);
+    assert_eq!(decoded, data.map(decode_mu_law));
+
+    let (_, decoded) = decode_file::<f32>(&wav_file(6, 1, 8, 1, &[0, 0], &data));
+    let expected: Vec<f32> = data
+        .iter()
+        .map(|code| decode_a_law(*code) as f32 / 32_768.0)
+        .collect();
+    assert_eq!(decoded, expected);
+}
+
+#[test]
+fn wav_decoder_ima_adpcm() {
+    let mut encoder = ImaAdpcm::with_samples_per_block(8_000, 1, 505).unwrap();
+    let input: Vec<i16> = (0..1010)
+        .map(|index| ((index as f32 * 0.3).sin() * 9_000.0) as i16)
+        .collect();
+    let mut data = vec![0u8; 512];
+    encoder.encode(&input, &mut data).unwrap();
+
+    let file = wav_file(0x11, 1, 4, 256, &[2, 0, 0xF9, 0x01], &data);
+    let (header, decoded) = decode_file::<i16>(&file);
+
+    let mut reference = vec![0i16; 1010];
+    ImaAdpcm::new(8_000, 1, 256)
+        .unwrap()
+        .decode(&data, &mut reference)
+        .unwrap();
+
+    assert_eq!(header.frames(), 1010);
+    assert_eq!(decoded, reference);
+}
+
+#[test]
+fn wav_decoder_pcm_into_pipeline() {
+    use nanoaudio::{Format, Stream, Volume, samples};
+
+    let file = wav_file(1, 1, 8, 1, &[], &[0x00, 0x80, 0xFF]);
+    let (_, decoded) = decode_file::<i16>(&file);
+    assert_eq!(decoded, [i16::MIN, 0, 0x7F00]);
+
+    let mut output = [0u8; 12];
+    let frames = samples(&decoded, 1)
+        .unwrap()
+        .to_channels(2)
+        .unwrap()
+        .volume(Volume::from_percent(50))
+        .write_bytes(&mut output, Format::I16);
+
+    assert_eq!(frames, 3);
+    assert_eq!(i16::from_le_bytes([output[0], output[1]]), -16_384);
+    assert_eq!(i16::from_le_bytes([output[10], output[11]]), 0x3F80);
 }
