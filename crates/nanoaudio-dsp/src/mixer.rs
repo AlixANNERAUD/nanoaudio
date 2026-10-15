@@ -2,6 +2,7 @@ use core::marker::PhantomData;
 
 use nanoaudio_core::{Error, Format, I24, Result, Sample};
 
+use crate::bytes::Bytes;
 use crate::{DefaultRepresentation, Fixed, Float, Representation, RepresentationKind, Volume};
 
 pub fn mix<S: Sample>(output: &mut [S], input: &[S], volume: Volume) -> usize {
@@ -52,20 +53,22 @@ pub fn mix_bytes_using<R: Representation>(
     volume: Volume,
 ) -> usize {
     match format {
-        Format::U8 => mix_bytes_typed::<R, u8>(output, input, volume),
-        Format::I16 => mix_bytes_typed::<R, i16>(output, input, volume),
-        Format::I24 => mix_bytes_typed::<R, I24>(output, input, volume),
-        Format::I32 => mix_bytes_typed::<R, i32>(output, input, volume),
-        Format::F32 => mix_bytes_typed::<R, f32>(output, input, volume),
+        Format::U8 => mix_bytes_typed::<R, u8, 1>(output, input, volume),
+        Format::I16 => mix_bytes_typed::<R, i16, 2>(output, input, volume),
+        Format::I24 => mix_bytes_typed::<R, I24, 3>(output, input, volume),
+        Format::I32 => mix_bytes_typed::<R, i32, 4>(output, input, volume),
+        Format::F32 => mix_bytes_typed::<R, f32, 4>(output, input, volume),
     }
 }
 
-fn mix_bytes_typed<R: Representation, S: Sample>(
+fn mix_bytes_typed<R: Representation, S: Bytes<SIZE>, const SIZE: usize>(
     output: &mut [u8],
     input: &[u8],
     volume: Volume,
 ) -> usize {
-    let count = (output.len() / S::SIZE).min(input.len() / S::SIZE);
+    let (output, _) = output.as_chunks_mut::<SIZE>();
+    let (input, _) = input.as_chunks::<SIZE>();
+    let count = output.len().min(input.len());
 
     if volume.is_mute() {
         return count;
@@ -73,11 +76,8 @@ fn mix_bytes_typed<R: Representation, S: Sample>(
 
     let gain = R::gain(volume);
 
-    for (output, input) in output
-        .chunks_exact_mut(S::SIZE)
-        .zip(input.chunks_exact(S::SIZE))
-    {
-        R::mix_sample(S::read_le(output), S::read_le(input), gain).write_le(output);
+    for (output, input) in output.iter_mut().zip(input) {
+        R::mix_sample(S::from_bytes(output), S::from_bytes(input), gain).store(output);
     }
 
     count
@@ -180,6 +180,79 @@ impl<const SOURCES: usize, R: Representation> Default for Mixer<SOURCES, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bytes::testing::{FORMATS, GAINS, LENGTH, ROUNDS, fill, length};
+
+    fn reference<R: Representation>(
+        output: &mut [u8],
+        input: &[u8],
+        format: Format,
+        volume: Volume,
+    ) -> usize {
+        match format {
+            Format::U8 => reference_typed::<R, u8>(output, input, volume),
+            Format::I16 => reference_typed::<R, i16>(output, input, volume),
+            Format::I24 => reference_typed::<R, I24>(output, input, volume),
+            Format::I32 => reference_typed::<R, i32>(output, input, volume),
+            Format::F32 => reference_typed::<R, f32>(output, input, volume),
+        }
+    }
+
+    fn reference_typed<R: Representation, S: Sample>(
+        output: &mut [u8],
+        input: &[u8],
+        volume: Volume,
+    ) -> usize {
+        let count = (output.len() / S::SIZE).min(input.len() / S::SIZE);
+
+        if volume.is_mute() {
+            return count;
+        }
+
+        let gain = R::gain(volume);
+
+        for (output, input) in output
+            .chunks_exact_mut(S::SIZE)
+            .zip(input.chunks_exact(S::SIZE))
+        {
+            R::mix_sample(S::read_le(output), S::read_le(input), gain).write_le(output);
+        }
+
+        count
+    }
+
+    fn bytes_match_reference<R: Representation>() {
+        let mut input = [0u8; LENGTH];
+        let mut expected = [0u8; LENGTH];
+
+        for round in 0..ROUNDS {
+            for format in FORMATS {
+                for raw in GAINS {
+                    let volume = Volume::from_raw(raw);
+                    let input = &mut input[..length(round, raw as u64)];
+                    let output_length = length(round, raw as u64 + 7);
+                    fill(input, format, round, raw as u64);
+                    fill(&mut expected, format, round, raw as u64 + 1);
+                    let mut actual = expected;
+
+                    assert_eq!(
+                        mix_bytes_using::<R>(&mut actual[..output_length], input, format, volume),
+                        reference::<R>(&mut expected[..output_length], input, format, volume)
+                    );
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_bytes_match_reference() {
+        bytes_match_reference::<Fixed>();
+    }
+
+    #[test]
+    fn float_bytes_match_reference() {
+        bytes_match_reference::<Float>();
+    }
 
     fn mix_samples<R: Representation>() {
         let mut output = [100i16, i16::MAX, 0];
