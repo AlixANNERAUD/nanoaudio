@@ -1,7 +1,7 @@
 use crate::{
     ANALYSIS_4, ANALYSIS_8, ANALYSIS_FRACTION, COSINE_FRACTION, MAXIMUM_SUBBANDS, PARTIAL_FRACTION,
-    PROTOTYPE_4, PROTOTYPE_8, PROTOTYPE_FRACTION, SUBBAND_FRACTION, SYNTHESIS, SYNTHESIS_4,
-    SYNTHESIS_8, WINDOW,
+    PROTOTYPE_4, PROTOTYPE_8, PROTOTYPE_FRACTION, SUBBAND_FRACTION, SYNTHESIS_4, SYNTHESIS_8,
+    SYNTHESIS_BLOCKS, Synthesis, WINDOW,
 };
 
 const PARTIAL_SPLIT: u32 = 14;
@@ -110,7 +110,7 @@ impl Sum {
     }
 }
 
-pub(crate) fn synthesize(state: &mut [i32; SYNTHESIS], samples: &[i32], output: &mut [i16]) {
+pub(crate) fn synthesize(state: &mut Synthesis, samples: &[i32], output: &mut [i16]) {
     if samples.len() == 4 {
         synthesize_with::<4>(
             state,
@@ -132,7 +132,7 @@ pub(crate) fn synthesize(state: &mut [i32; SYNTHESIS], samples: &[i32], output: 
 
 #[inline(always)]
 fn synthesize_with<const SUBBANDS: usize>(
-    state: &mut [i32; SYNTHESIS],
+    state: &mut Synthesis,
     samples: &[i32],
     output: &mut [i16],
     matrix: &[Halves],
@@ -143,8 +143,8 @@ fn synthesize_with<const SUBBANDS: usize>(
     let modulate =
         |sum: i64| (sum >> COSINE_FRACTION).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
 
-    state.copy_within(..18 * SUBBANDS, 2 * SUBBANDS);
-
+    let offsets = state.advance(SUBBANDS);
+    let newest = &mut state.values[offsets[0]..][..2 * SUBBANDS];
     let mut sums = [0i32; MAXIMUM_SUBBANDS / 2];
     let mut differences = [0i32; MAXIMUM_SUBBANDS / 2];
 
@@ -170,40 +170,45 @@ fn synthesize_with<const SUBBANDS: usize>(
 
         let sum = sum.total();
 
-        state[row] = modulate(sum);
+        newest[row] = modulate(sum);
 
         if row < SUBBANDS / 2 {
-            state[SUBBANDS - row] = modulate(-sum);
+            newest[SUBBANDS - row] = modulate(-sum);
         } else {
-            state[3 * SUBBANDS - row] = state[row];
+            newest[3 * SUBBANDS - row] = newest[row];
         }
     }
 
-    state[SUBBANDS / 2] = 0;
+    newest[SUBBANDS / 2] = 0;
+
+    let mut window = [0i32; SYNTHESIS_BLOCKS * MAXIMUM_SUBBANDS];
+
+    for (block, offset) in window.as_chunks_mut::<SUBBANDS>().0.iter_mut().zip(offsets) {
+        block.copy_from_slice(&state.values[offset..][..SUBBANDS]);
+    }
 
     let shift = PROTOTYPE_FRACTION + SUBBAND_FRACTION - SUBBANDS.trailing_zeros();
 
     for (index, output) in output.iter_mut().enumerate() {
-        let value = (-window::<SUBBANDS>(state, prototype, index) + (1 << (shift - 1))) >> shift;
+        let value =
+            (-convolve::<SUBBANDS>(&window, prototype, index) + (1 << (shift - 1))) >> shift;
 
         *output = value.clamp(i16::MIN as i64, i16::MAX as i64) as i16;
     }
 }
 
 #[inline(never)]
-fn window<const SUBBANDS: usize>(
-    state: &[i32; SYNTHESIS],
+fn convolve<const SUBBANDS: usize>(
+    window: &[i32; SYNTHESIS_BLOCKS * MAXIMUM_SUBBANDS],
     prototype: &[Halves],
     index: usize,
 ) -> i64 {
     let mut sum = Sum::default();
 
-    for group in 0..5 {
-        let base = 4 * SUBBANDS * group + index;
-        let position = 2 * SUBBANDS * group + index;
+    for block in 0..SYNTHESIS_BLOCKS {
+        let position = block * SUBBANDS + index;
 
-        sum.add(prototype[position], state[base]);
-        sum.add(prototype[position + SUBBANDS], state[base + 3 * SUBBANDS]);
+        sum.add(prototype[position], window[position]);
     }
 
     sum.total()
@@ -427,13 +432,17 @@ mod tests {
 
         for subbands in [4, 8] {
             for round in 0..ROUNDS {
-                let mut state = [0i32; SYNTHESIS];
+                let mut state = Synthesis::new();
 
                 if round % 2 == 0 {
-                    state.iter_mut().for_each(|value| *value = random.state());
+                    state
+                        .values
+                        .iter_mut()
+                        .for_each(|value| *value = random.state());
+                    state.newest = round / 2 % SYNTHESIS_BLOCKS;
                 }
 
-                let mut expected_state = state;
+                let mut expected_state = state.clone();
 
                 for _ in 0..4 {
                     let mut samples = [0i32; MAXIMUM_SUBBANDS];

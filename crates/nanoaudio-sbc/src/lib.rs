@@ -52,7 +52,8 @@ const COSINE_FRACTION: u32 = 30;
 const PROTOTYPE_FRACTION: u32 = 30;
 const ANALYSIS_FRACTION: u32 = 12;
 const PARTIAL_FRACTION: u32 = 15;
-const SYNTHESIS_HISTORY_BLOCKS: usize = SYNTHESIS / (2 * MAXIMUM_SUBBANDS) - 1;
+const SYNTHESIS_BLOCKS: usize = SYNTHESIS / (2 * MAXIMUM_SUBBANDS);
+const SYNTHESIS_HISTORY_BLOCKS: usize = SYNTHESIS_BLOCKS - 1;
 
 /// The largest SBC frame, in bytes.
 pub const SBC_MAXIMUM_FRAME_LENGTH: usize = 524;
@@ -646,13 +647,51 @@ impl BitWriter<'_> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct Synthesis {
+    values: [i32; SYNTHESIS],
+    newest: usize,
+}
+
+impl Synthesis {
+    const fn new() -> Self {
+        Self {
+            values: [0; SYNTHESIS],
+            newest: 0,
+        }
+    }
+
+    #[inline(always)]
+    fn advance(&mut self, subbands: usize) -> [usize; SYNTHESIS_BLOCKS] {
+        self.newest = if self.newest == 0 {
+            SYNTHESIS_BLOCKS - 1
+        } else {
+            self.newest - 1
+        };
+
+        let mut offsets = [0; SYNTHESIS_BLOCKS];
+        let mut slot = self.newest;
+
+        for (block, offset) in offsets.iter_mut().enumerate() {
+            *offset = 2 * subbands * slot + block % 2 * subbands;
+            slot = if slot == SYNTHESIS_BLOCKS - 1 {
+                0
+            } else {
+                slot + 1
+            };
+        }
+
+        offsets
+    }
+}
+
 /// An SBC and mSBC decoder.
 ///
 /// Every frame header carries its parameters, so the decoder needs none from the caller and follows changes from one frame to the next. It decodes whole frames to interleaved 16-bit samples and checks the CRC of each one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SbcDecoder {
     parameters: Option<SbcParameters>,
-    synthesis: [[i32; SYNTHESIS]; MAXIMUM_CHANNELS],
+    synthesis: [Synthesis; MAXIMUM_CHANNELS],
     finishing: bool,
     skip: usize,
 }
@@ -668,7 +707,7 @@ impl SbcDecoder {
     pub const fn new() -> Self {
         Self {
             parameters: None,
-            synthesis: [[0; SYNTHESIS]; MAXIMUM_CHANNELS],
+            synthesis: [Synthesis::new(), Synthesis::new()],
             finishing: false,
             skip: 0,
         }
@@ -757,7 +796,7 @@ impl SbcDecoder {
             .parameters
             .is_none_or(|previous| previous.subbands != parameters.subbands)
         {
-            self.synthesis = [[0; SYNTHESIS]; MAXIMUM_CHANNELS];
+            self.synthesis = [Synthesis::new(), Synthesis::new()];
         }
 
         self.parameters = Some(*parameters);
@@ -849,13 +888,12 @@ impl SbcDecoder {
         nanoaudio_no_long_multiply
     ))
 ))]
-fn synthesize(state: &mut [i32; SYNTHESIS], samples: &[i32], output: &mut [i16]) {
+fn synthesize(state: &mut Synthesis, samples: &[i32], output: &mut [i16]) {
     let subbands = samples.len();
     let filterbank = Filterbank::new(subbands);
+    let offsets = state.advance(subbands);
 
-    state.copy_within(..18 * subbands, 2 * subbands);
-
-    for (value, row) in state[..2 * subbands]
+    for (value, row) in state.values[offsets[0]..][..2 * subbands]
         .iter_mut()
         .zip(filterbank.synthesis.chunks_exact(subbands))
     {
@@ -873,13 +911,9 @@ fn synthesize(state: &mut [i32; SYNTHESIS], samples: &[i32], output: &mut [i16])
     for (index, output) in output.iter_mut().enumerate() {
         let mut sum = 0i64;
 
-        for group in 0..5 {
-            let base = 4 * subbands * group + index;
-            let position = 2 * subbands * group + index;
-
-            sum += state[base] as i64 * filterbank.prototype[position] as i64
-                + state[base + 3 * subbands] as i64
-                    * filterbank.prototype[position + subbands] as i64;
+        for (block, offset) in offsets.iter().enumerate() {
+            sum += state.values[offset + index] as i64
+                * filterbank.prototype[block * subbands + index] as i64;
         }
 
         let value = (-sum + (1 << (shift - 1))) >> shift;
@@ -937,7 +971,7 @@ impl Seek for SbcDecoder {
             .checked_mul(parameters.frame_length() as u64)
             .ok_or(Error::InvalidParameter)?;
 
-        self.synthesis = [[0; SYNTHESIS]; MAXIMUM_CHANNELS];
+        self.synthesis = [Synthesis::new(), Synthesis::new()];
         self.finishing = false;
         self.skip = skip as usize;
 
