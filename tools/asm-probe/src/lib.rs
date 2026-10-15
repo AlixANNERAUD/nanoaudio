@@ -1,6 +1,7 @@
 #![no_std]
 
 use nanoaudio_core::codec::Encoder;
+use nanoaudio_core::I24;
 use nanoaudio_dsp::{convert, mix_using, samples_using, Fixed, Float, Stream, Volume};
 use nanoaudio_g711::{Law, G711};
 
@@ -20,6 +21,18 @@ pub fn probe_fixed_mix_i16(output: &mut [i16], input: &[i16], volume: u16) -> us
 #[no_mangle]
 pub fn probe_fixed_volume_u8(samples: &mut [u8], volume: u16) {
     Volume::from_raw(volume).apply_to_using::<Fixed, u8>(samples);
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_fixed_volume_i24(samples: &mut [I24], volume: u16) {
+    Volume::from_raw(volume).apply_to_using::<Fixed, I24>(samples);
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_fixed_mix_i24(output: &mut [I24], input: &[I24], volume: u16) -> usize {
+    mix_using::<Fixed, I24>(output, input, Volume::from_raw(volume))
 }
 
 #[inline(never)]
