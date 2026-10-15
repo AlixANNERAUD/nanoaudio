@@ -1,7 +1,8 @@
 use nanoaudio_core::Format;
 use nanoaudio_dsp::{
     Fixed, Float, Interpolation, Linear, Representation, Resampler, Sinc, Stream, Volume, convert,
-    convert_bytes, mix_bytes_using, mix_using, source_using,
+    convert_bytes, convert_bytes_dithered, convert_dithered, mix_bytes_using, mix_using,
+    source_using,
 };
 
 use crate::signal;
@@ -192,6 +193,13 @@ pub fn conversion_operations(data: &Data) -> Vec<Operation> {
     let mut i16_bytes = vec![0u8; music.len() * 2];
     let mut i24_bytes = vec![0u8; music.len() * 3];
     let mut back = vec![0i16; music.len()];
+    let mut dithered = vec![0i16; music.len()];
+    let mut state = 1;
+    let dither_source = {
+        let mut values = vec![0f32; music.len()];
+        convert::<i16, f32>(&music, &mut values);
+        values
+    };
     let float_source = {
         let mut values = vec![0f32; music.len()];
         convert::<i16, f32>(&music, &mut values);
@@ -224,6 +232,29 @@ pub fn conversion_operations(data: &Data) -> Vec<Operation> {
             name: "24-bit bytes to 16-bit bytes",
             run: Box::new(move || {
                 convert_bytes(&music_i24, Format::I24, &mut i16_bytes, Format::I16)
+            }),
+        },
+        Operation {
+            name: "f32 slice to i16 slice, dithered",
+            run: Box::new(move || {
+                convert_dithered::<f32, i16>(&dither_source, &mut dithered, &mut state)
+            }),
+        },
+        Operation {
+            name: "24-bit bytes to 16-bit bytes, dithered",
+            run: Box::new({
+                let music_i24 = data.music_i24.clone();
+                let mut i16_bytes = vec![0u8; data.music.len() * 2];
+                let mut state = 1;
+                move || {
+                    convert_bytes_dithered(
+                        &music_i24,
+                        Format::I24,
+                        &mut i16_bytes,
+                        Format::I16,
+                        &mut state,
+                    )
+                }
             }),
         },
     ]

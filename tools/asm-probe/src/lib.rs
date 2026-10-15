@@ -1,9 +1,11 @@
 #![no_std]
 
 use nanoaudio_core::codec::{Decoder, Encoder};
+use nanoaudio_core::Format;
 use nanoaudio_core::I24;
 use nanoaudio_dsp::{
-    convert, mix_using, samples_using, Fixed, Float, Linear, Resampler, Sinc, Stream, Volume,
+    convert, convert_dithered, mix_using, samples_using, Fixed, Float, Linear, Resampler, Sinc,
+    Stream, Volume,
 };
 use nanoaudio_g711::{Law, G711};
 use nanoaudio_qoa::{QoaDecoder, QoaEncoder};
@@ -259,4 +261,25 @@ pub fn probe_float_resample_sinc_f32(
     output: &mut [f32],
 ) -> usize {
     resampler.process(input, output).produced
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_dither_i32_to_i16(input: &[i32], output: &mut [i16], state: &mut u32) -> usize {
+    convert_dithered(input, output, state)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_dither_f32_to_i16(input: &[f32], output: &mut [i16], state: &mut u32) -> usize {
+    convert_dithered(input, output, state)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_fixed_stream_dither_i16(input: &[i32], output: &mut [i16], seed: u32) -> usize {
+    match samples_using::<Fixed, i32>(input, 2) {
+        Ok(stream) => stream.dither(Format::I16, seed).write_samples(output),
+        Err(_) => 0,
+    }
 }
