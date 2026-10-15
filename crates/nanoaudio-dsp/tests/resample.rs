@@ -103,25 +103,19 @@ fn fit(signal: &[f32], channels: usize, channel: usize, rate: u32, frequency: f6
         }
     }
 
-    for pivot in 0..3 {
-        for row in pivot + 1..3 {
-            let factor = matrix[row][pivot] / matrix[pivot][pivot];
-            for column in pivot..3 {
-                matrix[row][column] -= factor * matrix[pivot][column];
-            }
-            vector[row] -= factor * vector[pivot];
+    let determinant = |m: [[f64; 3]; 3]| {
+        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    };
+    let whole = determinant(matrix);
+    let solution: [f64; 3] = core::array::from_fn(|unknown| {
+        let mut replaced = matrix;
+        for (row, value) in replaced.iter_mut().zip(vector) {
+            row[unknown] = value;
         }
-    }
-
-    let mut solution = [0.0f64; 3];
-
-    for row in (0..3).rev() {
-        let mut sum = vector[row];
-        for column in row + 1..3 {
-            sum -= matrix[row][column] * solution[column];
-        }
-        solution[row] = sum / matrix[row][row];
-    }
+        determinant(replaced) / whole
+    });
 
     let residual = values
         .iter()

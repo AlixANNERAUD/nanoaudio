@@ -51,6 +51,22 @@ mod sealed {
         fn finish(sum: Self::Coefficient, scale: Self::Scale) -> Self::Value;
     }
 
+    pub struct LinearState<V, const CHANNELS: usize> {
+        pub(crate) previous: [V; CHANNELS],
+        pub(crate) current: [V; CHANNELS],
+    }
+
+    pub struct SincState<R: Arithmetic, const CHANNELS: usize, const FRAMES: usize> {
+        pub(crate) history: [[R::Stored; CHANNELS]; FRAMES],
+        pub(crate) end: usize,
+        pub(crate) window: usize,
+        pub(crate) keep: usize,
+        pub(crate) increment: u32,
+        pub(crate) scale: R::Scale,
+        pub(crate) scaled: bool,
+        pub(crate) unity: bool,
+    }
+
     pub trait Kernel<R: Representation, const CHANNELS: usize> {
         type State;
 
@@ -63,7 +79,7 @@ mod sealed {
     }
 }
 
-use sealed::{Arithmetic, Kernel};
+use sealed::{Arithmetic, Kernel, LinearState, SincState};
 
 /// An interpolation method for a [`Resampler`]: [`Linear`] or [`Sinc`].
 ///
@@ -180,12 +196,6 @@ impl Arithmetic for Float {
     }
 }
 
-#[doc(hidden)]
-pub struct LinearState<V, const CHANNELS: usize> {
-    previous: [V; CHANNELS],
-    current: [V; CHANNELS],
-}
-
 impl<R: Arithmetic, const CHANNELS: usize> Kernel<R, CHANNELS> for Linear {
     type State = LinearState<R::Value, CHANNELS>;
 
@@ -225,18 +235,6 @@ impl<R: Arithmetic, const CHANNELS: usize> Kernel<R, CHANNELS> for Linear {
             *output = R::interpolate(*previous, *current, fraction);
         }
     }
-}
-
-#[doc(hidden)]
-pub struct SincState<R: Arithmetic, const CHANNELS: usize, const FRAMES: usize> {
-    history: [[R::Stored; CHANNELS]; FRAMES],
-    end: usize,
-    window: usize,
-    keep: usize,
-    increment: u32,
-    scale: R::Scale,
-    scaled: bool,
-    unity: bool,
 }
 
 impl<R: Arithmetic, const CHANNELS: usize, const FRAMES: usize> SincState<R, CHANNELS, FRAMES> {
