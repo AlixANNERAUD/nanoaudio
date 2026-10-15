@@ -260,6 +260,21 @@ jobs:
       - name: Package
         run: cargo package --workspace
 
+  coverage-skipped:
+    needs: changes
+    if: needs.changes.outputs.rust != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tell Codecov there is no code change
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: AlixANNERAUD/nanoaudio
+          run_command: empty-upload
+          fail_ci_if_error: false
+
   ci:
     needs: [changes, check, crates, embedded, wasm, asm, bench, miri, msrv, package]
     if: always()
