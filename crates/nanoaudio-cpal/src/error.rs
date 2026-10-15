@@ -8,14 +8,14 @@ pub enum Error {
     NoDevice,
     /// The requested sample rate or channel count is 0.
     InvalidConfiguration,
-    /// The device cannot run at the requested sample rate.
+    /// The stream cannot be resampled to or from the rate the device runs at.
     ///
-    /// `nearest` is the closest rate it supports, to open the stream again at that rate.
+    /// This happens when [`Quality::Sinc`](crate::Quality::Sinc) would downsample by more than [`MAXIMUM_RATIO`](crate::MAXIMUM_RATIO), or when the stream has more than [`MAXIMUM_CHANNELS`](nanoaudio_core::MAXIMUM_CHANNELS) channels.
     UnsupportedSampleRate {
-        /// The requested rate, in Hz.
+        /// The rate of the stream, in Hz.
         requested: u32,
-        /// The supported rate closest to it, in Hz.
-        nearest: u32,
+        /// The rate of the device, in Hz.
+        device: u32,
     },
     /// The device offers no sample format this crate converts to or from.
     UnsupportedFormat,
@@ -30,9 +30,9 @@ impl fmt::Display for Error {
             Self::InvalidConfiguration => {
                 formatter.write_str("the sample rate and channel count must not be 0")
             }
-            Self::UnsupportedSampleRate { requested, nearest } => write!(
+            Self::UnsupportedSampleRate { requested, device } => write!(
                 formatter,
-                "the device cannot run at {requested} Hz, the nearest supported rate is {nearest} Hz"
+                "cannot resample between {requested} Hz and the device rate of {device} Hz"
             ),
             Self::UnsupportedFormat => {
                 formatter.write_str("the device offers no supported sample format")
@@ -66,13 +66,13 @@ mod tests {
     #[test]
     fn displays_the_sample_rates() {
         let error = Error::UnsupportedSampleRate {
-            requested: 44_100,
-            nearest: 48_000,
+            requested: 384_000,
+            device: 8_000,
         };
 
         assert_eq!(
             error.to_string(),
-            "the device cannot run at 44100 Hz, the nearest supported rate is 48000 Hz"
+            "cannot resample between 384000 Hz and the device rate of 8000 Hz"
         );
         assert!(error.source().is_none());
     }

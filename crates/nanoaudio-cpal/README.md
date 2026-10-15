@@ -2,7 +2,9 @@
 
 Plays and records audio through [cpal](https://crates.io/crates/cpal), with a nanoaudio ring buffer between the application and the audio callback: ALSA on Linux, CoreAudio on macOS, WASAPI on Windows, and Web Audio in the browser with the `web` feature. Unlike the other nanoaudio crates, it needs `std`.
 
-The application writes PCM to a `Producer` at its own pace, and the callback reads the `Consumer`, converts it to the device sample format and channel count, and plays silence when the buffer runs dry, counting each underrun. Capture is the mirror image. The callback does not allocate, lock or block. The device must run at the requested sample rate: resampling comes later.
+The application writes PCM to a `Producer` at its own pace, and the callback reads the `Consumer`, converts it to the device sample format and channel count, and plays silence when the buffer runs dry, counting each underrun. Capture is the mirror image. The callback does not allocate, lock or block.
+
+When the device cannot run at the stream's sample rate, it runs at the nearest rate it supports and the callback resamples, between the ring buffer and the format conversion for playback, and after it for capture. `Quality::Sinc`, the default, is transparent for music; `Quality::Linear` costs a few operations per sample, for voice or a slow CPU. Pass it to `open_device`. The sinc filter downsamples by up to `MAXIMUM_RATIO` (31), which covers 192 kHz to 8 kHz; a wider ratio fails with `Error::UnsupportedSampleRate`. The resampler follows the nominal rates: drift between the application's clock and the device's is not compensated yet.
 
 It is part of [nanoaudio](https://github.com/AlixANNERAUD/nanoaudio#readme), and can be used on its own:
 
@@ -35,7 +37,7 @@ On Linux, building needs the ALSA development files (`libasound2-dev` on Debian 
 
 ```sh
 cargo run --release -p nanoaudio-cpal --example play_tone
-cargo run --release -p nanoaudio-cpal --example play_wav -- path/to/file.wav
+cargo run --release -p nanoaudio-cpal --example play_wav -- path/to/file.wav [sinc|linear]
 ```
 
 ## License

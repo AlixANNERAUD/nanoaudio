@@ -2,7 +2,7 @@ use std::{f32::consts::TAU, thread, time::Duration};
 
 use nanoaudio_buffer::RingBuffer;
 use nanoaudio_core::{Configuration, Format};
-use nanoaudio_cpal::{Error, Output, default_output};
+use nanoaudio_cpal::{Error, Output, Quality, default_output};
 
 const CAPACITY: usize = 32_768;
 
@@ -18,7 +18,7 @@ fn main() -> Result<(), Error> {
 
     let buffer = Box::leak(Box::new(RingBuffer::<CAPACITY>::new()));
     let (mut producer, consumer) = buffer.split();
-    let output = Output::open_device(&device, consumer, configuration)?;
+    let output = Output::open_device(&device, consumer, configuration, Quality::Sinc)?;
 
     println!("Stream:  {configuration:?}");
     println!("Device:  {:?}", output.device_configuration());

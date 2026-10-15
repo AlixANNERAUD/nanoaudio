@@ -8,9 +8,11 @@ mod callback;
 mod convert;
 mod error;
 mod negotiate;
+mod resample;
 mod stream;
 
 pub use cpal;
 pub use error::*;
 pub use negotiate::DeviceConfiguration;
+pub use resample::{MAXIMUM_RATIO, Quality};
 pub use stream::*;

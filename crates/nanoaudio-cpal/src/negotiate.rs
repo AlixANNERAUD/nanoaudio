@@ -63,8 +63,7 @@ pub(crate) fn negotiate(
         return Err(Error::InvalidConfiguration);
     }
 
-    let mut best: Option<((u32, u8), DeviceConfiguration)> = None;
-    let mut nearest: Option<u32> = None;
+    let mut best: Option<((bool, u32, u32, u8), DeviceConfiguration)> = None;
 
     for range in ranges {
         if Encoding::from_cpal(range.sample_format()).is_none()
@@ -78,18 +77,9 @@ pub(crate) fn negotiate(
         let rate = requested
             .sample_rate
             .clamp(range.min_sample_rate(), range.max_sample_rate());
-
-        if rate != requested.sample_rate {
-            if nearest.is_none_or(|nearest| {
-                rate.abs_diff(requested.sample_rate) < nearest.abs_diff(requested.sample_rate)
-            }) {
-                nearest = Some(rate);
-            }
-
-            continue;
-        }
-
         let score = (
+            range.channels() < requested.channels as u16,
+            rate.abs_diff(requested.sample_rate),
             channel_cost(range.channels(), requested.channels),
             format_rank(range.sample_format(), requested.format),
         );
@@ -106,14 +96,8 @@ pub(crate) fn negotiate(
         }
     }
 
-    match (best, nearest) {
-        (Some((_, configuration)), _) => Ok(configuration),
-        (None, Some(nearest)) => Err(Error::UnsupportedSampleRate {
-            requested: requested.sample_rate,
-            nearest,
-        }),
-        (None, None) => Err(Error::UnsupportedFormat),
-    }
+    best.map(|(_, configuration)| configuration)
+        .ok_or(Error::UnsupportedFormat)
 }
 
 fn channel_cost(device: u16, requested: u8) -> u32 {
@@ -240,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_the_nearest_sample_rate() {
+    fn falls_back_to_the_nearest_sample_rate() {
         let ranges = [
             range(2, 48_000, 48_000, SampleFormat::F32),
             range(2, 88_200, 96_000, SampleFormat::F32),
@@ -249,10 +233,43 @@ mod tests {
 
         assert_eq!(
             negotiate(ranges, Configuration::new(44_100, 2, Format::I16)),
-            Err(Error::UnsupportedSampleRate {
-                requested: 44_100,
-                nearest: 48_000
-            })
+            Ok(device(48_000, 2, SampleFormat::F32))
+        );
+
+        let ranges = [
+            range(2, 44_100, 48_000, SampleFormat::F32),
+            range(2, 96_000, 96_000, SampleFormat::I16),
+        ];
+
+        assert_eq!(
+            negotiate(ranges, Configuration::new(22_050, 2, Format::I16)),
+            Ok(device(44_100, 2, SampleFormat::F32))
+        );
+    }
+
+    #[test]
+    fn prefers_the_requested_rate_over_the_format() {
+        let ranges = [
+            range(2, 48_000, 48_000, SampleFormat::I16),
+            range(2, 44_100, 44_100, SampleFormat::F32),
+        ];
+
+        assert_eq!(
+            negotiate(ranges, Configuration::new(44_100, 2, Format::I16)),
+            Ok(device(44_100, 2, SampleFormat::F32))
+        );
+    }
+
+    #[test]
+    fn keeps_the_channels_before_the_rate() {
+        let ranges = [
+            range(1, 44_100, 44_100, SampleFormat::I16),
+            range(2, 48_000, 48_000, SampleFormat::I16),
+        ];
+
+        assert_eq!(
+            negotiate(ranges, Configuration::new(44_100, 2, Format::I16)),
+            Ok(device(48_000, 2, SampleFormat::I16))
         );
     }
 
