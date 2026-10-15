@@ -201,6 +201,7 @@ impl Sample for I24 {
         Self::from_i32(truncate(value))
     }
 
+    #[inline]
     fn read_le(bytes: &[u8]) -> Self {
         Self(i32::from_le_bytes([0, bytes[0], bytes[1], bytes[2]]) >> 8)
     }

@@ -116,9 +116,8 @@ fn from_integer<S: Sample>(value: i32) -> S {
     match S::FORMAT {
         Format::U8 => S::read_le(&[value as u8 ^ 0x80]),
         Format::I16 => S::read_le(&(value as i16).to_le_bytes()),
-        Format::I24 | Format::I32 | Format::F32 => {
-            S::from_i32(value << const { padding(S::FORMAT) })
-        }
+        Format::I24 => S::read_le(&value.to_le_bytes()),
+        Format::I32 | Format::F32 => S::from_i32(value << const { padding(S::FORMAT) }),
     }
 }
 
