@@ -151,8 +151,8 @@ mod tests {
             i16::MAX
         );
         assert_eq!(
-            R::to_sample::<f32>(R::add(R::from_sample(1.0f32), R::from_sample(1.0f32))),
-            1.0
+            R::to_sample::<i16>(R::add(R::from_sample(1.0f32), R::from_sample(1.0f32))),
+            i16::MAX
         );
     }
 
@@ -176,7 +176,7 @@ mod tests {
             R::from_sample(0i16),
         ];
 
-        assert_eq!(R::to_sample::<i16>(R::average(&values)), 21_844);
+        assert_eq!(R::to_sample::<i16>(R::average(&values)), 21_845);
         assert_eq!(R::to_sample::<i16>(R::average(&[])), 0);
     }
 

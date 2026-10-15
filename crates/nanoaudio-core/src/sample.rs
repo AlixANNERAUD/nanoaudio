@@ -18,8 +18,25 @@ pub trait Sample: Copy + Default + PartialEq + Send + Sync + 'static {
     fn write_le(self, bytes: &mut [u8]);
 
     fn convert<O: Sample>(self) -> O {
-        O::from_i32(self.to_i32())
+        if const { matches!(Self::FORMAT, Format::F32) || matches!(O::FORMAT, Format::F32) } {
+            O::from_f32(self.to_f32())
+        } else {
+            O::from_i32(self.to_i32())
+        }
     }
+}
+
+const F32_SCALE: f32 = 2_147_483_648.0;
+const BELOW_HALF: f32 = 0.5 - f32::EPSILON / 4.0;
+
+#[inline]
+fn truncate(value: f32) -> i32 {
+    (value * F32_SCALE) as i32
+}
+
+#[inline]
+fn round(value: i32, shift: u32) -> i32 {
+    (value.saturating_add(1 << (shift - 1)) + (value >> 31)) >> shift
 }
 
 impl Sample for u8 {
@@ -31,7 +48,7 @@ impl Sample for u8 {
     }
 
     fn from_i32(value: i32) -> Self {
-        ((value >> 24) + 0x80) as u8
+        (round(value, 24) + 0x80) as u8
     }
 
     fn to_f32(self) -> f32 {
@@ -39,7 +56,7 @@ impl Sample for u8 {
     }
 
     fn from_f32(value: f32) -> Self {
-        (value * 128.0 + 128.0) as u8
+        Self::from_i32(truncate(value))
     }
 
     fn read_le(bytes: &[u8]) -> Self {
@@ -60,7 +77,7 @@ impl Sample for i16 {
     }
 
     fn from_i32(value: i32) -> Self {
-        (value >> 16) as i16
+        round(value, 16) as i16
     }
 
     fn to_f32(self) -> f32 {
@@ -68,7 +85,7 @@ impl Sample for i16 {
     }
 
     fn from_f32(value: f32) -> Self {
-        (value * 32_768.0) as i16
+        Self::from_i32(truncate(value))
     }
 
     fn read_le(bytes: &[u8]) -> Self {
@@ -97,7 +114,7 @@ impl Sample for i32 {
     }
 
     fn from_f32(value: f32) -> Self {
-        (value * F32_SCALE) as i32
+        (value * F32_SCALE + BELOW_HALF.copysign(value)) as i32
     }
 
     fn read_le(bytes: &[u8]) -> Self {
@@ -149,7 +166,7 @@ impl Sample for I24 {
     }
 
     fn from_i32(value: i32) -> Self {
-        Self(value >> 8)
+        Self(round(value, 8))
     }
 
     fn to_f32(self) -> f32 {
@@ -157,7 +174,7 @@ impl Sample for I24 {
     }
 
     fn from_f32(value: f32) -> Self {
-        Self::new((value * I24_SCALE) as i32)
+        Self::from_i32(truncate(value))
     }
 
     fn read_le(bytes: &[u8]) -> Self {
@@ -169,14 +186,12 @@ impl Sample for I24 {
     }
 }
 
-const F32_SCALE: f32 = 2_147_483_648.0;
-
 impl Sample for f32 {
     const FORMAT: Format = Format::F32;
     const SILENCE: Self = 0.0;
 
     fn to_i32(self) -> i32 {
-        (self * F32_SCALE) as i32
+        i32::from_f32(self)
     }
 
     fn from_i32(value: i32) -> Self {
@@ -188,7 +203,7 @@ impl Sample for f32 {
     }
 
     fn from_f32(value: f32) -> Self {
-        value.clamp(-1.0, 1.0)
+        value
     }
 
     fn read_le(bytes: &[u8]) -> Self {
@@ -228,7 +243,230 @@ mod tests {
         assert_eq!(u8::from_f32(1.0), u8::MAX);
         assert_eq!(u8::SILENCE.to_f32(), 0.0);
         assert_eq!(i32::from_f32(-2.0), i32::MIN);
-        assert_eq!(f32::from_f32(3.0), 1.0);
+        assert_eq!(f32::from_f32(3.0), 3.0);
+        assert_eq!(u8::from_f32(f32::NAN), u8::SILENCE);
+        assert_eq!(i32::from_f32(f32::NAN), 0);
+        assert_eq!(f32::NAN.to_i32(), 0);
+    }
+
+    fn nearest(value: f32, scale: f64, min: i64, max: i64) -> i64 {
+        if value.is_nan() {
+            return 0;
+        }
+        let scaled = value as f64 * scale;
+        if scaled >= max as f64 + 1.0 {
+            return max;
+        }
+        if scaled <= min as f64 - 1.0 {
+            return min;
+        }
+        let truncated = scaled as i64;
+        let fraction = scaled - truncated as f64;
+        let rounded = if fraction >= 0.5 {
+            truncated + 1
+        } else if fraction <= -0.5 {
+            truncated - 1
+        } else {
+            truncated
+        };
+        rounded.clamp(min, max)
+    }
+
+    fn floats() -> impl Iterator<Item = f32> {
+        let mut state = 0x1234_5678u32;
+        let special = [
+            0.0,
+            -0.0,
+            f32::MIN_POSITIVE,
+            -f32::MIN_POSITIVE,
+            f32::from_bits(1),
+            -f32::from_bits(1),
+            f32::from_bits(0x007F_FFFF),
+            1.0,
+            -1.0,
+            1.0 + f32::EPSILON,
+            -1.0 - f32::EPSILON,
+            1.0 - f32::EPSILON / 2.0,
+            -1.0 + f32::EPSILON / 2.0,
+            0.5,
+            -0.5,
+            BELOW_HALF,
+            -BELOW_HALF,
+            3.0,
+            -3.0,
+            f32::MAX,
+            f32::MIN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::EPSILON,
+        ];
+        let halves = (-40i32..40).flat_map(|value| {
+            let half = value as f32 + 0.5;
+            [
+                half / 128.0,
+                half / 32_768.0,
+                half / 8_388_608.0,
+                half / 2_147_483_648.0,
+                (half - 1.0 / 64.0) / 32_768.0,
+                (half + 1.0 / 64.0) / 32_768.0,
+            ]
+        });
+        let random = (0..4_096).map(move |_| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let bits = state;
+            let value = f32::from_bits(bits);
+            if value.is_nan() { 0.25 } else { value }
+        });
+        let unit = (0..4_096).map(move |index| (index as f32 / 2_048.0 - 1.0) * 0.999_9);
+        special.into_iter().chain(halves).chain(random).chain(unit)
+    }
+
+    #[test]
+    fn float_to_integer_rounds_to_nearest() {
+        for value in floats() {
+            assert_eq!(
+                i16::from_f32(value) as i64,
+                nearest(value, 32_768.0, i16::MIN as i64, i16::MAX as i64),
+                "{value:e}"
+            );
+            assert_eq!(
+                u8::from_f32(value) as i64 - 128,
+                nearest(value, 128.0, -128, 127),
+                "{value:e}"
+            );
+            assert_eq!(
+                I24::from_f32(value).value() as i64,
+                nearest(
+                    value,
+                    8_388_608.0,
+                    I24::MIN.value() as i64,
+                    I24::MAX.value() as i64
+                ),
+                "{value:e}"
+            );
+            assert_eq!(
+                i32::from_f32(value) as i64,
+                nearest(value, 2_147_483_648.0, i32::MIN as i64, i32::MAX as i64),
+                "{value:e}"
+            );
+            assert_eq!(value.to_i32(), i32::from_f32(value));
+        }
+    }
+
+    #[test]
+    fn float_halfway_cases_round_away_from_zero() {
+        assert_eq!(i16::from_f32(0.5 / 32_768.0), 1);
+        assert_eq!(i16::from_f32(-0.5 / 32_768.0), -1);
+        assert_eq!(i16::from_f32(1.5 / 32_768.0), 2);
+        assert_eq!(i16::from_f32(2.5 / 32_768.0), 3);
+        assert_eq!(i16::from_f32(-2.5 / 32_768.0), -3);
+        assert_eq!(i16::from_f32(BELOW_HALF / 32_768.0), 0);
+        assert_eq!(i16::from_f32(-BELOW_HALF / 32_768.0), 0);
+        assert_eq!(u8::from_f32(0.5 / 128.0), 0x81);
+        assert_eq!(u8::from_f32(-0.5 / 128.0), 0x7F);
+        assert_eq!(I24::from_f32(0.5 / 8_388_608.0).value(), 1);
+        assert_eq!(I24::from_f32(-0.5 / 8_388_608.0).value(), -1);
+        assert_eq!(i32::from_f32(0.5 / 2_147_483_648.0), 1);
+        assert_eq!(i32::from_f32(-0.5 / 2_147_483_648.0), -1);
+        assert_eq!(i32::from_f32(BELOW_HALF / 2_147_483_648.0), 0);
+        assert_eq!(i32::from_f32(8_388_609.0 / 2_147_483_648.0), 8_388_609);
+        assert_eq!(i32::from_f32(-8_388_609.0 / 2_147_483_648.0), -8_388_609);
+    }
+
+    #[test]
+    fn float_saturation() {
+        for value in [1.0, 1.0 + f32::EPSILON, 3.0, f32::MAX, f32::INFINITY] {
+            assert_eq!(i16::from_f32(value), i16::MAX);
+            assert_eq!(u8::from_f32(value), u8::MAX);
+            assert_eq!(I24::from_f32(value), I24::MAX);
+            assert_eq!(i32::from_f32(value), i32::MAX);
+            assert_eq!(i16::from_f32(-value), i16::MIN);
+            assert_eq!(u8::from_f32(-value), u8::MIN);
+            assert_eq!(I24::from_f32(-value), I24::MIN);
+            assert_eq!(i32::from_f32(-value), i32::MIN);
+        }
+        assert_eq!(i16::from_f32(1.0 - 0.5 / 32_768.0), i16::MAX);
+        assert_eq!(i16::from_f32(-1.0 + 0.5 / 32_768.0), i16::MIN);
+        assert_eq!(i16::from_f32(-1.0 + 1.0 / 32_768.0), i16::MIN + 1);
+    }
+
+    #[test]
+    fn float_to_float_is_identity() {
+        for value in floats() {
+            assert_eq!(value.convert::<f32>().to_bits(), value.to_bits());
+            assert_eq!(f32::from_f32(value).to_bits(), value.to_bits());
+        }
+        assert!(f32::NAN.convert::<f32>().is_nan());
+    }
+
+    #[test]
+    fn integer_float_round_trips_are_exact() {
+        for value in i16::MIN..=i16::MAX {
+            assert_eq!(i16::from_f32(value.to_f32()), value);
+            assert_eq!(value.convert::<f32>().convert::<i16>(), value);
+            assert_eq!(value.convert::<i32>().convert::<i16>(), value);
+            assert_eq!(value.convert::<I24>().convert::<i16>(), value);
+        }
+        for value in u8::MIN..=u8::MAX {
+            assert_eq!(value.convert::<f32>().convert::<u8>(), value);
+            assert_eq!(value.convert::<i16>().convert::<u8>(), value);
+            assert_eq!(value.convert::<I24>().convert::<u8>(), value);
+        }
+        for value in (I24::MIN.value()..=I24::MAX.value())
+            .step_by(4_099)
+            .chain(I24::MIN.value()..I24::MIN.value() + 256)
+            .chain(-256..256)
+            .chain(I24::MAX.value() - 256..=I24::MAX.value())
+        {
+            let sample = I24::new(value);
+            assert_eq!(sample.convert::<f32>().convert::<I24>(), sample);
+            assert_eq!(sample.convert::<i32>().convert::<I24>(), sample);
+        }
+        for value in [i32::MIN, -0x4000_0080, -1, 0, 1, 1 << 24, i32::MAX - 127] {
+            assert_eq!(value.convert::<f32>().convert::<i32>(), value);
+        }
+    }
+
+    #[test]
+    fn integer_narrowing_rounds_to_nearest() {
+        assert_eq!(i16::from_i32(0x7FFF), 0);
+        assert_eq!(i16::from_i32(0x8000), 1);
+        assert_eq!(i16::from_i32(-0x7FFF), 0);
+        assert_eq!(i16::from_i32(-0x8000), -1);
+        assert_eq!(i16::from_i32(-0x8001), -1);
+        assert_eq!(i16::from_i32(0x1_8000), 2);
+        assert_eq!(i16::from_i32(-0x1_8000), -2);
+        assert_eq!(i16::from_i32(0x1_7FFF), 1);
+        assert_eq!(i16::from_i32(-0x1_7FFF), -1);
+        assert_eq!(u8::from_i32(0x7F_FFFF), 0x80);
+        assert_eq!(u8::from_i32(0x80_0000), 0x81);
+        assert_eq!(u8::from_i32(-0x80_0000), 0x7F);
+        assert_eq!(u8::from_i32(-0x7F_FFFF), 0x80);
+        assert_eq!(I24::from_i32(0x7F).value(), 0);
+        assert_eq!(I24::from_i32(0x80).value(), 1);
+        assert_eq!(I24::from_i32(-0x80).value(), -1);
+        assert_eq!(I24::from_i32(-0x7F).value(), 0);
+        assert_eq!(0x0080i16.convert::<u8>(), 0x81);
+        assert_eq!((-0x0080i16).convert::<u8>(), 0x7F);
+        assert_eq!(I24::new(0x80).convert::<i16>(), 1);
+        assert_eq!(I24::new(-0x80).convert::<i16>(), -1);
+    }
+
+    #[test]
+    fn integer_narrowing_saturates() {
+        for value in [i32::MAX, i32::MAX - 1, 0x7FFF_8000, 0x7FFF_7FFF] {
+            assert_eq!(i16::from_i32(value), i16::MAX);
+        }
+        for value in [i32::MAX, 0x7F80_0000, 0x7F7F_FFFF] {
+            assert_eq!(u8::from_i32(value), u8::MAX);
+        }
+        for value in [i32::MAX, 0x7FFF_FF80, 0x7FFF_FF7F] {
+            assert_eq!(I24::from_i32(value), I24::MAX);
+        }
+        assert_eq!(i16::from_i32(i32::MIN), i16::MIN);
+        assert_eq!(u8::from_i32(i32::MIN), u8::MIN);
+        assert_eq!(I24::from_i32(i32::MIN), I24::MIN);
+        assert_eq!(i16::from_i32(i32::MIN + 1), i16::MIN);
     }
 
     #[test]
