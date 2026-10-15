@@ -1,14 +1,15 @@
 use core::marker::PhantomData;
 
-use crate::{Configuration, Encoding, Format, Result, Sample, WavHeader};
+use crate::{Configuration, Encoding, Format, I24, Result, Sample, WavHeader};
 
-use super::{Decoder, G711, ImaAdpcm, Law, Progress};
+use super::{Decoder, G711, ImaAdpcm, Law, MsAdpcm, Progress};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Codec {
     Pcm(Format),
     G711(G711),
     ImaAdpcm(ImaAdpcm),
+    MsAdpcm(MsAdpcm),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +35,17 @@ impl<S: Sample> WavDecoder<S> {
             Encoding::ImaAdpcm { block_align } => {
                 Codec::ImaAdpcm(ImaAdpcm::new(sample_rate, channels, block_align)?)
             }
+            Encoding::MsAdpcm {
+                block_align,
+                samples_per_block,
+                coefficients,
+            } => Codec::MsAdpcm(MsAdpcm::with_coefficients(
+                sample_rate,
+                channels,
+                block_align,
+                samples_per_block,
+                coefficients,
+            )?),
         };
 
         Ok(Self {
@@ -57,6 +69,7 @@ impl<S: Sample> WavDecoder<S> {
             *output = match format {
                 Format::U8 => u8::read_le(bytes).convert(),
                 Format::I16 => i16::read_le(bytes).convert(),
+                Format::I24 => I24::read_le(bytes).convert(),
                 Format::I32 => i32::read_le(bytes).convert(),
                 Format::F32 => f32::read_le(bytes).convert(),
             };
@@ -81,6 +94,13 @@ impl<S: Sample> Decoder for WavDecoder<S> {
         match &self.codec {
             Codec::Pcm(_) | Codec::G711(_) => self.channels as usize,
             Codec::ImaAdpcm(codec) => codec.minimum_output(),
+            Codec::MsAdpcm(codec) => codec.minimum_output(),
+        }
+    }
+
+    fn finish(&mut self) {
+        if let Codec::ImaAdpcm(codec) = &mut self.codec {
+            codec.finish();
         }
     }
 
@@ -93,6 +113,7 @@ impl<S: Sample> Decoder for WavDecoder<S> {
             }
             Codec::G711(codec) => codec.decode_into(input, output),
             Codec::ImaAdpcm(codec) => codec.decode_into(input, output),
+            Codec::MsAdpcm(codec) => codec.decode_into(input, output),
         }
     }
 }

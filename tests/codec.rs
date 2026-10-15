@@ -308,3 +308,136 @@ fn wav_decoder_pcm_into_pipeline() {
     assert_eq!(i16::from_le_bytes([output[0], output[1]]), -16_384);
     assert_eq!(i16::from_le_bytes([output[10], output[11]]), 0x3F80);
 }
+
+#[test]
+fn ima_adpcm_decodes_partial_block_after_finish() {
+    let mut codec = ImaAdpcm::new(8_000, 1, 12).unwrap();
+    let mut output = [0i16; 17];
+    let block = [
+        0x10, 0x00, 0x20, 0x00, 0x21, 0x43, 0x65, 0x87, 0x9A, 0xBC, 0xDE,
+    ];
+
+    assert!(codec.decode(&block, &mut output).unwrap().is_stalled());
+
+    codec.finish();
+    assert!(codec.decode(&block[..3], &mut output).unwrap().is_stalled());
+
+    let progress = codec.decode(&block, &mut output).unwrap();
+    assert_eq!((progress.consumed, progress.produced), (11, 9));
+
+    let mut state = ImaAdpcmState::new(0x10, 0x20);
+    let mut expected = vec![0x10];
+    for byte in &block[4..8] {
+        expected.push(state.decode(byte & 0x0F));
+        expected.push(state.decode(byte >> 4));
+    }
+    assert_eq!(output[..9], expected);
+
+    let progress = codec.decode(&block[..4], &mut output).unwrap();
+    assert_eq!((progress.consumed, progress.produced), (4, 1));
+    assert_eq!(output[0], 0x10);
+}
+
+#[test]
+fn ima_adpcm_partial_block_waits_for_output() {
+    let mut codec = ImaAdpcm::new(8_000, 2, 24).unwrap();
+    let input = [0u8; 24 + 16];
+    let mut output = [0i16; 34];
+
+    codec.finish();
+
+    let progress = codec.decode(&input, &mut output).unwrap();
+    assert_eq!((progress.consumed, progress.produced), (24, 34));
+
+    let progress = codec.decode(&input[24..], &mut output).unwrap();
+    assert_eq!((progress.consumed, progress.produced), (16, 18));
+}
+
+fn decode_until_finished<S: nanoaudio::Sample>(file: &[u8], window: usize) -> Vec<S> {
+    let header = nanoaudio::WavHeader::parse(file).unwrap();
+    let mut decoder = WavDecoder::<S>::new(&header).unwrap();
+    let end = header.data_offset + header.data_size as usize;
+    let mut input = &file[header.data_offset..end];
+    let mut output = vec![S::SILENCE; decoder.minimum_output() * 2];
+    let mut decoded = Vec::new();
+    let mut finished = false;
+
+    loop {
+        let length = window.min(input.len());
+        let progress = decoder.decode(&input[..length], &mut output).unwrap();
+        input = &input[progress.consumed..];
+        decoded.extend_from_slice(&output[..progress.produced]);
+
+        if progress.is_stalled() {
+            assert_eq!(length, input.len());
+
+            if finished {
+                break;
+            }
+
+            decoder.finish();
+            finished = true;
+        }
+    }
+
+    assert!(input.is_empty());
+    assert_eq!(
+        decoded.len(),
+        header.frames() * header.configuration.channels as usize
+    );
+    decoded
+}
+
+fn ima_adpcm_wav_matches_libsndfile(
+    file: &[u8],
+    truncated: &[u8],
+    decoded: &[u8],
+    channels: usize,
+    groups: usize,
+) {
+    let expected = samples(decoded);
+    assert_eq!(expected.len(), 3 * 505 * channels);
+
+    for window in [512, 700, 1500, usize::MAX] {
+        assert_eq!(decode_until_finished::<i16>(file, window), expected);
+    }
+
+    let present = (2 * 505 + 1 + groups * 8) * channels;
+    let header = nanoaudio::WavHeader::parse(truncated).unwrap();
+    assert_eq!(header.frames() * channels, present);
+
+    for window in [512, 700, 1500, usize::MAX] {
+        assert_eq!(
+            decode_until_finished::<i16>(truncated, window),
+            expected[..present]
+        );
+    }
+
+    let floats: Vec<f32> = expected[..present]
+        .iter()
+        .map(|sample| *sample as f32 / 32_768.0)
+        .collect();
+    assert_eq!(decode_until_finished::<f32>(truncated, 700), floats);
+}
+
+#[test]
+fn ima_adpcm_mono_wav_matches_libsndfile() {
+    ima_adpcm_wav_matches_libsndfile(
+        include_bytes!("data/ima_adpcm_mono.wav"),
+        include_bytes!("data/ima_adpcm_mono_truncated.wav"),
+        include_bytes!("data/ima_adpcm_mono_decoded.bin"),
+        1,
+        13,
+    );
+}
+
+#[test]
+fn ima_adpcm_stereo_wav_matches_libsndfile() {
+    ima_adpcm_wav_matches_libsndfile(
+        include_bytes!("data/ima_adpcm_stereo.wav"),
+        include_bytes!("data/ima_adpcm_stereo_truncated.wav"),
+        include_bytes!("data/ima_adpcm_stereo_decoded.bin"),
+        2,
+        9,
+    );
+}

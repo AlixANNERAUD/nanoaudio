@@ -1,11 +1,15 @@
+use crate::codec::{MS_ADPCM_MAXIMUM_COEFFICIENTS, MsAdpcm, MsAdpcmCoefficients};
 use crate::{Configuration, Error, Format, Result};
 
 const RIFF_HEADER_SIZE: usize = 12;
 const CHUNK_HEADER_SIZE: usize = 8;
 const FORMAT_CHUNK_MINIMUM_SIZE: usize = 16;
-const FORMAT_CHUNK_EXTENSIBLE_SIZE: usize = 40;
+const MS_ADPCM_COEFFICIENTS_OFFSET: usize = 22;
+const FORMAT_CHUNK_MAXIMUM_SIZE: usize =
+    MS_ADPCM_COEFFICIENTS_OFFSET + 4 * MS_ADPCM_MAXIMUM_COEFFICIENTS;
 
 const FORMAT_PCM: u16 = 0x0001;
+const FORMAT_MS_ADPCM: u16 = 0x0002;
 const FORMAT_IEEE_FLOAT: u16 = 0x0003;
 const FORMAT_A_LAW: u16 = 0x0006;
 const FORMAT_MU_LAW: u16 = 0x0007;
@@ -17,7 +21,14 @@ pub enum Encoding {
     Pcm,
     ALaw,
     MuLaw,
-    ImaAdpcm { block_align: u16 },
+    ImaAdpcm {
+        block_align: u16,
+    },
+    MsAdpcm {
+        block_align: u16,
+        samples_per_block: u16,
+        coefficients: MsAdpcmCoefficients,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -49,7 +60,7 @@ impl WavHeader {
 
             match identifier {
                 b"fmt " => {
-                    let length = (size as usize).min(FORMAT_CHUNK_EXTENSIBLE_SIZE);
+                    let length = (size as usize).min(FORMAT_CHUNK_MAXIMUM_SIZE);
                     let chunk = bytes
                         .get(body..body.saturating_add(length))
                         .ok_or(Error::Incomplete)?;
@@ -83,10 +94,19 @@ impl WavHeader {
             Encoding::Pcm => self.configuration.bytes_to_frames(size),
             Encoding::ALaw | Encoding::MuLaw => size / channels,
             Encoding::ImaAdpcm { block_align } => {
-                let groups = (block_align as usize - 4 * channels) / (4 * channels);
+                let block = block_align as usize;
+                let samples = |length: usize| match length.checked_sub(4 * channels) {
+                    Some(data) => data / (4 * channels) * 8 + 1,
+                    None => 0,
+                };
 
-                size / block_align as usize * (groups * 8 + 1)
+                size / block * samples(block) + samples(size % block)
             }
+            Encoding::MsAdpcm {
+                block_align,
+                samples_per_block,
+                ..
+            } => size / block_align as usize * samples_per_block as usize,
         }
     }
 }
@@ -111,11 +131,13 @@ fn parse_format(chunk: &[u8]) -> Result<(Configuration, Encoding)> {
     let (format, encoding) = match (tag, bits_per_sample) {
         (FORMAT_PCM, 8) => (Format::U8, Encoding::Pcm),
         (FORMAT_PCM, 16) => (Format::I16, Encoding::Pcm),
+        (FORMAT_PCM, 24) => (Format::I24, Encoding::Pcm),
         (FORMAT_PCM, 32) => (Format::I32, Encoding::Pcm),
         (FORMAT_IEEE_FLOAT, 32) => (Format::F32, Encoding::Pcm),
         (FORMAT_A_LAW, 8) => (Format::I16, Encoding::ALaw),
         (FORMAT_MU_LAW, 8) => (Format::I16, Encoding::MuLaw),
         (FORMAT_IMA_ADPCM, 4) => (Format::I16, Encoding::ImaAdpcm { block_align }),
+        (FORMAT_MS_ADPCM, 4) => (Format::I16, parse_ms_adpcm(chunk, block_align)?),
         _ => return Err(Error::UnsupportedFormat),
     };
 
@@ -134,7 +156,57 @@ fn parse_format(chunk: &[u8]) -> Result<(Configuration, Encoding)> {
         }
     }
 
+    if let Encoding::MsAdpcm {
+        block_align,
+        samples_per_block,
+        coefficients,
+    } = encoding
+    {
+        MsAdpcm::with_coefficients(
+            sample_rate,
+            channels,
+            block_align,
+            samples_per_block,
+            coefficients,
+        )
+        .map_err(|error| match error {
+            Error::TooManyChannels => Error::UnsupportedFormat,
+            _ => Error::InvalidHeader,
+        })?;
+    }
+
     Ok((Configuration::new(sample_rate, channels, format), encoding))
+}
+
+fn parse_ms_adpcm(chunk: &[u8], block_align: u16) -> Result<Encoding> {
+    let extension = chunk
+        .get(FORMAT_CHUNK_MINIMUM_SIZE..MS_ADPCM_COEFFICIENTS_OFFSET)
+        .ok_or(Error::InvalidHeader)?;
+    let samples_per_block = read_u16(&extension[2..4]);
+    let count = read_u16(&extension[4..6]) as usize;
+
+    if count > MS_ADPCM_MAXIMUM_COEFFICIENTS {
+        return Err(Error::UnsupportedFormat);
+    }
+
+    let bytes = chunk
+        .get(MS_ADPCM_COEFFICIENTS_OFFSET..MS_ADPCM_COEFFICIENTS_OFFSET + 4 * count)
+        .ok_or(Error::InvalidHeader)?;
+    let mut pairs = [[0i16; 2]; MS_ADPCM_MAXIMUM_COEFFICIENTS];
+
+    for (pair, bytes) in pairs.iter_mut().zip(bytes.as_chunks::<4>().0) {
+        *pair = [
+            i16::from_le_bytes([bytes[0], bytes[1]]),
+            i16::from_le_bytes([bytes[2], bytes[3]]),
+        ];
+    }
+
+    Ok(Encoding::MsAdpcm {
+        block_align,
+        samples_per_block,
+        coefficients: MsAdpcmCoefficients::new(&pairs[..count])
+            .map_err(|_| Error::InvalidHeader)?,
+    })
 }
 
 fn read_u16(bytes: &[u8]) -> u16 {
@@ -218,6 +290,32 @@ mod tests {
     }
 
     #[test]
+    fn twenty_four_bit() {
+        let bytes = header(FORMAT_PCM, 2, 48_000, 24, &[]);
+        let header = WavHeader::parse(&bytes).unwrap();
+
+        assert_eq!(
+            header.configuration,
+            Configuration::new(48_000, 2, Format::I24)
+        );
+        assert_eq!(header.configuration.frame_size(), 6);
+        assert_eq!(header.frames(), 1);
+    }
+
+    #[test]
+    fn twenty_four_bit_extensible() {
+        let mut extra = std::vec![22, 0, 24, 0, 3, 0, 0, 0];
+        extra.extend_from_slice(&FORMAT_PCM.to_le_bytes());
+        extra.extend_from_slice(&[0; 14]);
+        let bytes = header(FORMAT_EXTENSIBLE, 1, 96_000, 24, &extra);
+
+        assert_eq!(
+            WavHeader::parse(&bytes).unwrap().configuration,
+            Configuration::new(96_000, 1, Format::I24)
+        );
+    }
+
+    #[test]
     fn compressed() {
         let a_law = WavHeader::parse(&header(FORMAT_A_LAW, 1, 8_000, 8, &[0, 0])).unwrap();
         assert_eq!(a_law.encoding, Encoding::ALaw);
@@ -240,11 +338,20 @@ mod tests {
         let adpcm = WavHeader::parse(&bytes).unwrap();
         assert_eq!(adpcm.encoding, Encoding::ImaAdpcm { block_align: 256 });
         assert_eq!(adpcm.frames(), 2 * 505);
+
+        for (remainder, frames) in [(0, 0), (3, 0), (4, 1), (11, 9), (12, 17), (255, 1 + 62 * 8)] {
+            let partial = WavHeader {
+                data_size: 512 + remainder,
+                ..adpcm
+            };
+
+            assert_eq!(partial.frames(), 2 * 505 + frames);
+        }
     }
 
     #[test]
     fn unsupported() {
-        let bytes = header(FORMAT_PCM, 2, 44_100, 24, &[]);
+        let bytes = header(FORMAT_PCM, 2, 44_100, 20, &[]);
 
         assert_eq!(WavHeader::parse(&bytes), Err(Error::UnsupportedFormat));
     }

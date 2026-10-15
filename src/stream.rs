@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use crate::{DefaultRepresentation, Error, Format, Representation, Result, Sample, Volume};
+use crate::{DefaultRepresentation, Error, Format, I24, Representation, Result, Sample, Volume};
 
 pub const MAXIMUM_CHANNELS: usize = 8;
 
@@ -93,6 +93,7 @@ pub trait Stream {
         match format {
             Format::U8 => process_bytes::<Self, u8, _>(self, output, |_, value| value),
             Format::I16 => process_bytes::<Self, i16, _>(self, output, |_, value| value),
+            Format::I24 => process_bytes::<Self, I24, _>(self, output, |_, value| value),
             Format::I32 => process_bytes::<Self, i32, _>(self, output, |_, value| value),
             Format::F32 => process_bytes::<Self, f32, _>(self, output, |_, value| value),
         }
@@ -105,6 +106,7 @@ pub trait Stream {
         match format {
             Format::U8 => process_bytes::<Self, u8, _>(self, output, add_existing::<Self, u8>),
             Format::I16 => process_bytes::<Self, i16, _>(self, output, add_existing::<Self, i16>),
+            Format::I24 => process_bytes::<Self, I24, _>(self, output, add_existing::<Self, I24>),
             Format::I32 => process_bytes::<Self, i32, _>(self, output, add_existing::<Self, i32>),
             Format::F32 => process_bytes::<Self, f32, _>(self, output, add_existing::<Self, f32>),
         }
@@ -233,6 +235,7 @@ impl<'a, R: Representation> ByteSource<'a, R> {
         match format {
             Format::U8 => R::from_sample(u8::read_le(bytes)),
             Format::I16 => R::from_sample(i16::read_le(bytes)),
+            Format::I24 => R::from_sample(I24::read_le(bytes)),
             Format::I32 => R::from_sample(i32::read_le(bytes)),
             Format::F32 => R::from_sample(f32::read_le(bytes)),
         }

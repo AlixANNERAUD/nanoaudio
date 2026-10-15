@@ -1,4 +1,4 @@
-use crate::{Format, Sample};
+use crate::{Format, I24, Sample};
 
 pub fn convert<I: Sample, O: Sample>(input: &[I], output: &mut [O]) -> usize {
     let count = input.len().min(output.len());
@@ -19,6 +19,7 @@ pub fn convert_bytes(
     match input_format {
         Format::U8 => convert_bytes_from::<u8>(input, output, output_format),
         Format::I16 => convert_bytes_from::<i16>(input, output, output_format),
+        Format::I24 => convert_bytes_from::<I24>(input, output, output_format),
         Format::I32 => convert_bytes_from::<i32>(input, output, output_format),
         Format::F32 => convert_bytes_from::<f32>(input, output, output_format),
     }
@@ -28,6 +29,7 @@ fn convert_bytes_from<I: Sample>(input: &[u8], output: &mut [u8], output_format:
     match output_format {
         Format::U8 => convert_bytes_typed::<I, u8>(input, output),
         Format::I16 => convert_bytes_typed::<I, i16>(input, output),
+        Format::I24 => convert_bytes_typed::<I, I24>(input, output),
         Format::I32 => convert_bytes_typed::<I, i32>(input, output),
         Format::F32 => convert_bytes_typed::<I, f32>(input, output),
     }
