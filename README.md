@@ -14,6 +14,20 @@ Allocation-free, `no_std` building blocks for PCM audio on microcontrollers and 
 - Single-producer/single-consumer ring buffer with contiguous grants, for DMA and audio callbacks
 - WAV header parser that works on a partial buffer and reports when it needs more bytes
 - Codecs (`codec` module), behind allocation-free `Decoder` and `Encoder` traits: G.711 A-law and µ-law, IMA ADPCM (WAV block layout), and `WavDecoder` for PCM, A-law, µ-law and IMA ADPCM WAV files, writing any sample type
+- MP3 decoding (`mp3` feature) with `Mp3Decoder`, built on [`nanomp3-core`](https://crates.io/crates/nanomp3-core)
+
+## Codecs
+
+Decoders implement `codec::Decoder`: call `decode(input, output)` with whatever input is available and an output of at least `minimum_output()` samples. It returns how many input bytes were consumed and how many samples were produced, so it fits a ring buffer or a file read loop. Call `finish()` once the end of the input has been reached, so that decoders that wait for more input (MP3) drain what is left.
+
+| Codec | Type | Feature | Memory | Notes |
+|---|---|---|---|---|
+| PCM WAV | `WavDecoder` | | a few bytes | Any `Format`, converted to the output sample type |
+| G.711 A-law / µ-law | `G711`, `WavDecoder` | | a few bytes | Encoder and decoder, bit-exact with the reference implementation |
+| IMA ADPCM | `ImaAdpcm`, `WavDecoder` | | 40 bytes | Encoder and decoder, WAV block layout, whole blocks only |
+| MP3 | `Mp3Decoder` | `mp3` | ~22 KiB, plus input (16 KiB by default) and one frame of output | Decodes in floating point; `mp3-simd` enables SIMD, `mpeg-layer12` adds MP1/MP2 |
+
+The output of a decoder can be fed to `samples(...)` to continue in a pipeline.
 
 ## Number representation
 

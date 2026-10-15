@@ -112,7 +112,7 @@ impl ImaAdpcm {
             return Err(Error::TooManyChannels);
         }
 
-        if sample_rate == 0 || block <= header || (block - header) % group != 0 {
+        if sample_rate == 0 || block <= header || !(block - header).is_multiple_of(group) {
             return Err(Error::InvalidParameter);
         }
 
@@ -170,7 +170,12 @@ impl ImaAdpcm {
         let channels = self.channels as usize;
         let (headers, data) = block.split_at(CHANNEL_HEADER_SIZE * channels);
 
-        for (channel, header) in headers.chunks_exact(CHANNEL_HEADER_SIZE).enumerate() {
+        for (channel, header) in headers
+            .as_chunks::<CHANNEL_HEADER_SIZE>()
+            .0
+            .iter()
+            .enumerate()
+        {
             let predictor = i16::from_le_bytes([header[0], header[1]]);
 
             self.states[channel] = ImaAdpcmState::new(predictor, header[2]);
@@ -178,7 +183,7 @@ impl ImaAdpcm {
         }
 
         for (group, bytes) in data.chunks_exact(CHANNEL_GROUP_SIZE * channels).enumerate() {
-            for (channel, bytes) in bytes.chunks_exact(CHANNEL_GROUP_SIZE).enumerate() {
+            for (channel, bytes) in bytes.as_chunks::<CHANNEL_GROUP_SIZE>().0.iter().enumerate() {
                 let state = &mut self.states[channel];
                 let first = 1 + group * SAMPLES_PER_GROUP;
 
@@ -196,7 +201,12 @@ impl ImaAdpcm {
         let channels = self.channels as usize;
         let (headers, data) = block.split_at_mut(CHANNEL_HEADER_SIZE * channels);
 
-        for (channel, header) in headers.chunks_exact_mut(CHANNEL_HEADER_SIZE).enumerate() {
+        for (channel, header) in headers
+            .as_chunks_mut::<CHANNEL_HEADER_SIZE>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
             let state = &mut self.states[channel];
             *state = ImaAdpcmState::new(input[channel], state.index);
 
@@ -209,7 +219,12 @@ impl ImaAdpcm {
             .chunks_exact_mut(CHANNEL_GROUP_SIZE * channels)
             .enumerate()
         {
-            for (channel, bytes) in bytes.chunks_exact_mut(CHANNEL_GROUP_SIZE).enumerate() {
+            for (channel, bytes) in bytes
+                .as_chunks_mut::<CHANNEL_GROUP_SIZE>()
+                .0
+                .iter_mut()
+                .enumerate()
+            {
                 let state = &mut self.states[channel];
                 let first = 1 + group * SAMPLES_PER_GROUP;
 

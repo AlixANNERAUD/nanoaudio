@@ -5,7 +5,9 @@ use nanoaudio::codec::{
 
 fn samples(bytes: &[u8]) -> Vec<i16> {
     bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
         .collect()
 }
@@ -123,7 +125,7 @@ fn expected_blocks(input: &[i16], channels: usize, samples_per_block: usize) -> 
 
         for group in 0..(samples_per_block - 1) / 8 {
             for channel_nibbles in &nibbles {
-                for pair in channel_nibbles[group * 8..group * 8 + 8].chunks_exact(2) {
+                for pair in channel_nibbles[group * 8..group * 8 + 8].as_chunks::<2>().0 {
                     output.push(pair[0] | (pair[1] << 4));
                 }
             }

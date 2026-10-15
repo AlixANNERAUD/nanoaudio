@@ -1,9 +1,13 @@
 mod g711;
 mod ima_adpcm;
+#[cfg(feature = "mp3")]
+mod mp3;
 mod wav;
 
 pub use g711::*;
 pub use ima_adpcm::*;
+#[cfg(feature = "mp3")]
+pub use mp3::*;
 pub use wav::*;
 
 use crate::{Configuration, Result, Sample};
@@ -30,6 +34,12 @@ pub trait Decoder {
     fn configuration(&self) -> Option<Configuration>;
 
     fn minimum_output(&self) -> usize;
+
+    fn minimum_input(&self) -> usize {
+        1
+    }
+
+    fn finish(&mut self) {}
 
     fn decode(&mut self, input: &[u8], output: &mut [Self::Sample]) -> Result<Progress>;
 }

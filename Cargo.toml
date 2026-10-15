@@ -2,7 +2,7 @@
 name = "nanoaudio"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89"
 authors = ["Alix ANNERAUD <alix@anneraud.fr>"]
 description = "Allocation-free, no_std building blocks for PCM audio: formats, conversion, volume, mixing and buffering"
 repository = "https://github.com/AlixANNERAUD/nanoaudio"
@@ -12,7 +12,11 @@ keywords = ["audio", "pcm", "no_std", "embedded", "mixer"]
 categories = ["embedded", "no-std", "multimedia::audio"]
 
 [dependencies]
+nanomp3-core = { version = "0.2", default-features = false, optional = true }
 
 [features]
 fixed = []
 float = []
+mp3 = ["dep:nanomp3-core"]
+mp3-simd = ["mp3", "nanomp3-core/wide"]
+mpeg-layer12 = ["mp3", "nanomp3-core/layer12"]

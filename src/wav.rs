@@ -129,7 +129,7 @@ fn parse_format(chunk: &[u8]) -> Result<(Configuration, Encoding)> {
         let header = 4 * channels as usize;
         let block = block_align as usize;
 
-        if block <= header || (block - header) % header != 0 {
+        if block <= header || !(block - header).is_multiple_of(header) {
             return Err(Error::InvalidHeader);
         }
     }
