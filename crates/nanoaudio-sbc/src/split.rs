@@ -181,28 +181,34 @@ fn synthesize_with<const SUBBANDS: usize>(
 
     newest[SUBBANDS / 2] = 0;
 
+    let mut window = [0i32; SYNTHESIS_BLOCKS * MAXIMUM_SUBBANDS];
+
+    for (block, offset) in window.as_chunks_mut::<SUBBANDS>().0.iter_mut().zip(offsets) {
+        block.copy_from_slice(&state.values[offset..][..SUBBANDS]);
+    }
+
     let shift = PROTOTYPE_FRACTION + SUBBAND_FRACTION - SUBBANDS.trailing_zeros();
 
     for (index, output) in output.iter_mut().enumerate() {
-        let value = (-window::<SUBBANDS>(&state.values, &offsets, prototype, index)
-            + (1 << (shift - 1)))
-            >> shift;
+        let value =
+            (-convolve::<SUBBANDS>(&window, prototype, index) + (1 << (shift - 1))) >> shift;
 
         *output = value.clamp(i16::MIN as i64, i16::MAX as i64) as i16;
     }
 }
 
 #[inline(never)]
-fn window<const SUBBANDS: usize>(
-    values: &[i32],
-    offsets: &[usize; SYNTHESIS_BLOCKS],
+fn convolve<const SUBBANDS: usize>(
+    window: &[i32; SYNTHESIS_BLOCKS * MAXIMUM_SUBBANDS],
     prototype: &[Halves],
     index: usize,
 ) -> i64 {
     let mut sum = Sum::default();
 
-    for (block, offset) in offsets.iter().enumerate() {
-        sum.add(prototype[block * SUBBANDS + index], values[offset + index]);
+    for block in 0..SYNTHESIS_BLOCKS {
+        let position = block * SUBBANDS + index;
+
+        sum.add(prototype[position], window[position]);
     }
 
     sum.total()
