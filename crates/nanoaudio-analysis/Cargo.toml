@@ -1,0 +1,20 @@
+[package]
+name = "nanoaudio-analysis"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Allocation-free audio analyzers for nanoaudio pipelines and sample slices."
+documentation = "https://docs.rs/nanoaudio-analysis"
+readme = "README.md"
+keywords = ["audio", "no-std", "embedded", "meter", "analysis"]
+categories = ["multimedia::audio", "embedded", "no-std", "no-std::no-alloc"]
+
+[dependencies]
+nanoaudio-core.workspace = true
+nanoaudio-dsp.workspace = true
+
+[lints]
+workspace = true

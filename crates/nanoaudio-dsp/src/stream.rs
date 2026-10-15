@@ -3,7 +3,7 @@ use core::marker::PhantomData;
 use nanoaudio_core::{Error, Format, I24, MAXIMUM_CHANNELS, Result, Sample};
 
 use crate::bytes::Bytes;
-use crate::{DefaultRepresentation, Dither, Representation, Volume};
+use crate::{Analyzer, DefaultRepresentation, Dither, Representation, Tap, Volume};
 
 type Value<S> = <<S as Stream>::Representation as Representation>::Value;
 
@@ -83,6 +83,17 @@ pub trait Stream {
             stream: self,
             function,
         }
+    }
+
+    /// Gives every frame to `analyzer` and passes it on unchanged.
+    ///
+    /// Pass `&mut analyzer` to keep the analyzer and read its results once the pipeline is done, for example after each buffer.
+    fn tap<A>(self, analyzer: A) -> Tap<Self, A>
+    where
+        Self: Sized,
+        A: Analyzer<Self::Representation>,
+    {
+        Tap::new(self, analyzer)
     }
 
     /// Adds triangular (TPDF) dither of one LSB of `target`, seeded with `seed`.

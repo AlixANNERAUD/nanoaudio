@@ -20,6 +20,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 nanoaudio-core.workspace = true
 nanoaudio-buffer = { workspace = true, optional = true }
 nanoaudio-dsp = { workspace = true, optional = true }
+nanoaudio-analysis = { workspace = true, optional = true }
 nanoaudio-g711 = { workspace = true, optional = true }
 nanoaudio-adpcm = { workspace = true, optional = true }
 nanoaudio-qoa = { workspace = true, optional = true }
@@ -32,9 +33,10 @@ nanoaudio-aiff = { workspace = true, optional = true }
 nanoaudio-metadata = { workspace = true, optional = true, features = ["core"] }
 
 [features]
-default = ["buffer", "dsp", "g711", "adpcm", "qoa", "flac", "g722", "sbc", "wav", "aiff", "metadata"]
+default = ["buffer", "dsp", "analysis", "g711", "adpcm", "qoa", "flac", "g722", "sbc", "wav", "aiff", "metadata"]
 buffer = ["dep:nanoaudio-buffer"]
 dsp = ["dep:nanoaudio-dsp"]
+analysis = ["dsp", "dep:nanoaudio-analysis"]
 fixed = ["dsp", "nanoaudio-dsp/fixed"]
 float = ["dsp", "nanoaudio-dsp/float"]
 g711 = ["dep:nanoaudio-g711"]

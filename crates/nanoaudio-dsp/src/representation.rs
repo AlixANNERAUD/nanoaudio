@@ -27,7 +27,9 @@ impl Default for RepresentationKind {
 /// Every function that processes audio is generic over it, so the choice costs nothing per sample.
 pub trait Representation: Copy + Default + Send + Sync + 'static {
     /// The value a sample is converted to for processing.
-    type Value: Copy;
+    ///
+    /// Values compare by level, so a larger value is louder in the positive direction.
+    type Value: Copy + PartialOrd;
     /// The value a [`Volume`] is converted to.
     type Gain: Copy;
 
@@ -35,12 +37,19 @@ pub trait Representation: Copy + Default + Send + Sync + 'static {
     const KIND: RepresentationKind;
     /// The value of silence.
     const SILENCE: Self::Value;
+    /// The largest value a sample can be converted to, full scale in the positive direction.
+    ///
+    /// A [`magnitude`](Self::magnitude) at or above it has reached full scale.
+    const FULL_SCALE: Self::Value;
 
     /// Converts a sample to a value.
     fn from_sample<S: Sample>(sample: S) -> Self::Value;
 
     /// Converts a value back to a sample, rounding to the nearest value and saturating.
     fn to_sample<S: Sample>(value: Self::Value) -> S;
+
+    /// Returns the absolute value of `value`, saturating at [`FULL_SCALE`](Self::FULL_SCALE) for the most negative fixed-point value.
+    fn magnitude(value: Self::Value) -> Self::Value;
 
     /// Converts a volume to a gain.
     fn gain(volume: Volume) -> Self::Gain;
@@ -181,6 +190,7 @@ impl Representation for Fixed {
 
     const KIND: RepresentationKind = RepresentationKind::Fixed;
     const SILENCE: i32 = 0;
+    const FULL_SCALE: i32 = i32::MAX;
 
     #[inline]
     fn from_sample<S: Sample>(sample: S) -> i32 {
@@ -190,6 +200,11 @@ impl Representation for Fixed {
     #[inline]
     fn to_sample<S: Sample>(value: i32) -> S {
         S::from_i32(value)
+    }
+
+    #[inline]
+    fn magnitude(value: i32) -> i32 {
+        value.saturating_abs()
     }
 
     #[inline]
@@ -258,6 +273,7 @@ impl Representation for Float {
 
     const KIND: RepresentationKind = RepresentationKind::Float;
     const SILENCE: f32 = 0.0;
+    const FULL_SCALE: f32 = 1.0;
 
     #[inline]
     fn from_sample<S: Sample>(sample: S) -> f32 {
@@ -267,6 +283,11 @@ impl Representation for Float {
     #[inline]
     fn to_sample<S: Sample>(value: f32) -> S {
         S::from_f32(value)
+    }
+
+    #[inline]
+    fn magnitude(value: f32) -> f32 {
+        value.abs()
     }
 
     #[inline]

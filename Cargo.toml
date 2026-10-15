@@ -13,6 +13,7 @@ license = "MIT"
 nanoaudio-core = { version = "0.1.0", path = "crates/nanoaudio-core" }
 nanoaudio-buffer = { version = "0.1.0", path = "crates/nanoaudio-buffer" }
 nanoaudio-dsp = { version = "0.1.0", path = "crates/nanoaudio-dsp" }
+nanoaudio-analysis = { version = "0.1.0", path = "crates/nanoaudio-analysis" }
 nanoaudio-g711 = { version = "0.1.0", path = "crates/nanoaudio-g711" }
 nanoaudio-adpcm = { version = "0.1.0", path = "crates/nanoaudio-adpcm" }
 nanoaudio-qoa = { version = "0.1.0", path = "crates/nanoaudio-qoa" }

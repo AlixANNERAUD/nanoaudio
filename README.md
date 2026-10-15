@@ -39,6 +39,7 @@ Every feature except MP3 is enabled by default. With `default-features = false`,
 | Feature        | Enables                                                                                                   |
 | -------------- | --------------------------------------------------------------------------------------------------------- |
 | `dsp`          | Conversion, volume, mixing and pipelines (`nanoaudio-dsp`).                                                |
+| `analysis`     | The `analysis` module of analyzers for `tap` (`nanoaudio-analysis`). Implies `dsp`.                     |
 | `buffer`       | `RingBuffer`, `Producer` and `Consumer` (`nanoaudio-buffer`).                                              |
 | `g711`         | `codec::G711` and the A-law and µ-law functions (`nanoaudio-g711`).                                        |
 | `adpcm`        | `codec::ImaAdpcm` and `codec::MsAdpcm` (`nanoaudio-adpcm`).                                                |
@@ -55,7 +56,7 @@ Every feature except MP3 is enabled by default. With `default-features = false`,
 | `fixed`        | Forces fixed-point processing by default. See [Integer or Floating Point](#integer-or-floating-point).    |
 | `float`        | Forces floating-point processing by default. If `fixed` is also enabled, `fixed` takes precedence.        |
 
-`nanoaudio` re-exports a set of smaller crates, one per codec or building block, which can also be used on their own: [`nanoaudio-core`](https://crates.io/crates/nanoaudio-core), [`nanoaudio-dsp`](https://crates.io/crates/nanoaudio-dsp), [`nanoaudio-buffer`](https://crates.io/crates/nanoaudio-buffer), [`nanoaudio-g711`](https://crates.io/crates/nanoaudio-g711), [`nanoaudio-adpcm`](https://crates.io/crates/nanoaudio-adpcm), [`nanoaudio-qoa`](https://crates.io/crates/nanoaudio-qoa), [`nanoaudio-flac`](https://crates.io/crates/nanoaudio-flac), [`nanoaudio-g722`](https://crates.io/crates/nanoaudio-g722), [`nanoaudio-sbc`](https://crates.io/crates/nanoaudio-sbc), [`nanoaudio-mp3`](https://crates.io/crates/nanoaudio-mp3), [`nanoaudio-wav`](https://crates.io/crates/nanoaudio-wav), [`nanoaudio-aiff`](https://crates.io/crates/nanoaudio-aiff) and [`nanoaudio-metadata`](https://crates.io/crates/nanoaudio-metadata).
+`nanoaudio` re-exports a set of smaller crates, one per codec or building block, which can also be used on their own: [`nanoaudio-core`](https://crates.io/crates/nanoaudio-core), [`nanoaudio-dsp`](https://crates.io/crates/nanoaudio-dsp), [`nanoaudio-analysis`](https://crates.io/crates/nanoaudio-analysis), [`nanoaudio-buffer`](https://crates.io/crates/nanoaudio-buffer), [`nanoaudio-g711`](https://crates.io/crates/nanoaudio-g711), [`nanoaudio-adpcm`](https://crates.io/crates/nanoaudio-adpcm), [`nanoaudio-qoa`](https://crates.io/crates/nanoaudio-qoa), [`nanoaudio-flac`](https://crates.io/crates/nanoaudio-flac), [`nanoaudio-g722`](https://crates.io/crates/nanoaudio-g722), [`nanoaudio-sbc`](https://crates.io/crates/nanoaudio-sbc), [`nanoaudio-mp3`](https://crates.io/crates/nanoaudio-mp3), [`nanoaudio-wav`](https://crates.io/crates/nanoaudio-wav), [`nanoaudio-aiff`](https://crates.io/crates/nanoaudio-aiff) and [`nanoaudio-metadata`](https://crates.io/crates/nanoaudio-metadata).
 
 ## Quick Start
 
@@ -80,7 +81,7 @@ assert_eq!(frames, 1024);
 A pipeline starts from a source, goes through any number of stages and ends in a sink:
 
 - **Sources:** `source` reads raw little-endian bytes in any `Format`, `samples` reads typed slices (`&[i16]`, `&[f32]`, …). `remaining()` returns what has not been consumed yet.
-- **Stages:** `volume`, `to_channels` (duplicates mono, averages down to mono, otherwise keeps or pads channels), `mix` (adds another stream) and `map` (any function on the processed values).
+- **Stages:** `volume`, `to_channels` (duplicates mono, averages down to mono, otherwise keeps or pads channels), `mix` (adds another stream), `map` (any function on the processed values) and `tap` (gives each frame to an analyzer, such as a meter, and passes it on unchanged).
 - **Sinks:** `write_bytes` and `write_samples` overwrite the output, `mix_into_bytes` and `mix_into_samples` add to it. They stop when the output is full or the stream has ended, and return the number of frames processed.
 
 Each stage pulls one frame at a time from the previous one, so samples are converted to the processing representation once on the way in and once on the way out.
