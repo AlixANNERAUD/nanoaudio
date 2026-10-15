@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
+mod bands;
 mod counter;
 mod goertzel;
 mod level;
@@ -9,6 +10,7 @@ mod measure;
 mod silence;
 mod stereo;
 
+pub use bands::*;
 pub use counter::*;
 pub use goertzel::*;
 pub use level::*;
