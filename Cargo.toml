@@ -1,0 +1,14 @@
+[package]
+name = "nanoaudio"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Alix ANNERAUD <alix@anneraud.fr>"]
+description = "Allocation-free, no_std building blocks for PCM audio: formats, conversion, volume, mixing and buffering"
+repository = "https://github.com/AlixANNERAUD/nanoaudio"
+license = "MIT"
+readme = "README.md"
+keywords = ["audio", "pcm", "no_std", "embedded", "mixer"]
+categories = ["embedded", "no-std", "multimedia::audio"]
+
+[dependencies]
