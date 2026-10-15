@@ -1,0 +1,21 @@
+[package]
+name = "nanoaudio-aiff"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Allocation-free AIFF and AIFF-C header parser and decoder."
+documentation = "https://docs.rs/nanoaudio-aiff"
+readme = "README.md"
+keywords = ["audio", "no-std", "embedded", "aiff", "decoder"]
+categories = ["multimedia::audio", "multimedia::encoding", "embedded", "no-std", "no-std::no-alloc"]
+exclude = ["tests/data"]
+
+[dependencies]
+nanoaudio-core.workspace = true
+nanoaudio-g711.workspace = true
+
+[lints]
+workspace = true

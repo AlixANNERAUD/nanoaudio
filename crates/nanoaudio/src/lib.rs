@@ -1,0 +1,41 @@
+#![no_std]
+#![cfg_attr(
+    all(feature = "buffer", feature = "dsp", feature = "wav"),
+    doc = include_str!("../README.md")
+)]
+
+pub use nanoaudio_core::*;
+
+#[cfg(feature = "aiff")]
+pub use nanoaudio_aiff::{AiffEncoding, AiffHeader};
+#[cfg(feature = "buffer")]
+pub use nanoaudio_buffer::*;
+#[cfg(feature = "dsp")]
+pub use nanoaudio_dsp::*;
+#[cfg(feature = "metadata")]
+pub use nanoaudio_metadata as metadata;
+#[cfg(feature = "wav")]
+pub use nanoaudio_wav::{Encoding, WavHeader};
+
+pub mod codec {
+    pub use nanoaudio_core::codec::*;
+
+    #[cfg(feature = "adpcm")]
+    pub use nanoaudio_adpcm::*;
+    #[cfg(feature = "aiff")]
+    pub use nanoaudio_aiff::AiffDecoder;
+    #[cfg(feature = "flac")]
+    pub use nanoaudio_flac::*;
+    #[cfg(feature = "g711")]
+    pub use nanoaudio_g711::*;
+    #[cfg(feature = "g722")]
+    pub use nanoaudio_g722::*;
+    #[cfg(feature = "mp3")]
+    pub use nanoaudio_mp3::*;
+    #[cfg(feature = "qoa")]
+    pub use nanoaudio_qoa::*;
+    #[cfg(feature = "sbc")]
+    pub use nanoaudio_sbc::*;
+    #[cfg(feature = "wav")]
+    pub use nanoaudio_wav::WavDecoder;
+}

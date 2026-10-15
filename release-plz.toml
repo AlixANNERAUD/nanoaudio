@@ -33,8 +33,100 @@ commit_parsers = [
 
 [[package]]
 name = "nanoaudio"
-changelog_path = "CHANGELOG.md"
+changelog_path = "./CHANGELOG.md"
+changelog_include = ["nanoaudio-core", "nanoaudio-buffer", "nanoaudio-dsp", "nanoaudio-g711", "nanoaudio-adpcm", "nanoaudio-qoa", "nanoaudio-flac", "nanoaudio-g722", "nanoaudio-sbc", "nanoaudio-mp3", "nanoaudio-wav", "nanoaudio-aiff", "nanoaudio-metadata"]
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
 git_release_enable = true
 git_release_name = "v{{ version }}"
+
+[[package]]
+name = "nanoaudio-core"
+changelog_path = "./crates/nanoaudio-core/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "nanoaudio-buffer"
+changelog_path = "./crates/nanoaudio-buffer/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "nanoaudio-dsp"
+changelog_path = "./crates/nanoaudio-dsp/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "nanoaudio-g711"
+changelog_path = "./crates/nanoaudio-g711/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "nanoaudio-adpcm"
+changelog_path = "./crates/nanoaudio-adpcm/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "nanoaudio-qoa"
+changelog_path = "./crates/nanoaudio-qoa/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "nanoaudio-flac"
+changelog_path = "./crates/nanoaudio-flac/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "nanoaudio-g722"
+changelog_path = "./crates/nanoaudio-g722/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "nanoaudio-sbc"
+changelog_path = "./crates/nanoaudio-sbc/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "nanoaudio-mp3"
+changelog_path = "./crates/nanoaudio-mp3/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "nanoaudio-wav"
+changelog_path = "./crates/nanoaudio-wav/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "nanoaudio-aiff"
+changelog_path = "./crates/nanoaudio-aiff/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "nanoaudio-metadata"
+changelog_path = "./crates/nanoaudio-metadata/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false

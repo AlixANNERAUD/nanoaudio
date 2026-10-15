@@ -1,0 +1,28 @@
+[package]
+name = "nanoaudio-mp3"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Allocation-free MP3 decoder for embedded Rust, built on nanomp3-core."
+documentation = "https://docs.rs/nanoaudio-mp3"
+readme = "README.md"
+keywords = ["audio", "no-std", "embedded", "mp3", "decoder"]
+categories = ["multimedia::audio", "multimedia::encoding", "embedded", "no-std", "no-std::no-alloc"]
+exclude = ["tests/data"]
+
+[package.metadata.docs.rs]
+features = ["simd", "layer12"]
+
+[dependencies]
+nanoaudio-core.workspace = true
+nanomp3-core.workspace = true
+
+[features]
+simd = ["nanomp3-core/wide"]
+layer12 = ["nanomp3-core/layer12"]
+
+[lints]
+workspace = true

@@ -1,0 +1,9 @@
+*.aifc binary
+*.aiff binary
+*.bin binary
+*.flac binary
+*.mp3 binary
+*.pcm binary
+*.qoa binary
+*.sbc binary
+*.wav binary

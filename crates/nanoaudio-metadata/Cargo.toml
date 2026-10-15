@@ -1,0 +1,26 @@
+[package]
+name = "nanoaudio-metadata"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Allocation-free reader for ID3, FLAC, RIFF and AIFF metadata and MP3 VBR headers."
+documentation = "https://docs.rs/nanoaudio-metadata"
+readme = "README.md"
+keywords = ["audio", "no-std", "metadata", "id3", "tags"]
+categories = ["multimedia::audio", "embedded", "no-std", "no-std::no-alloc", "parser-implementations"]
+exclude = ["tests/data"]
+
+[package.metadata.docs.rs]
+features = ["core"]
+
+[dependencies]
+nanoaudio-core = { workspace = true, optional = true }
+
+[features]
+core = ["dep:nanoaudio-core"]
+
+[lints]
+workspace = true

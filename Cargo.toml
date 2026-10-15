@@ -1,28 +1,29 @@
-[package]
-name = "nanoaudio"
-version = "0.1.0"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 edition = "2024"
 rust-version = "1.89"
 authors = ["Alix ANNERAUD <alix@anneraud.fr>"]
-description = "Allocation-free no_std audio for embedded Rust: PCM conversion, volume, mixing, ring buffer, single-pass pipelines, WAV, G.711, IMA ADPCM and MP3 decoding."
 repository = "https://github.com/AlixANNERAUD/nanoaudio"
-documentation = "https://docs.rs/nanoaudio"
 license = "MIT"
-readme = "README.md"
-keywords = ["audio", "no-std", "embedded", "pcm", "mixer"]
-categories = ["multimedia::audio", "embedded", "no-std", "no-std::no-alloc", "multimedia::encoding"]
-exclude = [".github", "tests/data/*.py", "RELEASING.md", "release-plz.toml"]
 
-[package.metadata.docs.rs]
-features = ["mp3"]
-rustdoc-args = ["--cfg", "docsrs"]
+[workspace.dependencies]
+nanoaudio-core = { version = "0.1.0", path = "crates/nanoaudio-core" }
+nanoaudio-buffer = { version = "0.1.0", path = "crates/nanoaudio-buffer" }
+nanoaudio-dsp = { version = "0.1.0", path = "crates/nanoaudio-dsp" }
+nanoaudio-g711 = { version = "0.1.0", path = "crates/nanoaudio-g711" }
+nanoaudio-adpcm = { version = "0.1.0", path = "crates/nanoaudio-adpcm" }
+nanoaudio-qoa = { version = "0.1.0", path = "crates/nanoaudio-qoa" }
+nanoaudio-flac = { version = "0.1.0", path = "crates/nanoaudio-flac" }
+nanoaudio-g722 = { version = "0.1.0", path = "crates/nanoaudio-g722" }
+nanoaudio-sbc = { version = "0.1.0", path = "crates/nanoaudio-sbc" }
+nanoaudio-mp3 = { version = "0.1.0", path = "crates/nanoaudio-mp3" }
+nanoaudio-wav = { version = "0.1.0", path = "crates/nanoaudio-wav" }
+nanoaudio-aiff = { version = "0.1.0", path = "crates/nanoaudio-aiff" }
+nanoaudio-metadata = { version = "0.1.0", path = "crates/nanoaudio-metadata" }
+nanomp3-core = { version = "0.2", default-features = false }
 
-[dependencies]
-nanomp3-core = { version = "0.2", default-features = false, optional = true }
-
-[features]
-fixed = []
-float = []
-mp3 = ["dep:nanomp3-core"]
-mp3-simd = ["mp3", "nanomp3-core/wide"]
-mpeg-layer12 = ["mp3", "nanomp3-core/layer12"]
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
