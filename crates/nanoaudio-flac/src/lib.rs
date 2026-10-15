@@ -1091,16 +1091,13 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
         None
     }
 
-    fn scan_frame(&self, input: &[u8]) -> Result<Option<(FrameHeader, usize)>> {
+    fn boundary(&self, input: &[u8], header: &FrameHeader) -> Result<Option<usize>> {
         let Some(information) = self.information else {
             return Ok(None);
         };
-        let Ok(header) = FrameHeader::parse(input, &information) else {
-            return Ok(None);
-        };
 
-        match Self::frame_length(input, &header, &information) {
-            Some(length) => Ok(Some((header, length))),
+        match Self::frame_length(input, header, &information) {
+            Some(length) => Ok(Some(length)),
             None if !self.finishing && input.len() < information.maximum_frame_size_bound() => {
                 Err(Error::Incomplete)
             }
@@ -1108,17 +1105,18 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
         }
     }
 
+    fn header(&self, input: &[u8]) -> Option<FrameHeader> {
+        FrameHeader::parse(input, self.information.as_ref()?).ok()
+    }
+
     fn skip_frame(&mut self, input: &[u8]) -> Result<Option<usize>> {
-        let Some(information) = self.information else {
+        let Some(header) = self
+            .header(input)
+            .filter(|header| header.block_size as u64 <= self.skip)
+        else {
             return Ok(None);
         };
-
-        match FrameHeader::parse(input, &information) {
-            Ok(header) if header.block_size as u64 <= self.skip => {}
-            _ => return Ok(None),
-        }
-
-        let Some((header, length)) = self.scan_frame(input)? else {
+        let Some(length) = self.boundary(input, &header)? else {
             return Ok(None);
         };
 
@@ -1167,7 +1165,9 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
             }
         }
 
-        if let Some((header, _)) = self.scan_frame(input)? {
+        if let Some(header) = self.header(input)
+            && self.boundary(input, &header)?.is_some()
+        {
             let found = Point {
                 byte: self.offset,
                 sample: header.sample,
