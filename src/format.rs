@@ -1,3 +1,5 @@
+use crate::{Error, Result};
+
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Format {
@@ -14,6 +16,26 @@ impl Format {
             Format::I16 => 2,
             Format::I32 | Format::F32 => 4,
         }
+    }
+}
+
+impl TryFrom<u8> for Format {
+    type Error = Error;
+
+    fn try_from(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(Format::U8),
+            1 => Ok(Format::I16),
+            2 => Ok(Format::I32),
+            3 => Ok(Format::F32),
+            _ => Err(Error::UnsupportedFormat),
+        }
+    }
+}
+
+impl From<Format> for u8 {
+    fn from(format: Format) -> Self {
+        format as u8
     }
 }
 
@@ -74,6 +96,15 @@ mod tests {
         assert_eq!(configuration.frames_to_bytes(10), 40);
         assert_eq!(configuration.bytes_to_frames(41), 10);
         assert_eq!(configuration.frames_to_microseconds(44_100), 1_000_000);
+    }
+
+    #[test]
+    fn format_from_u8() {
+        for format in [Format::U8, Format::I16, Format::I32, Format::F32] {
+            assert_eq!(Format::try_from(u8::from(format)), Ok(format));
+        }
+
+        assert_eq!(Format::try_from(4), Err(Error::UnsupportedFormat));
     }
 
     #[test]
