@@ -1221,7 +1221,7 @@ mod tests {
     #[test]
     fn takes_every_path() {
         let rate = 8000;
-        let seconds = if cfg!(miri) { 0.6 } else { 6.0 };
+        let seconds = if cfg!(miri) { 0.15 } else { 6.0 };
         let mut speech = vec![0i16; (seconds * rate as f64) as usize];
         let begin = speech.len() / 3;
 
@@ -1274,6 +1274,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn finds_onsets_and_offsets() {
         let rate = 16000;
         let mut signal = vec![0i16; 80000];
@@ -1328,9 +1329,14 @@ mod tests {
 
     #[test]
     fn ignores_noise_and_hum() {
-        let seconds = if cfg!(miri) { 0.5 } else { 8.0 };
+        let seconds = if cfg!(miri) { 0.12 } else { 8.0 };
+        let rates: &[u32] = if cfg!(miri) {
+            &[8000]
+        } else {
+            &[8000, 16000, 48000]
+        };
 
-        for rate in [8000, 16000, 48000] {
+        for rate in rates.iter().copied() {
             let length = (seconds * rate as f64) as usize;
             let start = length / 4;
             let white = noise(Noise::White, rate, length, 11);
@@ -1432,6 +1438,10 @@ mod tests {
         }
 
         assert_eq!(state(&float), state(&expected));
+
+        if cfg!(miri) {
+            return;
+        }
 
         let mut long = VoiceActivityDetector::with_settings(
             48000,
