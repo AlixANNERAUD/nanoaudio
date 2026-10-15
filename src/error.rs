@@ -6,6 +6,7 @@ pub enum Error {
     InvalidHeader,
     UnsupportedFormat,
     Incomplete,
+    TooManyChannels,
 }
 
 impl fmt::Display for Error {
@@ -15,6 +16,7 @@ impl fmt::Display for Error {
             Error::InvalidHeader => formatter.write_str("invalid header"),
             Error::UnsupportedFormat => formatter.write_str("unsupported format"),
             Error::Incomplete => formatter.write_str("incomplete data"),
+            Error::TooManyChannels => formatter.write_str("too many channels"),
         }
     }
 }

@@ -6,6 +6,7 @@ Allocation-free, `no_std` building blocks for PCM audio on microcontrollers and 
 
 ## Features
 
+- Chainable, single-pass processing pipeline (`Stream`)
 - Sample formats (`U8`, `I16`, `I32`, `F32`) and stream configuration (`#[repr(C)]`, ready to cross an ABI)
 - Sample conversion between formats and channel layouts, on typed slices or raw little-endian bytes
 - Volume (Q4.12 control value), applied in place
@@ -34,6 +35,30 @@ Every API is generic and monomorphized, so picking a representation costs nothin
 - Caller-provided storage, no allocation on the hot path
 - Synchronous, non-blocking APIs: operations process what fits and report how much they did
 - No codecs: decoding is left to applications
+
+## Pipelines
+
+Operations can be chained into a `Stream`. Each stage pulls one frame at a time from the previous one, so the whole chain runs in a single pass, without intermediate buffers, and samples are converted to the processing representation only once on the way in and once on the way out:
+
+```rust
+use nanoaudio::{Format, Stream, Volume, source};
+
+let music = [0u8; 1024];
+let notification = [0u8; 512];
+let mut output = [0u8; 2048];
+
+let frames = source(&music, Format::I16, 2)?
+    .volume(Volume::from_percent(80))
+    .mix(source(&notification, Format::U8, 1)?.to_channels(2)?)
+    .write_bytes(&mut output, Format::I16);
+```
+
+- Sources: `source` / `ByteSource` (raw little-endian bytes in any `Format`) and `samples` / `SampleSource` (typed slices). `remaining()` returns what has not been consumed yet, for example to release it from a ring buffer.
+- Stages: `volume`, `to_channels` (duplicates mono, averages down to mono, otherwise keeps or pads channels), `mix` (adds another stream; it goes on until both have ended, and channels missing from one side are left as is) and `map`.
+- Sinks: `write_bytes` / `write_samples` overwrite the output, `mix_into_bytes` / `mix_into_samples` add to it. They stop when the output is full or the stream has ended, and return the number of frames processed.
+- Frames hold up to `MAXIMUM_CHANNELS` (8) channels.
+
+The single-shot functions (`convert_bytes`, `convert_channels`, `Volume::apply_to`, `mix`, …) remain available for simple cases.
 
 ## Example
 

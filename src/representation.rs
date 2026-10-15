@@ -21,6 +21,7 @@ pub trait Representation: Copy + Default + Send + Sync + 'static {
     type Gain: Copy;
 
     const KIND: RepresentationKind;
+    const SILENCE: Self::Value;
 
     fn from_sample<S: Sample>(sample: S) -> Self::Value;
 
@@ -31,6 +32,8 @@ pub trait Representation: Copy + Default + Send + Sync + 'static {
     fn amplify(value: Self::Value, gain: Self::Gain) -> Self::Value;
 
     fn add(left: Self::Value, right: Self::Value) -> Self::Value;
+
+    fn average(values: &[Self::Value]) -> Self::Value;
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -41,6 +44,7 @@ impl Representation for Fixed {
     type Gain = i32;
 
     const KIND: RepresentationKind = RepresentationKind::Fixed;
+    const SILENCE: i32 = 0;
 
     fn from_sample<S: Sample>(sample: S) -> i32 {
         sample.to_i32()
@@ -63,6 +67,16 @@ impl Representation for Fixed {
     fn add(left: i32, right: i32) -> i32 {
         left.saturating_add(right)
     }
+
+    fn average(values: &[i32]) -> i32 {
+        if values.is_empty() {
+            return 0;
+        }
+
+        let sum: i64 = values.iter().map(|value| *value as i64).sum();
+
+        (sum / values.len() as i64) as i32
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -73,6 +87,7 @@ impl Representation for Float {
     type Gain = f32;
 
     const KIND: RepresentationKind = RepresentationKind::Float;
+    const SILENCE: f32 = 0.0;
 
     fn from_sample<S: Sample>(sample: S) -> f32 {
         sample.to_f32()
@@ -92,6 +107,14 @@ impl Representation for Float {
 
     fn add(left: f32, right: f32) -> f32 {
         left + right
+    }
+
+    fn average(values: &[f32]) -> f32 {
+        if values.is_empty() {
+            return 0.0;
+        }
+
+        values.iter().sum::<f32>() / values.len() as f32
     }
 }
 
@@ -147,8 +170,20 @@ mod tests {
         );
     }
 
+    fn averages<R: Representation>() {
+        let values = [
+            R::from_sample(i16::MAX),
+            R::from_sample(i16::MAX),
+            R::from_sample(0i16),
+        ];
+
+        assert_eq!(R::to_sample::<i16>(R::average(&values)), 21_844);
+        assert_eq!(R::to_sample::<i16>(R::average(&[])), 0);
+    }
+
     #[test]
     fn fixed() {
+        averages::<Fixed>();
         round_trip::<Fixed>();
         saturates::<Fixed>();
         amplifies::<Fixed>();
@@ -156,6 +191,7 @@ mod tests {
 
     #[test]
     fn float() {
+        averages::<Float>();
         round_trip::<Float>();
         saturates::<Float>();
         amplifies::<Float>();
