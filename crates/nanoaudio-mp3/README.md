@@ -26,6 +26,7 @@ fn decode(input: &[u8], output: &mut [i16]) -> Result<usize> {
 `Mp3Decoder` implements `Seek` once it has found the first frame. Byte offsets are counted from the first byte fed to the decoder, so an ID3v2 tag the caller fed counts. Frame positions count the frames the decoder produces, so they follow gapless trimming.
 
 - Constant bitrate streams seek exactly: the offset comes from the frame size, and the frame reached is identified from its byte position.
+- Free-format streams, whose header gives no bitrate, seek exactly too: the frame size is measured once from the distance between the first frames.
 - Variable bitrate streams use the Xing table of contents or the VBRI table from the first frame. MP3 frames carry no number, so the position is approximate: within about 1 % of the duration.
 - A stream with neither a table nor a constant bitrate falls back to its average bitrate so far.
 

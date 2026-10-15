@@ -13,11 +13,11 @@ pub use nanomp3_core::Sample as Mp3Sample;
 use nanoaudio_core::codec::{Decoder, Progress, Seek, SeekRequest};
 use nanoaudio_core::{Configuration, Error, Result, Sample};
 
-use stream::{Gapless, Header, Kind, Table, Tag, find_frame};
+use stream::{Gapless, Header, Kind, Table, Tag, find_frame, free_format_start, rate};
 
 /// Default input window of [`Mp3Decoder`], in bytes.
 ///
-/// 4 KiB holds the largest frame and the header after it with room to spare, and confirms 2 frames in a row at 320 kbit/s and 32 kHz, 9 at 128 kbit/s and 44.1 kHz. It was 16 KiB in 0.1.
+/// 4 KiB holds the largest frame and the header after it with room to spare, and confirms 2 frames in a row at 320 kbit/s and 32 kHz, 9 at 128 kbit/s and 44.1 kHz. Free-format streams need two frames and a header, so it covers them up to about 620 kbit/s at 44.1 kHz. It was 16 KiB in 0.1.
 pub const MP3_DEFAULT_MINIMUM_INPUT: usize = 4 * 1024;
 
 const SYNC_SLACK: u64 = 4;
@@ -29,6 +29,7 @@ const DECODER_DELAY: u64 = 529;
 struct Stream {
     first: u64,
     header: Header,
+    rate: (u64, u64),
     tag_size: Option<u64>,
     kind: Kind,
     frames: Option<u32>,
@@ -40,13 +41,19 @@ struct Stream {
 }
 
 impl Stream {
-    fn new(first: u64, frame: &[u8], header: Header, next: Option<Header>) -> Self {
-        let tag = Tag::parse(frame, header);
+    fn new(first: u64, input: &[u8], header: Header) -> Self {
+        let end = header.size().min(input.len());
+        let tag = Tag::parse(&input[..end], header);
         let tagged = tag.kind != Kind::Plain;
+        let audio = if tagged { &input[end..] } else { input };
+        let header = Header::read_like(audio, header)
+            .filter(|_| tagged)
+            .unwrap_or(header);
 
         Self {
             first,
-            header: next.filter(|_| tagged).unwrap_or(header),
+            header,
+            rate: rate(audio, header),
             tag_size: tagged.then_some(header.size() as u64),
             kind: tag.kind,
             frames: tag.frames,
@@ -75,11 +82,7 @@ impl Stream {
     }
 
     fn frame_bytes(&self) -> (u64, u64) {
-        let header = self.header;
-        let nominal = (
-            u64::from(header.samples() * header.bitrate() * 125),
-            u64::from(header.sample_rate()),
-        );
+        let nominal = self.rate;
 
         if self.is_constant() {
             return nominal;
@@ -214,7 +217,7 @@ impl<S: Sample + nanomp3_core::Sample> Mp3Decoder<S> {
 
     /// Creates a decoder that waits for `minimum_input` bytes of input before decoding.
     ///
-    /// The window must hold the largest frame of the stream plus the 4-byte header after it, or frames are dropped and the output changes: 1,445 bytes covers every Layer III stream (the largest frame is 1,441 bytes, at 320 kbit/s and 32 kHz), 1,733 bytes Layer II as well. A larger window confirms more frames before the first one is accepted, which helps to skip junk or tags that look like frames.
+    /// The window must hold the largest frame of the stream plus the 4-byte header after it, or frames are dropped and the output changes: 1,445 bytes covers every Layer III stream (the largest frame is 1,441 bytes, at 320 kbit/s and 32 kHz), 1,733 bytes Layer II as well. Free-format streams, whose header gives no bitrate, need twice their frame size plus 5 bytes, because the frame size is found from the distance between two headers: 4,611 bytes covers all of them (frames up to 2,303 bytes). A larger window confirms more frames before the first one is accepted, which helps to skip junk or tags that look like frames.
     pub const fn with_minimum_input(minimum_input: usize) -> Self {
         Self {
             decoder: nanomp3_core::Decoder::new(),
@@ -276,9 +279,19 @@ impl<S: Sample + nanomp3_core::Sample> Mp3Decoder<S> {
             return input.len();
         }
 
+        let tail = input.len().saturating_sub(stream::FREE_FORMAT_KEPT);
+        let kept = self
+            .stream
+            .is_none_or(|stream| stream.header.is_free_format())
+            .then(|| free_format_start(&input[tail..]))
+            .flatten()
+            .map_or(SYNC_KEPT, |start| {
+                (input.len() - tail - start).max(SYNC_KEPT)
+            });
+
         input
             .len()
-            .saturating_sub(SYNC_KEPT.min(self.minimum_input.saturating_sub(1)))
+            .saturating_sub(kept.min(self.minimum_input.saturating_sub(1)))
             .max(1)
     }
 
@@ -307,14 +320,10 @@ impl<S: Sample + nanomp3_core::Sample> Mp3Decoder<S> {
 
     fn observe(&mut self, input: &[u8]) {
         if let Some((index, header)) = find_frame(input, None) {
-            let end = (index + header.size()).min(input.len());
-            let next = Header::read(&input[end..]).filter(|next| header.matches(*next));
-
             self.stream = Some(Stream::new(
                 self.offset + index as u64,
-                &input[index..end],
+                &input[index..],
                 header,
-                next,
             ));
         }
     }

@@ -1,5 +1,7 @@
 pub(crate) const HEADER_SIZE: usize = 4;
 pub(crate) const LARGEST_FRAME: usize = 1729;
+pub(crate) const FREE_FORMAT_LIMIT: usize = 2304;
+pub(crate) const FREE_FORMAT_KEPT: usize = 2 * (FREE_FORMAT_LIMIT - 1) + HEADER_SIZE;
 const SYNC_MATCHES: usize = 10;
 const XING_FRAMES: u32 = 1;
 const XING_BYTES: u32 = 2;
@@ -37,17 +39,32 @@ const BITRATES: [[[u16; 15]; 3]; 2] = [
 const SAMPLE_RATES: [u32; 3] = [44_100, 48_000, 32_000];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Header([u8; HEADER_SIZE]);
+pub(crate) struct Header {
+    bytes: [u8; HEADER_SIZE],
+    free: u16,
+}
 
 impl Header {
     pub(crate) fn read(bytes: &[u8]) -> Option<Self> {
-        let header = Self(*bytes.first_chunk::<HEADER_SIZE>()?);
+        let header = Self {
+            bytes: *bytes.first_chunk::<HEADER_SIZE>()?,
+            free: 0,
+        };
 
         header.is_valid().then_some(header)
     }
 
+    pub(crate) fn read_like(bytes: &[u8], reference: Self) -> Option<Self> {
+        Self::read(bytes)
+            .filter(|header| reference.matches(*header))
+            .map(|header| Self {
+                free: reference.free,
+                ..header
+            })
+    }
+
     fn is_valid(self) -> bool {
-        let [first, second, third, _] = self.0;
+        let [first, second, third, _] = self.bytes;
 
         first == 0xFF
             && (second & 0xF0 == 0xF0 || second & 0xFE == 0xE2)
@@ -57,41 +74,41 @@ impl Header {
     }
 
     pub(crate) fn matches(self, other: Self) -> bool {
-        (self.0[1] ^ other.0[1]) & 0xFE == 0
-            && (self.0[2] ^ other.0[2]) & 0x0C == 0
+        (self.bytes[1] ^ other.bytes[1]) & 0xFE == 0
+            && (self.bytes[2] ^ other.bytes[2]) & 0x0C == 0
             && self.is_free_format() == other.is_free_format()
     }
 
     fn layer(self) -> u8 {
-        4 - ((self.0[1] >> 1) & 3)
+        4 - ((self.bytes[1] >> 1) & 3)
     }
 
     pub(crate) fn is_mpeg1(self) -> bool {
-        self.0[1] & 0x08 != 0
+        self.bytes[1] & 0x08 != 0
     }
 
     fn is_mono(self) -> bool {
-        self.0[3] & 0xC0 == 0xC0
+        self.bytes[3] & 0xC0 == 0xC0
     }
 
     fn has_crc(self) -> bool {
-        self.0[1] & 1 == 0
+        self.bytes[1] & 1 == 0
     }
 
     pub(crate) fn is_free_format(self) -> bool {
-        self.0[2] & 0xF0 == 0
+        self.bytes[2] & 0xF0 == 0
     }
 
     pub(crate) fn bitrate(self) -> u32 {
         let layer = self.layer() as usize - 1;
 
-        u32::from(BITRATES[usize::from(self.is_mpeg1())][layer][(self.0[2] >> 4) as usize])
+        u32::from(BITRATES[usize::from(self.is_mpeg1())][layer][(self.bytes[2] >> 4) as usize])
     }
 
     pub(crate) fn sample_rate(self) -> u32 {
-        let shift = u32::from(!self.is_mpeg1()) + u32::from(self.0[1] & 0x10 == 0);
+        let shift = u32::from(!self.is_mpeg1()) + u32::from(self.bytes[1] & 0x10 == 0);
 
-        SAMPLE_RATES[((self.0[2] >> 2) & 3) as usize] >> shift
+        SAMPLE_RATES[((self.bytes[2] >> 2) & 3) as usize] >> shift
     }
 
     pub(crate) fn samples(self) -> u32 {
@@ -103,15 +120,27 @@ impl Header {
     }
 
     fn padding(self) -> usize {
-        match (self.0[2] & 0x02 != 0, self.layer()) {
+        match (self.bytes[2] & 0x02 != 0, self.layer()) {
             (false, _) => 0,
             (true, 1) => 4,
             (true, _) => 1,
         }
     }
 
+    fn padding_unit(self) -> u64 {
+        if self.layer() == 1 { 4 } else { 1 }
+    }
+
     pub(crate) fn unpadded_size(self) -> usize {
-        let size = (self.samples() * self.bitrate() * 125 / self.sample_rate()) as usize;
+        if self.is_free_format() {
+            return usize::from(self.free);
+        }
+
+        self.standard_size(self.bitrate())
+    }
+
+    fn standard_size(self, bitrate: u32) -> usize {
+        let size = (self.samples() * bitrate * 125 / self.sample_rate()) as usize;
 
         if self.layer() == 1 { size & !3 } else { size }
     }
@@ -145,7 +174,7 @@ fn matches_following(input: &[u8], first: Header) -> bool {
     let mut position = 0;
 
     for count in 0..SYNC_MATCHES {
-        let Some(header) = Header::read(&input[position..]) else {
+        let Some(header) = Header::read_like(&input[position..], first) else {
             return false;
         };
 
@@ -155,7 +184,7 @@ fn matches_following(input: &[u8], first: Header) -> bool {
             return count > 0;
         }
 
-        if !Header::read(&input[position..]).is_some_and(|next| first.matches(next)) {
+        if Header::read_like(&input[position..], first).is_none() {
             return false;
         }
     }
@@ -163,17 +192,85 @@ fn matches_following(input: &[u8], first: Header) -> bool {
     true
 }
 
+fn free_format_size(input: &[u8], first: Header) -> Option<u16> {
+    (HEADER_SIZE..FREE_FORMAT_LIMIT)
+        .take_while(|distance| 2 * distance + HEADER_SIZE < input.len())
+        .find_map(|distance| {
+            let next = Header::read(&input[distance..]).filter(|next| first.matches(*next))?;
+            let size = distance - first.padding();
+            let after = distance + size + next.padding();
+
+            (size != 0
+                && after + HEADER_SIZE <= input.len()
+                && Header::read(&input[after..]).is_some_and(|last| first.matches(last)))
+            .then_some(size as u16)
+        })
+}
+
+pub(crate) fn free_format_start(input: &[u8]) -> Option<usize> {
+    input
+        .windows(HEADER_SIZE)
+        .position(|bytes| Header::read(bytes).is_some_and(|header| header.is_free_format()))
+}
+
 pub(crate) fn find_frame(input: &[u8], reference: Option<Header>) -> Option<(usize, Header)> {
     (0..input.len().saturating_sub(HEADER_SIZE)).find_map(|index| {
-        let header = Header::read(&input[index..])
-            .filter(|header| !header.is_free_format())
-            .filter(|header| reference.is_none_or(|reference| reference.matches(*header)))?;
+        let header = match reference {
+            Some(reference) => Header::read_like(&input[index..], reference)?,
+            None => {
+                let header = Header::read(&input[index..])?;
+
+                match header.is_free_format() {
+                    true => Header {
+                        free: free_format_size(&input[index..], header)?,
+                        ..header
+                    },
+                    false => header,
+                }
+            }
+        };
         let size = header.size();
 
         ((index + size <= input.len() && matches_following(&input[index..], header))
             || (index == 0 && size == input.len()))
         .then_some((index, header))
     })
+}
+
+pub(crate) fn rate(input: &[u8], header: Header) -> (u64, u64) {
+    let sample_rate = u64::from(header.sample_rate());
+    let scale = u64::from(header.samples()) * 125;
+
+    if !header.is_free_format() {
+        return (scale * u64::from(header.bitrate()), sample_rate);
+    }
+
+    let size = header.unpadded_size() as u64;
+    let unit = header.padding_unit();
+    let (mut frames, mut padded, mut position) = (0, 0, 0);
+
+    while let Some(next) = input
+        .get(position..)
+        .and_then(|rest| Header::read_like(rest, header))
+    {
+        frames += 1;
+        padded += u64::from(next.padding() != 0);
+        position += next.size();
+    }
+
+    let frames = frames.max(1);
+    let bitrate = (size * sample_rate).div_ceil(scale);
+    let average = scale * bitrate;
+    let consistent = u32::try_from(bitrate)
+        .is_ok_and(|bitrate| header.standard_size(bitrate) as u64 == size)
+        && (padded * sample_rate * unit).abs_diff(frames * (average - size * sample_rate))
+            <= sample_rate * unit;
+
+    if consistent {
+        (average, sample_rate)
+    } else {
+        (frames * size + padded * unit, frames)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -395,4 +492,59 @@ fn read_u32(input: &mut &[u8]) -> Option<u32> {
     *input = rest;
 
     Some(u32::from_be_bytes(*value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SCALE: u64 = 576 * 125;
+    const SAMPLE_RATE: u64 = 22_050;
+
+    fn stream(sizes: impl Iterator<Item = u64>, unpadded: u64) -> [u8; 4096] {
+        let mut input = [0; 4096];
+        let mut position = 0;
+
+        for size in sizes {
+            if position + HEADER_SIZE > input.len() {
+                break;
+            }
+
+            let padded = u8::from(size > unpadded);
+
+            input[position..position + HEADER_SIZE].copy_from_slice(&[
+                0xFF,
+                0xF3,
+                padded << 1,
+                0xC4,
+            ]);
+            position += size as usize;
+        }
+
+        input
+    }
+
+    fn rate_of(input: &[u8]) -> (u64, u64) {
+        let (index, header) = find_frame(input, None).unwrap();
+
+        assert_eq!(index, 0);
+
+        rate(input, header)
+    }
+
+    #[test]
+    fn free_format_padding_gives_the_integer_bitrate() {
+        let average = SCALE * 45;
+        let sizes = (0..)
+            .map(|index: u64| (index + 1) * average / SAMPLE_RATE - index * average / SAMPLE_RATE);
+
+        assert_eq!(rate_of(&stream(sizes, 146)), (average, SAMPLE_RATE));
+    }
+
+    #[test]
+    fn free_format_without_padding_keeps_its_size() {
+        let (bytes, frames) = rate_of(&stream(core::iter::repeat(146), 146));
+
+        assert_eq!(bytes, 146 * frames);
+    }
 }
