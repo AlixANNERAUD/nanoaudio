@@ -11,6 +11,8 @@ pub enum Error {
     InvalidParameter,
     BufferTooSmall,
     InvalidData,
+    /// A seek needs input from this byte offset, counted like [`SeekRequest::byte_offset`](crate::codec::SeekRequest::byte_offset): drop buffered input and resume feeding from there.
+    SeekTo(u64),
 }
 
 impl fmt::Display for Error {
@@ -24,6 +26,7 @@ impl fmt::Display for Error {
             Error::InvalidParameter => formatter.write_str("invalid parameter"),
             Error::BufferTooSmall => formatter.write_str("buffer too small"),
             Error::InvalidData => formatter.write_str("invalid data"),
+            Error::SeekTo(offset) => write!(formatter, "seek to byte {offset}"),
         }
     }
 }

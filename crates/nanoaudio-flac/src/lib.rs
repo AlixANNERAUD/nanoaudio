@@ -4,18 +4,26 @@
 use core::marker::PhantomData;
 
 use nanoaudio_core::bits::BitReader;
-use nanoaudio_core::codec::{Decoder, Progress};
+use nanoaudio_core::codec::{Decoder, Progress, Seek, SeekRequest};
 use nanoaudio_core::crc;
 use nanoaudio_core::{Configuration, Error, Result, Sample};
 
 pub const FLAC_DEFAULT_MAXIMUM_BLOCK_SIZE: usize = 4608;
 pub const FLAC_DEFAULT_MAXIMUM_CHANNELS: usize = 2;
+/// Seek points kept from a SEEKTABLE block; a larger table keeps a regular subset of its points.
+pub const FLAC_SEEK_POINTS: usize = 32;
 
 const MARKER: &[u8; 4] = b"fLaC";
 const MARKER_SIZE: usize = 4;
 const BLOCK_HEADER_SIZE: usize = 4;
 const STREAM_INFORMATION_SIZE: usize = 34;
 const STREAM_INFORMATION_TYPE: u8 = 0;
+const SEEK_TABLE_TYPE: u8 = 3;
+const SEEK_POINT_SIZE: usize = 18;
+const PLACEHOLDER_SEEK_POINT: u64 = u64::MAX;
+const UNKNOWN: u64 = u64::MAX;
+const LINEAR_FRAMES: u64 = 2;
+const MAXIMUM_SEEK_ROUNDS: u32 = 64;
 const FORBIDDEN_BLOCK_TYPE: u8 = 127;
 const MINIMUM_BLOCK_SIZE: usize = 16;
 const MAXIMUM_STREAM_BLOCK_SIZE: usize = 65535;
@@ -89,9 +97,21 @@ impl FlacStreamInformation {
 enum State {
     Marker,
     BlockHeader,
-    StreamInformation { last: bool },
-    Skip { remaining: usize, last: bool },
+    StreamInformation {
+        last: bool,
+    },
+    Skip {
+        remaining: usize,
+        last: bool,
+    },
+    SeekTable {
+        remaining: usize,
+        index: usize,
+        stride: usize,
+        last: bool,
+    },
     Frames,
+    Search,
 }
 
 impl State {
@@ -114,6 +134,7 @@ enum Assignment {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FrameHeader {
+    sample: u64,
     block_size: usize,
     assignment: Assignment,
     bits_per_sample: u32,
@@ -142,11 +163,16 @@ impl FrameHeader {
             length @ 2..=7 => length as usize - 1,
             _ => return Err(Error::InvalidData),
         };
+        let mut number = u64::from(byte(4)? & (0x7F >> (position - 5 + usize::from(position > 5))));
 
         for index in 5..position {
-            if byte(index)? & 0xC0 != 0x80 {
+            let byte = byte(index)?;
+
+            if byte & 0xC0 != 0x80 {
                 return Err(Error::InvalidData);
             }
+
+            number = number << 6 | u64::from(byte & 0x3F);
         }
 
         let block_size = match block_size_code {
@@ -209,7 +235,16 @@ impl FrameHeader {
             return Err(Error::InvalidData);
         }
 
+        let sample = if byte(1)? & 0x01 != 0 {
+            number
+        } else if information.minimum_block_size == information.maximum_block_size {
+            number * u64::from(information.maximum_block_size)
+        } else {
+            number * block_size as u64
+        };
+
         Ok(Self {
+            sample,
             block_size,
             assignment,
             bits_per_sample,
@@ -503,6 +538,27 @@ fn decode_subframe(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct Point {
+    byte: u64,
+    sample: u64,
+}
+
+impl Point {
+    const ZERO: Self = Self { byte: 0, sample: 0 };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct Search {
+    target: u64,
+    low: Point,
+    high: Point,
+    probe: u64,
+    bisect: bool,
+    stretch: u32,
+    rounds: u32,
+}
+
 #[derive(Clone)]
 pub struct FlacDecoder<
     S: Sample = i16,
@@ -516,6 +572,14 @@ pub struct FlacDecoder<
     position: usize,
     required: usize,
     finishing: bool,
+    offset: u64,
+    audio_offset: u64,
+    length: Option<u64>,
+    last: Option<Point>,
+    skip: u64,
+    search: Search,
+    seek_points: [Point; FLAC_SEEK_POINTS],
+    seek_point_count: usize,
     sample: PhantomData<S>,
 }
 
@@ -551,6 +615,22 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
             position: 0,
             required: 0,
             finishing: false,
+            offset: 0,
+            audio_offset: 0,
+            length: None,
+            last: None,
+            skip: 0,
+            search: Search {
+                target: 0,
+                low: Point::ZERO,
+                high: Point::ZERO,
+                probe: 0,
+                bisect: false,
+                stretch: 0,
+                rounds: 0,
+            },
+            seek_points: [Point::ZERO; FLAC_SEEK_POINTS],
+            seek_point_count: 0,
             sample: PhantomData,
         }
     }
@@ -562,6 +642,17 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
         self.position = 0;
         self.required = 0;
         self.finishing = false;
+        self.offset = 0;
+        self.audio_offset = 0;
+        self.length = None;
+        self.last = None;
+        self.skip = 0;
+        self.seek_point_count = 0;
+    }
+
+    /// Gives the stream length in bytes, counted from `fLaC`, so that seeking can interpolate from the first request.
+    pub fn set_stream_length(&mut self, length: u64) {
+        self.length = Some(length);
     }
 
     pub const fn stream_information(&self) -> Option<FlacStreamInformation> {
@@ -596,6 +687,18 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
                         return Err(Error::InvalidHeader);
                     }
                     (true, _) if length == 0 => State::after_block(last),
+                    (true, SEEK_TABLE_TYPE)
+                        if self.seek_point_count == 0 && length.is_multiple_of(SEEK_POINT_SIZE) =>
+                    {
+                        let points = length / SEEK_POINT_SIZE;
+
+                        State::SeekTable {
+                            remaining: points,
+                            index: 0,
+                            stride: points.div_ceil(FLAC_SEEK_POINTS),
+                            last,
+                        }
+                    }
                     (true, _) => State::Skip {
                         remaining: length,
                         last,
@@ -636,7 +739,43 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
 
                 Ok(skipped)
             }
-            State::Frames => Err(Error::InvalidParameter),
+            State::SeekTable {
+                remaining,
+                index,
+                stride,
+                last,
+            } => {
+                let point = input
+                    .first_chunk::<SEEK_POINT_SIZE>()
+                    .ok_or(Error::Incomplete)?;
+                let (sample, rest) = point.split_first_chunk::<8>().ok_or(Error::Incomplete)?;
+                let (offset, _) = rest.split_first_chunk::<8>().ok_or(Error::Incomplete)?;
+                let sample = u64::from_be_bytes(*sample);
+
+                if sample != PLACEHOLDER_SEEK_POINT
+                    && index.is_multiple_of(stride)
+                    && self.seek_point_count < FLAC_SEEK_POINTS
+                {
+                    self.seek_points[self.seek_point_count] = Point {
+                        byte: u64::from_be_bytes(*offset),
+                        sample,
+                    };
+                    self.seek_point_count += 1;
+                }
+
+                self.state = match remaining - 1 {
+                    0 => State::after_block(last),
+                    remaining => State::SeekTable {
+                        remaining,
+                        index: index + 1,
+                        stride,
+                        last,
+                    },
+                };
+
+                Ok(SEEK_POINT_SIZE)
+            }
+            State::Frames | State::Search => Err(Error::InvalidParameter),
         }
     }
 
@@ -812,8 +951,182 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
 
         self.block_size = block_size;
         self.position = 0;
+        self.last = Some(Point {
+            byte: self.offset,
+            sample: header.sample,
+        });
 
         Ok(footer + FRAME_FOOTER_SIZE)
+    }
+
+    fn apply_skip(&mut self) {
+        let skipped = self.skip.min(self.block_size as u64);
+
+        self.position = skipped as usize;
+        self.skip -= skipped;
+    }
+
+    fn next_frame(&mut self, input: &[u8]) -> Result<usize> {
+        let consumed = self.decode_frame(input)?;
+
+        if self.skip != 0 {
+            self.apply_skip();
+        }
+
+        Ok(consumed)
+    }
+
+    fn search_step(&mut self, input: &[u8]) -> Result<usize> {
+        match input
+            .windows(2)
+            .position(|pair| pair[0] == 0xFF && pair[1] & 0xFE == 0xF8)
+        {
+            Some(0) => {}
+            Some(start) => return Ok(start),
+            None if self.finishing => return Ok(input.len()),
+            None => {
+                let kept = usize::from(input.last() == Some(&0xFF));
+
+                return match input.len() - kept {
+                    0 => Err(Error::Incomplete),
+                    skipped => Ok(skipped),
+                };
+            }
+        }
+
+        let consumed = match self.decode_frame(input) {
+            Ok(consumed) => consumed,
+            Err(Error::Incomplete) if !self.finishing => return Err(Error::Incomplete),
+            Err(Error::Incomplete | Error::InvalidData | Error::UnsupportedFormat) => {
+                self.block_size = 0;
+
+                return Ok(1);
+            }
+            Err(error) => return Err(error),
+        };
+        let found = Point {
+            byte: self.offset,
+            sample: self.last.map_or(0, |last| last.sample),
+        };
+        let search = self.search;
+
+        if found.sample > search.target {
+            let high = Point {
+                byte: search.probe,
+                sample: found.sample,
+            };
+
+            return Err(self.narrow(search.low, high));
+        }
+
+        if !self.is_close(found) {
+            return Err(self.narrow(found, search.high));
+        }
+
+        self.state = State::Frames;
+        self.skip = search.target - found.sample;
+        self.apply_skip();
+
+        Ok(consumed)
+    }
+
+    fn end_of_search(&mut self) -> Error {
+        let high = Point {
+            byte: self.search.probe,
+            sample: UNKNOWN,
+        };
+
+        self.narrow(self.search.low, high)
+    }
+
+    fn narrow(&mut self, low: Point, high: Point) -> Error {
+        let before = self.search.high.byte.saturating_sub(self.search.low.byte);
+
+        self.search.low = low;
+        self.search.high = high;
+        self.search.bisect = high.byte != UNKNOWN && high.byte - low.byte > before / 2;
+        self.search.rounds += 1;
+
+        if self.search.rounds > MAXIMUM_SEEK_ROUNDS {
+            self.state = State::Frames;
+            self.block_size = 0;
+            self.position = 0;
+
+            return Error::InvalidData;
+        }
+
+        Error::SeekTo(self.start_search())
+    }
+
+    fn start_search(&mut self) -> u64 {
+        let probe = self.probe();
+
+        self.search.probe = probe;
+        self.state = State::Search;
+        self.offset = probe;
+        self.block_size = 0;
+        self.position = 0;
+        self.skip = 0;
+        self.required = 0;
+        self.finishing = false;
+
+        probe
+    }
+
+    fn is_close(&self, point: Point) -> bool {
+        let Some(information) = self.information else {
+            return true;
+        };
+
+        self.search.target - point.sample <= LINEAR_FRAMES * information.maximum_block_size as u64
+            || self.search.high.byte.saturating_sub(point.byte)
+                <= LINEAR_FRAMES * information.maximum_frame_size_bound() as u64
+    }
+
+    fn probe(&mut self) -> u64 {
+        let search = self.search;
+        let low = search.low;
+        let high = search.high;
+
+        let Some(information) = self.information.filter(|_| !self.is_close(low)) else {
+            return low.byte;
+        };
+        let aim = search
+            .target
+            .saturating_sub(information.maximum_block_size as u64)
+            .max(low.sample);
+        let distance = u128::from(aim - low.sample);
+        let end = match high.sample {
+            UNKNOWN if information.total_samples > low.sample => information.total_samples,
+            sample => sample,
+        };
+        let probe = if high.byte == UNKNOWN {
+            let frame = information.maximum_frame_size_bound() as u64;
+            let known = match self.last {
+                Some(last) if last.sample > low.sample => last,
+                _ => low,
+            };
+            let (bytes, samples) = match known.sample {
+                0 => (frame, information.maximum_block_size as u64),
+                samples => (known.byte - self.audio_offset, samples),
+            };
+            let estimate = distance.saturating_mul(u128::from(bytes)) / u128::from(samples);
+            let stretch = search.stretch.min(32);
+            let reach = u128::from(low.byte - self.audio_offset + frame) << (stretch + 1);
+
+            self.search.stretch += 1;
+
+            u128::from(low.byte).saturating_add((estimate << stretch).min(reach))
+        } else if search.bisect || end == UNKNOWN {
+            u128::from(low.byte + (high.byte - low.byte) / 2)
+        } else {
+            u128::from(low.byte)
+                + u128::from(high.byte - low.byte).saturating_mul(distance)
+                    / u128::from(end - low.sample)
+        };
+
+        (probe.min(u128::from(UNKNOWN)) as u64)
+            .clamp(low.byte + 1, high.byte.saturating_sub(1).max(low.byte + 1))
     }
 
     fn stereo(&mut self) -> Result<[&mut [i32; MAXIMUM_BLOCK_SIZE]; 2]> {
@@ -858,8 +1171,11 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize> 
             (State::Marker, _) => MARKER_SIZE,
             (State::BlockHeader, _) => BLOCK_HEADER_SIZE,
             (State::StreamInformation { .. }, _) => STREAM_INFORMATION_SIZE,
-            (State::Skip { .. }, _) | (State::Frames, None) => 1,
-            (State::Frames, Some(information)) => information.maximum_frame_size_bound(),
+            (State::SeekTable { .. }, _) => SEEK_POINT_SIZE,
+            (State::Skip { .. }, _) | (State::Frames | State::Search, None) => 1,
+            (State::Frames | State::Search, Some(information)) => {
+                information.maximum_frame_size_bound()
+            }
         }
     }
 
@@ -890,24 +1206,35 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize> 
             }
 
             let remaining = &input[progress.consumed..];
+            let frames = matches!(self.state, State::Frames | State::Search);
             let result = match self.state {
-                State::Frames
+                State::Search if remaining.is_empty() && self.finishing => {
+                    return Err(self.end_of_search());
+                }
+                State::Frames | State::Search
                     if remaining.is_empty()
                         || (!self.finishing && remaining.len() < self.required) =>
                 {
                     return Ok(progress);
                 }
-                State::Frames => self.decode_frame(remaining),
+                State::Frames => self.next_frame(remaining),
+                State::Search => self.search_step(remaining),
                 _ => self.read_metadata(remaining),
             };
 
             match result {
                 Ok(consumed) => {
                     progress.consumed += consumed;
+                    self.offset += consumed as u64;
                     self.required = 0;
+
+                    if !frames && self.state == State::Frames {
+                        self.audio_offset = self.offset;
+                    }
                 }
+                Err(error @ Error::SeekTo(_)) => return Err(error),
                 Err(Error::Incomplete) if !self.finishing || remaining.is_empty() => {
-                    if self.state == State::Frames {
+                    if frames {
                         self.required = remaining
                             .len()
                             .saturating_mul(2)
@@ -921,5 +1248,75 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize> 
                 Err(error) => return Err(error),
             }
         }
+    }
+}
+
+impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize> Seek
+    for FlacDecoder<S, MAXIMUM_BLOCK_SIZE, MAXIMUM_CHANNELS>
+{
+    fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
+        let information = match (self.state, self.information) {
+            (State::Frames | State::Search, Some(information)) => information,
+            _ if frame == 0 => {
+                let length = self.length;
+
+                self.reset();
+                self.length = length;
+
+                return Ok(SeekRequest::default());
+            }
+            _ => return Err(Error::Incomplete),
+        };
+
+        if information.total_samples != 0 && frame > information.total_samples {
+            return Err(Error::InvalidParameter);
+        }
+
+        let mut low = Point {
+            byte: self.audio_offset,
+            sample: 0,
+        };
+        let mut high = Point {
+            byte: self.length.unwrap_or(UNKNOWN),
+            sample: UNKNOWN,
+        };
+        let points = self.seek_points[..self.seek_point_count]
+            .iter()
+            .map(|point| Point {
+                byte: self.audio_offset.saturating_add(point.byte),
+                sample: point.sample,
+            });
+
+        for point in points.chain(self.last) {
+            if point.sample <= frame {
+                if point.sample >= low.sample {
+                    low = point;
+                }
+            } else if point.byte < high.byte {
+                high = point;
+            }
+        }
+
+        self.search = Search {
+            target: frame,
+            low,
+            high,
+            probe: low.byte,
+            bisect: false,
+            stretch: 0,
+            rounds: 0,
+        };
+
+        let byte_offset = self.start_search();
+        let skip_frames = if byte_offset == low.byte {
+            u32::try_from(frame - low.sample).unwrap_or(u32::MAX)
+        } else {
+            0
+        };
+
+        Ok(SeekRequest {
+            byte_offset,
+            skip_frames,
+        })
     }
 }
