@@ -3,7 +3,10 @@ use core::marker::PhantomData;
 use nanoaudio_core::{Error, Format, I24, MAXIMUM_CHANNELS, Result, Sample};
 
 use crate::bytes::Bytes;
-use crate::{Analyzer, DefaultRepresentation, Dither, Representation, Tap, Volume};
+use crate::{
+    Analyzer, DefaultRepresentation, Dither, Interpolation, Representation, Resample, Resampler,
+    Tap, Volume,
+};
 
 type Value<S> = <<S as Stream>::Representation as Representation>::Value;
 
@@ -104,6 +107,20 @@ pub trait Stream {
         Self: Sized,
     {
         Dither::new(self, target, seed)
+    }
+
+    /// Converts the sample rate with `resampler`, which keeps its place in the stream from one pipeline to the next.
+    ///
+    /// Returns [`Error::InvalidParameter`] if `resampler` was created for another channel count.
+    fn resample<K, const CHANNELS: usize>(
+        self,
+        resampler: &mut Resampler<K, Self::Representation, CHANNELS>,
+    ) -> Result<Resample<'_, Self, K, CHANNELS>>
+    where
+        Self: Sized,
+        K: Interpolation<Self::Representation, CHANNELS>,
+    {
+        Resample::new(self, resampler)
     }
 
     /// Writes frames into `output`, replacing its content, and returns the number of frames written.
