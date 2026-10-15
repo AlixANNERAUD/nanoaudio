@@ -9,6 +9,7 @@ const EXTENDED_EXPONENT_BIAS: i32 = 16_383;
 const EXTENDED_MANTISSA_BITS: i32 = 63;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum AiffEncoding {
     BigEndian,
     LittleEndian,

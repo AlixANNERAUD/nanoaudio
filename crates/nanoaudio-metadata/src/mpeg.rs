@@ -352,6 +352,7 @@ impl VbriHeader<'_> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum VbrHeader<'a> {
     Xing(XingHeader<'a>),
     Vbri(VbriHeader<'a>),

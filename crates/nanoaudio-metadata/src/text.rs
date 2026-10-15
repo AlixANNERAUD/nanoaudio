@@ -1,6 +1,7 @@
 use super::{Error, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Encoding {
     Latin1,
     Utf16,

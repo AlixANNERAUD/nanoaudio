@@ -7,6 +7,7 @@ const FORM_HEADER_LENGTH: usize = 12;
 const CHUNK_HEADER_LENGTH: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ChunkFormat {
     Riff,
     RiffInfo,

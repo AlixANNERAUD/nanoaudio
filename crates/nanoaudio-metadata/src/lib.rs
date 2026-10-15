@@ -42,6 +42,7 @@ impl Location {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Error {
     Needs(Location),
     Invalid,
@@ -139,6 +140,7 @@ impl<'a, C: Cursor> Iterator for Items<'a, C> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Container {
     Id3v2(Id3v2Tag),
     Flac(Flac),
