@@ -84,6 +84,12 @@ impl<S: Sample> Decoder for WavDecoder<S> {
         }
     }
 
+    fn finish(&mut self) {
+        if let Codec::ImaAdpcm(codec) = &mut self.codec {
+            codec.finish();
+        }
+    }
+
     fn decode(&mut self, input: &[u8], output: &mut [S]) -> Result<Progress> {
         match &mut self.codec {
             Codec::Pcm(format) => {
