@@ -6,3 +6,4 @@ lcov.info
 /tools/bench/Cargo.lock
 /tools/bench/flash/target
 /tools/bench/flash/Cargo.lock
+/crates/nanoaudio-web/examples/www/pkg

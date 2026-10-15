@@ -1,0 +1,63 @@
+[package]
+name = "nanoaudio-web"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Low-latency browser audio for nanoaudio, with the stream running in a Web Audio AudioWorklet."
+documentation = "https://docs.rs/nanoaudio-web"
+readme = "README.md"
+keywords = ["audio", "wasm", "web-audio", "audioworklet", "browser"]
+categories = ["multimedia::audio", "wasm", "web-programming", "no-std"]
+
+[package.metadata.docs.rs]
+targets = ["wasm32-unknown-unknown"]
+
+[dependencies]
+nanoaudio-core.workspace = true
+nanoaudio-buffer.workspace = true
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = [
+  "AudioContext",
+  "AudioContextOptions",
+  "AudioDestinationNode",
+  "AudioNode",
+  "AudioWorklet",
+  "AudioWorkletNode",
+  "AudioWorkletNodeOptions",
+  "BaseAudioContext",
+  "Blob",
+  "BlobPropertyBag",
+  "ChannelCountMode",
+  "MediaDevices",
+  "MediaStream",
+  "MediaStreamAudioSourceNode",
+  "MediaStreamConstraints",
+  "MediaStreamTrack",
+  "MessageEvent",
+  "MessagePort",
+  "Navigator",
+  "Url",
+  "Window",
+  "Worklet",
+] }
+
+[dev-dependencies]
+nanoaudio-wav.workspace = true
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+
+[[example]]
+name = "player"
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true
