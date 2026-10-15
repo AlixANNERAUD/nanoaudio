@@ -144,6 +144,46 @@ pub fn probe_qoa_encode(encoder: &mut QoaEncoder, input: &[i16], output: &mut [u
 
 #[inline(never)]
 #[no_mangle]
+pub fn probe_qoa_decode_stereo(
+    decoder: &mut QoaDecoder<i16, 2>,
+    input: &[u8],
+    output: &mut [i16],
+) -> usize {
+    decoder
+        .decode(input, output)
+        .map_or(0, |progress| progress.produced)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_qoa_encode_stereo(
+    encoder: &mut QoaEncoder<i16, 2>,
+    input: &[i16],
+    output: &mut [u8],
+) -> usize {
+    encoder
+        .encode(input, output)
+        .map_or(0, |progress| progress.produced)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_fixed_stream_resample_linear_i16(
+    resampler: &mut Resampler<Linear, Fixed, 2>,
+    input: &[i16],
+    output: &mut [i16],
+) -> usize {
+    match samples_using::<Fixed, i16>(input, 2) {
+        Ok(stream) => match stream.resample(resampler) {
+            Ok(mut stream) => stream.write_samples(output),
+            Err(_) => 0,
+        },
+        Err(_) => 0,
+    }
+}
+
+#[inline(never)]
+#[no_mangle]
 pub fn probe_fixed_resample_linear_i16(
     resampler: &mut Resampler<Linear, Fixed, 2>,
     input: &[i16],

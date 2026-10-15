@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use nanoaudio_core::codec::Progress;
-use nanoaudio_core::{Error, MAXIMUM_CHANNELS, Result, Sample};
+use nanoaudio_core::{Error, Result, Sample};
 
 use crate::{DefaultRepresentation, Fixed, Float, Representation, Stream};
 
@@ -746,18 +746,11 @@ where
         let channels = self.channels as usize;
 
         while self.clock.pending > 0 {
-            let mut values = [R::SILENCE; MAXIMUM_CHANNELS];
+            let mut values = [R::SILENCE; CHANNELS];
 
             if !stream.next_frame(&mut values[..channels]) {
                 return false;
             }
-
-            let values = core::array::from_fn(|channel| {
-                values[..channels]
-                    .get(channel)
-                    .copied()
-                    .unwrap_or(R::SILENCE)
-            });
 
             K::push(&mut self.state, &values);
             self.clock.pending -= 1;

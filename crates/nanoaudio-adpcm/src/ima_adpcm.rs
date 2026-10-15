@@ -1,5 +1,5 @@
 use nanoaudio_core::codec::{Decoder, Encoder, Progress, Seek, SeekRequest};
-use nanoaudio_core::{Configuration, Error, Format, MAXIMUM_CHANNELS, Result, Sample};
+use nanoaudio_core::{Configuration, Error, Format, Result, Sample};
 
 use crate::{discard, seek_block};
 
@@ -106,8 +106,10 @@ impl ImaAdpcmState {
 /// An IMA ADPCM encoder and decoder with the WAV block layout.
 ///
 /// Each block starts with a 4-byte header per channel, holding the first sample and the step index, followed by 4 bits per sample in groups of 4 bytes per channel. Up to 8 channels at any sample rate; the blocks store neither, so they come from the container, like the block size.
+///
+/// `MAXIMUM_CHANNELS` sizes the per-channel state, 4 bytes per channel. [`new`](Self::new) keeps room for 8 channels; [`new_limited`](Self::new_limited) on `ImaAdpcm<1>` or `ImaAdpcm<2>` keeps a mono or stereo codec smaller.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ImaAdpcm {
+pub struct ImaAdpcm<const MAXIMUM_CHANNELS: usize = { nanoaudio_core::MAXIMUM_CHANNELS }> {
     sample_rate: u32,
     channels: u8,
     block_align: u16,
@@ -121,6 +123,33 @@ impl ImaAdpcm {
     ///
     /// Returns [`Error::TooManyChannels`] for 0 or more than 8 channels, and [`Error::InvalidParameter`] if `sample_rate` is zero or `block_align` is not one header per channel plus whole 4-byte groups per channel.
     pub fn new(sample_rate: u32, channels: u8, block_align: u16) -> Result<Self> {
+        Self::new_limited(sample_rate, channels, block_align)
+    }
+
+    /// Creates a codec from the number of samples per channel in one block, which must be 1 plus a multiple of 8.
+    ///
+    /// Returns [`Error::InvalidParameter`] for any other count, and the same errors as [`new`](Self::new).
+    pub fn with_samples_per_block(
+        sample_rate: u32,
+        channels: u8,
+        samples_per_block: u16,
+    ) -> Result<Self> {
+        Self::with_samples_per_block_limited(sample_rate, channels, samples_per_block)
+    }
+}
+
+impl<const MAXIMUM_CHANNELS: usize> ImaAdpcm<MAXIMUM_CHANNELS> {
+    /// Like [`new`](ImaAdpcm::new), with room for `MAXIMUM_CHANNELS` channels.
+    ///
+    /// Returns [`Error::TooManyChannels`] for 0 or more than `MAXIMUM_CHANNELS` channels. Fails to compile unless `MAXIMUM_CHANNELS` is between 1 and 8.
+    pub fn new_limited(sample_rate: u32, channels: u8, block_align: u16) -> Result<Self> {
+        const {
+            assert!(
+                MAXIMUM_CHANNELS >= 1 && MAXIMUM_CHANNELS <= nanoaudio_core::MAXIMUM_CHANNELS,
+                "the maximum channel count must be between 1 and 8"
+            );
+        }
+
         let header = CHANNEL_HEADER_SIZE * channels as usize;
         let group = CHANNEL_GROUP_SIZE * channels as usize;
         let block = block_align as usize;
@@ -143,10 +172,8 @@ impl ImaAdpcm {
         })
     }
 
-    /// Creates a codec from the number of samples per channel in one block, which must be 1 plus a multiple of 8.
-    ///
-    /// Returns [`Error::InvalidParameter`] for any other count, and the same errors as [`new`](Self::new).
-    pub fn with_samples_per_block(
+    /// Like [`with_samples_per_block`](ImaAdpcm::with_samples_per_block), with room for `MAXIMUM_CHANNELS` channels.
+    pub fn with_samples_per_block_limited(
         sample_rate: u32,
         channels: u8,
         samples_per_block: u16,
@@ -158,7 +185,7 @@ impl ImaAdpcm {
             / SAMPLES_PER_GROUP;
         let block_align = (CHANNEL_HEADER_SIZE + groups * CHANNEL_GROUP_SIZE) * channels as usize;
 
-        Self::new(
+        Self::new_limited(
             sample_rate,
             channels,
             u16::try_from(block_align).map_err(|_| Error::InvalidParameter)?,
@@ -275,7 +302,7 @@ impl ImaAdpcm {
     }
 }
 
-impl Decoder for ImaAdpcm {
+impl<const MAXIMUM_CHANNELS: usize> Decoder for ImaAdpcm<MAXIMUM_CHANNELS> {
     type Sample = i16;
 
     fn configuration(&self) -> Option<Configuration> {
@@ -300,7 +327,7 @@ impl Decoder for ImaAdpcm {
     }
 }
 
-impl ImaAdpcm {
+impl<const MAXIMUM_CHANNELS: usize> ImaAdpcm<MAXIMUM_CHANNELS> {
     /// Like [`Decoder::decode`], but writes any [`Sample`] format.
     pub fn decode_into<S: Sample>(&mut self, input: &[u8], output: &mut [S]) -> Result<Progress> {
         let block_samples = self.block_samples();
@@ -343,7 +370,7 @@ impl ImaAdpcm {
     }
 }
 
-impl Seek for ImaAdpcm {
+impl<const MAXIMUM_CHANNELS: usize> Seek for ImaAdpcm<MAXIMUM_CHANNELS> {
     /// Seeks to the start of the block holding `frame`, and drops the samples before `frame` from the next output, so the result is sample-exact.
     ///
     /// The byte offset is a whole number of blocks from the start of the encoded data.
@@ -362,7 +389,7 @@ impl Seek for ImaAdpcm {
     }
 }
 
-impl Encoder for ImaAdpcm {
+impl<const MAXIMUM_CHANNELS: usize> Encoder for ImaAdpcm<MAXIMUM_CHANNELS> {
     type Sample = i16;
 
     fn configuration(&self) -> Configuration {

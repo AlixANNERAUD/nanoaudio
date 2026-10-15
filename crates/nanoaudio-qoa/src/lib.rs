@@ -5,7 +5,7 @@
 use core::marker::PhantomData;
 
 use nanoaudio_core::codec::{Decoder, Encoder, Progress, Seek, SeekRequest};
-use nanoaudio_core::{Configuration, Error, MAXIMUM_CHANNELS, Result, Sample};
+use nanoaudio_core::{Configuration, Error, Result, Sample};
 
 /// Samples per channel in a slice, coded together in 8 bytes.
 pub const QOA_SLICE_LENGTH: usize = 20;
@@ -178,8 +178,13 @@ enum Stage {
 /// A QOA decoder.
 ///
 /// Everything is read from the stream: the sample rate and channel count, up to 8, are known once the first frame header is decoded. Each call decodes whole slices of 20 samples per channel, to `i16` or any other [`Sample`] format. Files written as streams, with an unknown length, are supported.
+///
+/// `MAXIMUM_CHANNELS` sizes the per-channel state, 32 bytes per channel, and the smallest output buffer. [`new`](Self::new) keeps room for 8 channels; [`new_limited`](Self::new_limited) on `QoaDecoder<S, 1>` or `QoaDecoder<S, 2>` keeps a mono or stereo decoder smaller. A stream with more channels is rejected with [`Error::TooManyChannels`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QoaDecoder<S: Sample = i16> {
+pub struct QoaDecoder<
+    S: Sample = i16,
+    const MAXIMUM_CHANNELS: usize = { nanoaudio_core::MAXIMUM_CHANNELS },
+> {
     stage: Stage,
     total: Option<u32>,
     remaining: u32,
@@ -195,6 +200,22 @@ pub struct QoaDecoder<S: Sample = i16> {
 impl<S: Sample> QoaDecoder<S> {
     /// Creates a decoder waiting for the file header.
     pub const fn new() -> Self {
+        Self::new_limited()
+    }
+}
+
+impl<S: Sample, const MAXIMUM_CHANNELS: usize> QoaDecoder<S, MAXIMUM_CHANNELS> {
+    /// Like [`new`](QoaDecoder::new), with room for `MAXIMUM_CHANNELS` channels.
+    ///
+    /// Fails to compile unless `MAXIMUM_CHANNELS` is between 1 and 8.
+    pub const fn new_limited() -> Self {
+        const {
+            assert!(
+                MAXIMUM_CHANNELS >= 1 && MAXIMUM_CHANNELS <= nanoaudio_core::MAXIMUM_CHANNELS,
+                "the maximum channel count must be between 1 and 8"
+            );
+        }
+
         Self {
             stage: Stage::FileHeader,
             total: None,
@@ -211,7 +232,7 @@ impl<S: Sample> QoaDecoder<S> {
 
     /// Returns to the state of a new decoder, to decode another file.
     pub fn reset(&mut self) {
-        *self = Self::new();
+        *self = Self::new_limited();
     }
 
     /// Returns the number of samples per channel declared in the file header, `Some(0)` for a stream of unknown length, or `None` before the header is read.
@@ -389,7 +410,7 @@ impl<S: Sample> Default for QoaDecoder<S> {
     }
 }
 
-impl<S: Sample> Decoder for QoaDecoder<S> {
+impl<S: Sample, const MAXIMUM_CHANNELS: usize> Decoder for QoaDecoder<S, MAXIMUM_CHANNELS> {
     type Sample = S;
 
     /// Returns the stream configuration once a frame header has been read.
@@ -397,7 +418,7 @@ impl<S: Sample> Decoder for QoaDecoder<S> {
         (self.channels != 0).then(|| Configuration::new(self.sample_rate, self.channels, S::FORMAT))
     }
 
-    /// One slice for 8 channels, 160 samples, as the channel count is only known from the stream.
+    /// One slice for `MAXIMUM_CHANNELS` channels, 160 samples by default, as the channel count is only known from the stream.
     fn minimum_output(&self) -> usize {
         QOA_SLICE_LENGTH * MAXIMUM_CHANNELS
     }
@@ -433,7 +454,7 @@ impl<S: Sample> Decoder for QoaDecoder<S> {
     }
 }
 
-impl<S: Sample> Seek for QoaDecoder<S> {
+impl<S: Sample, const MAXIMUM_CHANNELS: usize> Seek for QoaDecoder<S, MAXIMUM_CHANNELS> {
     /// Seeks to `frame`, counted per channel from the start of the audio.
     ///
     /// QOA frames are independent and all but the last hold 5120 samples per channel, so the decoder resumes at the QOA frame holding `frame`, at a byte offset counted from the start of the file, and drops the samples before it: the result is sample-exact. It needs a decoded frame header first and returns [`Error::Incomplete`] otherwise, except for frame 0, which resets the decoder. Past the end of a file of known length, it returns [`Error::InvalidParameter`].
@@ -513,8 +534,13 @@ impl<S: Sample> Seek for QoaDecoder<S> {
 /// A QOA encoder.
 ///
 /// Writes the file header, then frames of up to 5120 samples per channel, each split into slices of 20. Takes up to 8 interleaved channels as `i16` or any other [`Sample`] format, converted to 16-bit. For every slice it tries the 16 scale factors and keeps the best, so encoding takes 15 to 20 times longer than decoding.
+///
+/// `MAXIMUM_CHANNELS` sizes the per-channel state, 33 bytes per channel. [`new`](Self::new) keeps room for 8 channels; [`new_limited`](Self::new_limited) on `QoaEncoder<S, 1>` or `QoaEncoder<S, 2>` keeps a mono or stereo encoder smaller.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QoaEncoder<S: Sample = i16> {
+pub struct QoaEncoder<
+    S: Sample = i16,
+    const MAXIMUM_CHANNELS: usize = { nanoaudio_core::MAXIMUM_CHANNELS },
+> {
     stage: Stage,
     total: u32,
     remaining: u32,
@@ -534,6 +560,22 @@ impl<S: Sample> QoaEncoder<S> {
     ///
     /// Returns [`Error::TooManyChannels`] for 0 or more than 8 channels, and [`Error::InvalidParameter`] if `sample_rate` is 0 or above [`QOA_MAXIMUM_SAMPLE_RATE`].
     pub fn new(sample_rate: u32, channels: u8, samples: u32) -> Result<Self> {
+        Self::new_limited(sample_rate, channels, samples)
+    }
+}
+
+impl<S: Sample, const MAXIMUM_CHANNELS: usize> QoaEncoder<S, MAXIMUM_CHANNELS> {
+    /// Like [`new`](QoaEncoder::new), with room for `MAXIMUM_CHANNELS` channels.
+    ///
+    /// Returns [`Error::TooManyChannels`] for 0 or more than `MAXIMUM_CHANNELS` channels. Fails to compile unless `MAXIMUM_CHANNELS` is between 1 and 8.
+    pub fn new_limited(sample_rate: u32, channels: u8, samples: u32) -> Result<Self> {
+        const {
+            assert!(
+                MAXIMUM_CHANNELS >= 1 && MAXIMUM_CHANNELS <= nanoaudio_core::MAXIMUM_CHANNELS,
+                "the maximum channel count must be between 1 and 8"
+            );
+        }
+
         if channels == 0 || channels as usize > MAXIMUM_CHANNELS {
             return Err(Error::TooManyChannels);
         }
@@ -738,7 +780,7 @@ impl<S: Sample> QoaEncoder<S> {
     }
 }
 
-impl<S: Sample> Encoder for QoaEncoder<S> {
+impl<S: Sample, const MAXIMUM_CHANNELS: usize> Encoder for QoaEncoder<S, MAXIMUM_CHANNELS> {
     type Sample = S;
 
     fn configuration(&self) -> Configuration {
@@ -795,6 +837,7 @@ mod tests {
     use std::vec::Vec;
 
     use super::*;
+    use nanoaudio_core::MAXIMUM_CHANNELS;
 
     struct Random(u64);
 
