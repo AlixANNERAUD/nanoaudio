@@ -1,4 +1,5 @@
 #![no_std]
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
 use nanoaudio_core::codec::{Decoder, Encoder, Progress, Seek, SeekRequest};
@@ -37,7 +38,9 @@ use scalar::{low_interval, qmf_analysis, qmf_synthesis};
 ))]
 use simd::{low_interval, qmf_analysis, qmf_synthesis};
 
+/// The G.722 sample rate, in Hz.
 pub const G722_SAMPLE_RATE: u32 = 16_000;
+/// The RTP clock rate of G.722, in Hz: 8000 instead of 16000, an error in RFC 1890 that RFC 3551 keeps for compatibility.
 pub const G722_RTP_CLOCK_RATE: u32 = 8_000;
 
 const FILTER: [i32; 24] = [
@@ -96,15 +99,22 @@ fn negative(value: i32) -> bool {
     value < 0
 }
 
+/// A G.722 bit rate.
+///
+/// The stream does not store it, so the decoder gets it from the caller.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum G722BitRate {
+    /// 64 kbit/s, all 8 bits of each byte carry audio.
     #[default]
     Rate64000,
+    /// 56 kbit/s, the lowest bit of each byte is left for auxiliary data.
     Rate56000,
+    /// 48 kbit/s, the two lowest bits of each byte are left for auxiliary data.
     Rate48000,
 }
 
 impl G722BitRate {
+    /// Returns the bit rate in bit/s.
     pub const fn bits_per_second(self) -> u32 {
         match self {
             G722BitRate::Rate64000 => 64_000,
@@ -113,6 +123,7 @@ impl G722BitRate {
         }
     }
 
+    /// Returns the G.722 mode number: 1 for 64, 2 for 56 and 3 for 48 kbit/s.
     pub const fn mode(self) -> u8 {
         match self {
             G722BitRate::Rate64000 => 1,
@@ -258,6 +269,9 @@ fn configuration() -> Configuration {
     Configuration::new(G722_SAMPLE_RATE, 1, Format::I16)
 }
 
+/// A G.722 encoder at 64 kbit/s.
+///
+/// Takes 16 kHz mono samples and writes one byte for every two. A [`G722Decoder`] at 56 or 48 kbit/s ignores the lowest one or two bits of each byte, so the same output serves all three bit rates.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct G722Encoder {
     history: [i32; 24],
@@ -272,6 +286,7 @@ impl Default for G722Encoder {
 }
 
 impl G722Encoder {
+    /// Creates an encoder in the initial G.722 state.
     pub const fn new() -> Self {
         Self {
             history: [0; 24],
@@ -280,10 +295,12 @@ impl G722Encoder {
         }
     }
 
+    /// Returns to the initial state, to start a new stream.
     pub fn reset(&mut self) {
         *self = Self::new();
     }
 
+    /// Encodes two consecutive samples to one byte.
     pub fn encode_pair(&mut self, first: i16, second: i16) -> u8 {
         self.history.copy_within(2.., 0);
         self.history[22] = first as i32;
@@ -348,14 +365,17 @@ impl Encoder for G722Encoder {
         configuration()
     }
 
+    /// Two samples, coded together in one byte.
     fn minimum_input(&self) -> usize {
         2
     }
 
+    /// One byte.
     fn minimum_output(&self) -> usize {
         1
     }
 
+    /// Encodes as many pairs of samples as `input` and `output` hold. A last odd sample is left in `input`.
     fn encode(&mut self, input: &[i16], output: &mut [u8]) -> Result<Progress> {
         let (pairs, _) = input.as_chunks::<2>();
         let count = pairs.len().min(output.len());
@@ -368,6 +388,9 @@ impl Encoder for G722Encoder {
     }
 }
 
+/// A G.722 decoder.
+///
+/// Writes 16 kHz mono samples, two for every byte of input. The bit rate is not in the stream and is given by the caller.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct G722Decoder {
     bit_rate: G722BitRate,
@@ -385,6 +408,7 @@ impl Default for G722Decoder {
 }
 
 impl G722Decoder {
+    /// Creates a decoder for `bit_rate`.
     pub const fn new(bit_rate: G722BitRate) -> Self {
         Self {
             bit_rate,
@@ -396,14 +420,17 @@ impl G722Decoder {
         }
     }
 
+    /// Returns the bit rate given at creation.
     pub const fn bit_rate(&self) -> G722BitRate {
         self.bit_rate
     }
 
+    /// Returns to the initial state, keeping the bit rate.
     pub fn reset(&mut self) {
         *self = Self::new(self.bit_rate);
     }
 
+    /// Decodes one byte to two consecutive samples.
     pub fn decode_byte(&mut self, byte: u8) -> [i16; 2] {
         let low = self.decode_low(byte & 0x3F);
         let high = self.decode_high(byte >> 6);
@@ -442,6 +469,7 @@ impl G722Decoder {
         output
     }
 
+    /// Like [`Decoder::decode`], but writes any [`Sample`] format.
     pub fn decode_into<S: Sample>(&mut self, input: &[u8], output: &mut [S]) -> Result<Progress> {
         let (pairs, _) = output.as_chunks_mut::<2>();
         let count = pairs.len().min(input.len());
@@ -465,6 +493,9 @@ impl G722Decoder {
 }
 
 impl Seek for G722Decoder {
+    /// Seeks to `frame`, a sample at 16 kHz, counted from the start of the encoded data.
+    ///
+    /// Each byte holds two samples, so the byte offset is `frame / 2`, and an odd `frame` drops the first sample of that byte. G.722 adapts continuously and has no point to resume from, so the decoder restarts from its initial state: the output fades in and converges towards a sequential decode instead of matching it exactly.
     fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
         self.reset();
         self.skip = !frame.is_multiple_of(2);
@@ -483,10 +514,12 @@ impl Decoder for G722Decoder {
         Some(configuration())
     }
 
+    /// Two samples, decoded from one byte.
     fn minimum_output(&self) -> usize {
         2
     }
 
+    /// Decodes as many bytes as `input` and `output` hold, two samples each.
     fn decode(&mut self, input: &[u8], output: &mut [i16]) -> Result<Progress> {
         self.decode_into(input, output)
     }

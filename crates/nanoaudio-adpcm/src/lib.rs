@@ -1,4 +1,5 @@
 #![no_std]
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
 use nanoaudio_core::codec::SeekRequest;

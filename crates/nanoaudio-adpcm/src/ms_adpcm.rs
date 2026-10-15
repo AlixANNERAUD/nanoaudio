@@ -13,8 +13,12 @@ const HEADER_SAMPLES: usize = 2;
 const MAXIMUM_CHANNELS: usize = 2;
 const DELTA_ESTIMATION_SAMPLES: usize = 3;
 
+/// The most coefficient pairs an [`MsAdpcmCoefficients`] holds.
 pub const MS_ADPCM_MAXIMUM_COEFFICIENTS: usize = 7;
 
+/// The predictor coefficient pairs of an MS ADPCM stream, in Q8.
+///
+/// Each block header picks one pair by index. WAV files list them in the `fmt ` chunk, and almost all use [`STANDARD`](Self::STANDARD).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MsAdpcmCoefficients {
     pairs: [[i16; 2]; MS_ADPCM_MAXIMUM_COEFFICIENTS],
@@ -22,6 +26,7 @@ pub struct MsAdpcmCoefficients {
 }
 
 impl MsAdpcmCoefficients {
+    /// The 7 pairs defined by Microsoft.
     pub const STANDARD: Self = Self {
         pairs: [
             [256, 0],
@@ -35,6 +40,9 @@ impl MsAdpcmCoefficients {
         count: 7,
     };
 
+    /// Creates a set from 1 to 7 pairs.
+    ///
+    /// Returns [`Error::InvalidParameter`] if `pairs` is empty or longer than [`MS_ADPCM_MAXIMUM_COEFFICIENTS`].
     pub fn new(pairs: &[[i16; 2]]) -> Result<Self> {
         if pairs.is_empty() || pairs.len() > MS_ADPCM_MAXIMUM_COEFFICIENTS {
             return Err(Error::InvalidParameter);
@@ -49,6 +57,7 @@ impl MsAdpcmCoefficients {
         Ok(coefficients)
     }
 
+    /// Returns the pairs.
     pub fn as_slice(&self) -> &[[i16; 2]] {
         &self.pairs[..self.count as usize]
     }
@@ -60,6 +69,9 @@ impl Default for MsAdpcmCoefficients {
     }
 }
 
+/// The predictor state of one MS ADPCM channel.
+///
+/// Use it to code samples one at a time, outside the WAV block layout of [`MsAdpcm`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct MsAdpcmState {
     coefficients: [i16; 2],
@@ -69,6 +81,7 @@ pub struct MsAdpcmState {
 }
 
 impl MsAdpcmState {
+    /// Creates a state from a coefficient pair, a quantization step and the last two samples.
     pub const fn new(
         coefficients: [i16; 2],
         delta: i16,
@@ -83,18 +96,22 @@ impl MsAdpcmState {
         }
     }
 
+    /// Returns the coefficient pair, in Q8.
     pub const fn coefficients(&self) -> [i16; 2] {
         self.coefficients
     }
 
+    /// Returns the quantization step.
     pub const fn delta(&self) -> i16 {
         self.delta
     }
 
+    /// Returns the last sample.
     pub const fn previous(&self) -> i16 {
         self.previous
     }
 
+    /// Returns the sample before the last one.
     pub const fn before_previous(&self) -> i16 {
         self.before_previous
     }
@@ -106,6 +123,7 @@ impl MsAdpcmState {
             >> 8
     }
 
+    /// Decodes the signed 4-bit code in the low nibble of `nibble` and returns the sample.
     pub fn decode(&mut self, nibble: u8) -> i16 {
         let nibble = nibble & 0x0F;
         let signed = ((nibble << 4) as i8 >> 4) as i32;
@@ -120,6 +138,7 @@ impl MsAdpcmState {
         sample
     }
 
+    /// Encodes `sample` to a 4-bit code, updating the state as the decoder will.
     pub fn encode(&mut self, sample: i16) -> u8 {
         let delta = (self.delta as i32).max(1);
         let difference = sample as i32 - self.prediction();
@@ -136,6 +155,9 @@ impl MsAdpcmState {
     }
 }
 
+/// A Microsoft ADPCM encoder and decoder with the WAV block layout.
+///
+/// Each block starts with a 7-byte header per channel, holding the coefficient index, the step and the first two samples, followed by 4 bits per sample, interleaved. Mono or stereo at any sample rate; the blocks store neither, so they come from the container, like the block size. The encoder tries every coefficient pair for each block, so it takes about 20 times longer than the decoder.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MsAdpcm {
     sample_rate: u32,
@@ -147,6 +169,9 @@ pub struct MsAdpcm {
 }
 
 impl MsAdpcm {
+    /// Creates a codec from `block_align`, the size of one block in bytes, with as many samples per block as fit and the [standard coefficients](MsAdpcmCoefficients::STANDARD).
+    ///
+    /// Returns [`Error::TooManyChannels`] for 0 or more than 2 channels, and [`Error::InvalidParameter`] if `sample_rate` is zero or `block_align` leaves no room for samples after the headers.
     pub fn new(sample_rate: u32, channels: u8, block_align: u16) -> Result<Self> {
         let data = (block_align as usize).saturating_sub(CHANNEL_HEADER_SIZE * channels as usize);
         let samples_per_block = data * 2 / (channels as usize).max(1) + HEADER_SAMPLES;
@@ -160,6 +185,9 @@ impl MsAdpcm {
         )
     }
 
+    /// Creates a codec from the number of samples per channel in one block, with the smallest block that holds them and the [standard coefficients](MsAdpcmCoefficients::STANDARD).
+    ///
+    /// Returns [`Error::InvalidParameter`] for fewer than 3 samples, and the same errors as [`new`](Self::new).
     pub fn with_samples_per_block(
         sample_rate: u32,
         channels: u8,
@@ -180,6 +208,9 @@ impl MsAdpcm {
         )
     }
 
+    /// Creates a codec from the values of a WAV `fmt ` chunk: block size, samples per channel in one block and coefficients.
+    ///
+    /// Returns [`Error::TooManyChannels`] for 0 or more than 2 channels, and [`Error::InvalidParameter`] if `sample_rate` is zero, `samples_per_block` is under 3, or the samples do not fit in `block_align`.
     pub fn with_coefficients(
         sample_rate: u32,
         channels: u8,
@@ -213,14 +244,17 @@ impl MsAdpcm {
         })
     }
 
+    /// Returns the size of one block in bytes.
     pub const fn block_align(&self) -> u16 {
         self.block_align
     }
 
+    /// Returns the number of samples per channel in one block.
     pub const fn samples_per_block(&self) -> usize {
         self.samples_per_block as usize
     }
 
+    /// Returns the coefficient pairs blocks can pick from.
     pub const fn coefficients(&self) -> &MsAdpcmCoefficients {
         &self.coefficients
     }
@@ -370,16 +404,21 @@ impl Decoder for MsAdpcm {
         Some(self.pcm_configuration())
     }
 
+    /// One block: [`samples_per_block`](MsAdpcm::samples_per_block) samples per channel.
     fn minimum_output(&self) -> usize {
         self.block_samples()
     }
 
+    /// Decodes as many whole blocks as `input` and `output` hold. A final partial block is not decoded.
+    ///
+    /// Returns [`Error::BufferTooSmall`] if `output` is shorter than one block, and [`Error::InvalidData`] when the next block picks a coefficient pair that does not exist.
     fn decode(&mut self, input: &[u8], output: &mut [i16]) -> Result<Progress> {
         self.decode_into(input, output)
     }
 }
 
 impl MsAdpcm {
+    /// Like [`Decoder::decode`], but writes any [`Sample`] format.
     pub fn decode_into<S: Sample>(&mut self, input: &[u8], output: &mut [S]) -> Result<Progress> {
         let block_samples = self.block_samples();
 
@@ -414,6 +453,9 @@ impl MsAdpcm {
 }
 
 impl Seek for MsAdpcm {
+    /// Seeks to the start of the block holding `frame`, and drops the samples before `frame` from the next output, so the result is sample-exact.
+    ///
+    /// The byte offset is a whole number of blocks from the start of the encoded data.
     fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
         let (request, skip) = seek_block(
             frame,
@@ -435,14 +477,19 @@ impl Encoder for MsAdpcm {
         self.pcm_configuration()
     }
 
+    /// One block of interleaved samples.
     fn minimum_input(&self) -> usize {
         self.block_samples()
     }
 
+    /// One block of [`block_align`](MsAdpcm::block_align) bytes.
     fn minimum_output(&self) -> usize {
         self.block_align as usize
     }
 
+    /// Encodes as many whole blocks as `input` and `output` hold, keeping for each channel the coefficient pair with the smallest error.
+    ///
+    /// A final partial block is not encoded: pad it with silence to a whole block. Returns [`Error::BufferTooSmall`] if `output` is shorter than one block.
     fn encode(&mut self, input: &[i16], output: &mut [u8]) -> Result<Progress> {
         if output.len() < self.block_align as usize {
             return Err(Error::BufferTooSmall);

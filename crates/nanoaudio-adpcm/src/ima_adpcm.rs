@@ -18,6 +18,9 @@ const CHANNEL_HEADER_SIZE: usize = 4;
 const CHANNEL_GROUP_SIZE: usize = 4;
 const SAMPLES_PER_GROUP: usize = CHANNEL_GROUP_SIZE * 2;
 
+/// The predictor and step index of one IMA ADPCM channel.
+///
+/// Use it to code samples one at a time, outside the WAV block layout of [`ImaAdpcm`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct ImaAdpcmState {
     predictor: i16,
@@ -25,6 +28,7 @@ pub struct ImaAdpcmState {
 }
 
 impl ImaAdpcmState {
+    /// Creates a state from a predicted sample and a step index, clamping the index to 88.
     pub const fn new(predictor: i16, index: u8) -> Self {
         Self {
             predictor,
@@ -36,14 +40,17 @@ impl ImaAdpcmState {
         }
     }
 
+    /// Returns the last decoded sample, which predicts the next one.
     pub const fn predictor(&self) -> i16 {
         self.predictor
     }
 
+    /// Returns the step index, from 0 to 88.
     pub const fn index(&self) -> u8 {
         self.index
     }
 
+    /// Decodes the 4-bit code in the low nibble of `nibble` and returns the sample.
     pub fn decode(&mut self, nibble: u8) -> i16 {
         let step = STEPS[self.index as usize];
         let mut difference = step >> 3;
@@ -71,6 +78,7 @@ impl ImaAdpcmState {
         self.predictor
     }
 
+    /// Encodes `sample` to a 4-bit code, updating the state as the decoder will.
     pub fn encode(&mut self, sample: i16) -> u8 {
         let mut step = STEPS[self.index as usize];
         let mut difference = sample as i32 - self.predictor as i32;
@@ -95,6 +103,9 @@ impl ImaAdpcmState {
     }
 }
 
+/// An IMA ADPCM encoder and decoder with the WAV block layout.
+///
+/// Each block starts with a 4-byte header per channel, holding the first sample and the step index, followed by 4 bits per sample in groups of 4 bytes per channel. Up to 8 channels at any sample rate; the blocks store neither, so they come from the container, like the block size.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ImaAdpcm {
     sample_rate: u32,
@@ -106,6 +117,9 @@ pub struct ImaAdpcm {
 }
 
 impl ImaAdpcm {
+    /// Creates a codec from `block_align`, the size of one block in bytes as found in the WAV header.
+    ///
+    /// Returns [`Error::TooManyChannels`] for 0 or more than 8 channels, and [`Error::InvalidParameter`] if `sample_rate` is zero or `block_align` is not one header per channel plus whole 4-byte groups per channel.
     pub fn new(sample_rate: u32, channels: u8, block_align: u16) -> Result<Self> {
         let header = CHANNEL_HEADER_SIZE * channels as usize;
         let group = CHANNEL_GROUP_SIZE * channels as usize;
@@ -129,6 +143,9 @@ impl ImaAdpcm {
         })
     }
 
+    /// Creates a codec from the number of samples per channel in one block, which must be 1 plus a multiple of 8.
+    ///
+    /// Returns [`Error::InvalidParameter`] for any other count, and the same errors as [`new`](Self::new).
     pub fn with_samples_per_block(
         sample_rate: u32,
         channels: u8,
@@ -148,10 +165,12 @@ impl ImaAdpcm {
         )
     }
 
+    /// Returns the size of one block in bytes.
     pub const fn block_align(&self) -> u16 {
         self.block_align
     }
 
+    /// Returns the number of samples per channel in one block.
     pub const fn samples_per_block(&self) -> usize {
         self.groups() * SAMPLES_PER_GROUP + 1
     }
@@ -263,20 +282,26 @@ impl Decoder for ImaAdpcm {
         Some(self.pcm_configuration())
     }
 
+    /// One block: [`samples_per_block`](ImaAdpcm::samples_per_block) samples per channel.
     fn minimum_output(&self) -> usize {
         self.block_samples()
     }
 
+    /// Lets the next calls decode a final partial block, up to its last whole group of 4 bytes per channel; without it, a partial block waits for more input.
     fn finish(&mut self) {
         self.finishing = true;
     }
 
+    /// Decodes as many whole blocks as `input` and `output` hold.
+    ///
+    /// Returns [`Error::BufferTooSmall`] if `output` is shorter than one block.
     fn decode(&mut self, input: &[u8], output: &mut [i16]) -> Result<Progress> {
         self.decode_into(input, output)
     }
 }
 
 impl ImaAdpcm {
+    /// Like [`Decoder::decode`], but writes any [`Sample`] format.
     pub fn decode_into<S: Sample>(&mut self, input: &[u8], output: &mut [S]) -> Result<Progress> {
         let block_samples = self.block_samples();
 
@@ -319,6 +344,9 @@ impl ImaAdpcm {
 }
 
 impl Seek for ImaAdpcm {
+    /// Seeks to the start of the block holding `frame`, and drops the samples before `frame` from the next output, so the result is sample-exact.
+    ///
+    /// The byte offset is a whole number of blocks from the start of the encoded data.
     fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
         let (request, skip) = seek_block(
             frame,
@@ -341,14 +369,19 @@ impl Encoder for ImaAdpcm {
         self.pcm_configuration()
     }
 
+    /// One block of interleaved samples.
     fn minimum_input(&self) -> usize {
         self.block_samples()
     }
 
+    /// One block of [`block_align`](ImaAdpcm::block_align) bytes.
     fn minimum_output(&self) -> usize {
         self.block_align as usize
     }
 
+    /// Encodes as many whole blocks as `input` and `output` hold.
+    ///
+    /// A final partial block is not encoded: pad it with silence to a whole block. Returns [`Error::BufferTooSmall`] if `output` is shorter than one block.
     fn encode(&mut self, input: &[i16], output: &mut [u8]) -> Result<Progress> {
         if output.len() < self.block_align as usize {
             return Err(Error::BufferTooSmall);

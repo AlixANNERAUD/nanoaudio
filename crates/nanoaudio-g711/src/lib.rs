@@ -1,4 +1,5 @@
 #![no_std]
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
 use nanoaudio_core::codec::{Decoder, Encoder, Progress, Seek, SeekRequest};
@@ -83,6 +84,9 @@ fn compress(value: u32, offset: u32) -> u32 {
     }
 }
 
+/// Encodes a 16-bit sample to a µ-law code.
+///
+/// Only the top 14 bits of the sample are used, as in G.711.
 #[inline]
 pub fn encode_mu_law(sample: i16) -> u8 {
     encode_mu_law_with(sample, compress)
@@ -110,6 +114,9 @@ const fn expand_mu_law(code: u8) -> i16 {
     }
 }
 
+/// Encodes a 16-bit sample to an A-law code.
+///
+/// Only the top 13 bits of the sample are used, as in G.711.
 #[inline]
 pub fn encode_a_law(sample: i16) -> u8 {
     encode_a_law_with(sample, compress)
@@ -192,6 +199,7 @@ fn expand_a_law_float(code: u8) -> i16 {
 static A_LAW: [i16; 256] = table(Law::A);
 static MU_LAW: [i16; 256] = table(Law::Mu);
 
+/// Decodes an A-law code to a 16-bit sample.
 #[inline]
 pub fn decode_a_law(code: u8) -> i16 {
     if LOOKUP {
@@ -203,6 +211,7 @@ pub fn decode_a_law(code: u8) -> i16 {
     }
 }
 
+/// Decodes a µ-law code to a 16-bit sample.
 #[inline]
 pub fn decode_mu_law(code: u8) -> i16 {
     if LOOKUP {
@@ -232,12 +241,18 @@ fn encode_with(input: &[i16], output: &mut [u8], encode: impl Fn(i16) -> u8) {
     }
 }
 
+/// A G.711 companding law.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Law {
+    /// A-law, used in Europe and most countries outside North America and Japan.
     A,
+    /// µ-law, used in North America and Japan.
     Mu,
 }
 
+/// A G.711 encoder and decoder, one byte per sample.
+///
+/// Any sample rate and channel count are accepted: G.711 stores neither, so they come from the container or the caller, usually 8 kHz mono for telephony. Samples are interleaved, and each call processes whole frames only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct G711 {
     law: Law,
@@ -246,6 +261,9 @@ pub struct G711 {
 }
 
 impl G711 {
+    /// Creates a codec for `law`, at `sample_rate` Hz with `channels` interleaved channels.
+    ///
+    /// Returns [`Error::InvalidParameter`] if `sample_rate` or `channels` is zero.
     pub const fn new(law: Law, sample_rate: u32, channels: u8) -> Result<Self> {
         if channels == 0 || sample_rate == 0 {
             return Err(Error::InvalidParameter);
@@ -258,6 +276,7 @@ impl G711 {
         })
     }
 
+    /// Returns the companding law.
     pub const fn law(&self) -> Law {
         self.law
     }
@@ -272,6 +291,7 @@ impl G711 {
 }
 
 impl G711 {
+    /// Like [`Decoder::decode`], but writes any [`Sample`] format.
     pub fn decode_into<S: Sample>(&mut self, input: &[u8], output: &mut [S]) -> Result<Progress> {
         let count = self.whole_samples(input.len().min(output.len()));
 
@@ -291,6 +311,7 @@ impl Decoder for G711 {
         Some(self.pcm_configuration())
     }
 
+    /// One frame: one sample per channel.
     fn minimum_output(&self) -> usize {
         self.channels as usize
     }
@@ -301,6 +322,7 @@ impl Decoder for G711 {
 }
 
 impl Seek for G711 {
+    /// Seeks to `frame` directly, as every byte decodes on its own: the byte offset is `frame` times the channel count, from the start of the encoded data, and nothing is skipped.
     fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
         let byte_offset = frame
             .checked_mul(self.channels as u64)
@@ -320,10 +342,12 @@ impl Encoder for G711 {
         self.pcm_configuration()
     }
 
+    /// One frame: one sample per channel.
     fn minimum_input(&self) -> usize {
         self.channels as usize
     }
 
+    /// One byte per channel.
     fn minimum_output(&self) -> usize {
         self.channels as usize
     }
