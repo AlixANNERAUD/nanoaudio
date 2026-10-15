@@ -22,6 +22,8 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
       - name: Format
         run: cargo fmt --all -- --check
 
@@ -45,11 +47,19 @@ jobs:
       - name: Test with float
         run: cargo test --features float
 
-      - name: Test with mp3
-        run: cargo test --features mp3
-
       - name: Test with every mp3 option
         run: cargo test --features mp3-simd,mpeg-layer12
+
+      - name: Test with mp3 and Coverage
+        run: cargo llvm-cov --features mp3 --lcov --output-path lcov.info
+
+      - name: Upload Coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: AlixANNERAUD/nanoaudio
+          files: lcov.info
+          fail_ci_if_error: true
 
   embedded:
     runs-on: ubuntu-latest

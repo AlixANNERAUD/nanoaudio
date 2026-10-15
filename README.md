@@ -3,6 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/nanoaudio.svg)](https://crates.io/crates/nanoaudio)
 [![docs.rs](https://img.shields.io/docsrs/nanoaudio)](https://docs.rs/nanoaudio)
 [![CI](https://github.com/AlixANNERAUD/nanoaudio/actions/workflows/check.yml/badge.svg)](https://github.com/AlixANNERAUD/nanoaudio/actions/workflows/check.yml)
+[![codecov](https://codecov.io/github/AlixANNERAUD/nanoaudio/graph/badge.svg)](https://codecov.io/github/AlixANNERAUD/nanoaudio)
 [![License: MIT](https://img.shields.io/crates/l/nanoaudio.svg)](https://github.com/AlixANNERAUD/nanoaudio/blob/main/LICENSE)
 [![MSRV](https://img.shields.io/crates/msrv/nanoaudio.svg)](https://github.com/AlixANNERAUD/nanoaudio/blob/main/Cargo.toml)
 
