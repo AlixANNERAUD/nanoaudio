@@ -2,7 +2,7 @@
 
 Numbers to help pick a codec and a configuration. They come from `tools/bench`, are regenerated with `python3 tools/bench/run.py`, and are only as good as the machine they ran on: compare rows with each other rather than trusting absolute values.
 
-- Commit: `144a60f`, 2026-10-15.
+- Commit: `144a60f` for every row except G.711, `c67aab2` for the G.711 rows, 2026-10-15.
 - Host: Apple M2 Pro, macOS-27.0.1 (`aarch64-apple-darwin`).
 - Toolchain: rustc 1.99.0 (b940084d7 2026-09-28), wasmtime 49.0.3 (f96eabaa1 2026-10-14).
 - Method: each measurement repeats the whole operation until it lasts at least 40 ms, then takes the median of 11 such runs after a warm-up run, over 2 passes averaged.
@@ -16,8 +16,8 @@ Nanoseconds per sample (per channel, so a stereo frame counts twice), and how ma
 
 | Codec | Configuration | Decode (ns/sample) | Decode speed | Encode (ns/sample) | Encode speed |
 | --- | --- | --- | --- | --- | --- |
-| G.711 µ-law | 8 kHz mono | 0.10 | 1,315,497× | 3.59 | 34,860× |
-| G.711 A-law | 8 kHz mono | 0.12 | 1,050,776× | 3.82 | 32,710× |
+| G.711 µ-law | 8 kHz mono | 0.10 | 1,268,184× | 0.24 | 512,850× |
+| G.711 A-law | 8 kHz mono | 0.12 | 1,015,670× | 0.25 | 502,771× |
 | IMA ADPCM | 16 kHz mono, 256-byte blocks | 3.11 | 20,083× | 7.27 | 8,602× |
 | IMA ADPCM | 44.1 kHz stereo, 2048-byte blocks | 2.47 | 4,585× | 5.76 | 1,969× |
 | MS ADPCM | 44.1 kHz stereo, 2048-byte blocks | 2.82 | 4,015× | 56.7 | 200× |
@@ -46,10 +46,10 @@ WebAssembly under wasmtime, without and with `-C target-feature=+simd128`:
 
 | Codec | Configuration | Direction | Without | With | Gain |
 | --- | --- | --- | --- | --- | --- |
-| G.711 µ-law | 8 kHz mono | decode | 0.36 | 0.41 | 0.88× |
-| G.711 µ-law | 8 kHz mono | encode | 4.55 | 0.94 | 4.82× |
-| G.711 A-law | 8 kHz mono | decode | 0.37 | 0.44 | 0.84× |
-| G.711 A-law | 8 kHz mono | encode | 3.90 | 0.88 | 4.42× |
+| G.711 µ-law | 8 kHz mono | decode | 0.37 | 0.28 | 1.31× |
+| G.711 µ-law | 8 kHz mono | encode | 0.98 | 0.25 | 3.91× |
+| G.711 A-law | 8 kHz mono | decode | 0.38 | 0.40 | 0.97× |
+| G.711 A-law | 8 kHz mono | encode | 1.14 | 0.28 | 4.07× |
 | IMA ADPCM | 16 kHz mono, 256-byte blocks | decode | 2.92 | 2.94 | 0.99× |
 | IMA ADPCM | 16 kHz mono, 256-byte blocks | encode | 8.64 | 8.70 | 0.99× |
 | IMA ADPCM | 44.1 kHz stereo, 2048-byte blocks | decode | 2.77 | 2.82 | 0.98× |
@@ -75,10 +75,10 @@ x86_64, baseline (SSE2) and `-C target-cpu=x86-64-v3` (AVX2). This ran under Ros
 
 | Codec | Configuration | Direction | Without | With | Gain |
 | --- | --- | --- | --- | --- | --- |
-| G.711 µ-law | 8 kHz mono | decode | 0.26 | 0.57 | 0.46× |
-| G.711 µ-law | 8 kHz mono | encode | 2.16 | 5.94 | 0.36× |
-| G.711 A-law | 8 kHz mono | decode | 0.31 | 0.78 | 0.39× |
-| G.711 A-law | 8 kHz mono | encode | 3.51 | 4.67 | 0.75× |
+| G.711 µ-law | 8 kHz mono | decode | 0.27 | 0.58 | 0.47× |
+| G.711 µ-law | 8 kHz mono | encode | 0.55 | 1.65 | 0.33× |
+| G.711 A-law | 8 kHz mono | decode | 0.32 | 0.78 | 0.41× |
+| G.711 A-law | 8 kHz mono | encode | 0.64 | 1.88 | 0.34× |
 | IMA ADPCM | 16 kHz mono, 256-byte blocks | decode | 3.68 | 3.71 | 0.99× |
 | IMA ADPCM | 16 kHz mono, 256-byte blocks | encode | 14.5 | 14.7 | 0.99× |
 | IMA ADPCM | 44.1 kHz stereo, 2048-byte blocks | decode | 3.61 | 3.60 | 1.00× |
@@ -162,7 +162,7 @@ FLAC needs one `i32` per sample of its largest block for every channel: pick `MA
 | Codec | Probe | Cortex-M0+, `s` | Cortex-M0+, `3` | Cortex-M4F, `s` | Cortex-M4F, `3` | RV32IMC, `s` | RV32IMC, `3` |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | G.711 | decode | 1.7 | 2.0 | 1.3 | 1.8 | 1.3 | 1.3 |
-| G.711 | decode + encode | 2.1 | 2.6 | 1.7 | 2.3 | 1.7 | 1.8 |
+| G.711 | decode + encode | 2.2 | 4.5 | 1.6 | 4.1 | 1.8 | 2.0 |
 | IMA ADPCM | decode | 3.3 | 3.8 | 3.0 | 3.4 | 2.9 | 3.1 |
 | IMA ADPCM | decode + encode | 4.0 | 5.2 | 3.7 | 4.6 | 3.7 | 4.6 |
 | MS ADPCM | decode | 3.4 | 4.2 | 2.9 | 4.2 | 2.9 | 2.9 |

@@ -47,6 +47,11 @@ HELIUM = [
     "probe_float_convert_i16",
 ]
 
+FLAT = [
+    "probe_g711_encode_mu_law",
+    "probe_g711_encode_a_law",
+]
+
 INLINED = [
     "probe_qoa_decode",
 ]
@@ -205,6 +210,11 @@ def loops(lines):
     return found
 
 
+def nested(lines):
+    found = loops(lines)
+    return [body for body in found if any(len(other) < len(body) and set(other) <= set(body) for other in found)]
+
+
 def innermost(lines):
     found = loops(lines)
     return [body for body in found if not any(len(other) < len(body) and set(other) <= set(body) for other in found)]
@@ -237,7 +247,7 @@ def analyse(name, assembly, opt_level):
         total = sum(len(instructions(bodies[member])) for member in reached)
         sizes = [len(instructions(body)) for member in reached for body in loops(bodies[member])]
         report.append("{:<8} {:<26} instructions {:>4}  loops {}".format(name, function, total, sizes))
-    expected = set(CALL_FREE + HELIUM + FIXED_I24 + INLINED + SCALAR)
+    expected = set(CALL_FREE + HELIUM + FIXED_I24 + FLAT + INLINED + SCALAR)
     for function in sorted(expected - set(probes)):
         failures.append(name + ": missing " + function)
     for function in FIXED_NARROW:
@@ -250,6 +260,10 @@ def analyse(name, assembly, opt_level):
         lines = [line for member in closure(bodies, function) for line in bodies[member]]
         if any(WIDE_MULTIPLY.search(line) for line in lines):
             failures.append(name + ": 64-bit multiply in " + function)
+    for function in FLAT:
+        for member in closure(bodies, function):
+            if nested(bodies[member]):
+                failures.append(name + ": loop inside the sample loop of " + function)
     for function in CALL_FREE:
         for member in closure(bodies, function):
             for body in loops(bodies[member]):
