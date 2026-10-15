@@ -344,3 +344,432 @@ impl<R: Measure> Analyzer<R> for CrestFactor<R> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use std::vec::Vec;
+
+    use nanoaudio_core::Format;
+    use nanoaudio_dsp::{Fixed, Float, Stream, analyze_bytes_using, analyze_using, samples_using};
+
+    use super::*;
+
+    fn feed<R, A>(analyzer: A, input: &[i16], channels: u8) -> A
+    where
+        R: Representation,
+        A: Analyzer<R> + Clone + PartialEq + core::fmt::Debug,
+    {
+        let mut tapped = analyzer.clone();
+        let mut sliced = analyzer.clone();
+        let mut bytes = analyzer;
+        let mut output = std::vec![0i16; input.len()];
+
+        let frames = samples_using::<R, _>(input, channels)
+            .unwrap()
+            .tap(&mut tapped)
+            .write_samples(&mut output);
+        let raw: Vec<u8> = input
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect();
+
+        assert_eq!(frames, input.len() / channels as usize);
+        assert_eq!(
+            &output[..frames * channels as usize],
+            &input[..frames * channels as usize]
+        );
+        assert_eq!(
+            analyze_using::<R, _, _>(input, channels, &mut sliced),
+            Ok(frames)
+        );
+        assert_eq!(
+            analyze_bytes_using::<R, _>(&raw, Format::I16, channels, &mut bytes),
+            Ok(frames)
+        );
+        assert_eq!(tapped, sliced);
+        assert_eq!(tapped, bytes);
+
+        tapped
+    }
+
+    fn interleave(channels: &[Vec<i16>]) -> Vec<i16> {
+        (0..channels[0].len())
+            .flat_map(|index| channels.iter().map(move |channel| channel[index]))
+            .collect()
+    }
+
+    fn sine(frames: usize, period: f64, amplitude: f64, offset: f64) -> Vec<i16> {
+        (0..frames)
+            .map(|index| {
+                let phase = 2.0 * core::f64::consts::PI * index as f64 / period;
+
+                (offset + amplitude * phase.sin()).round() as i16
+            })
+            .collect()
+    }
+
+    #[test]
+    fn logarithm() {
+        let mut value = 1.0e-40f32;
+
+        while value < 1.0e30 {
+            let expected = 20.0 * (value as f64).log10();
+
+            assert!(
+                (decibels(value) as f64 - expected).abs() < 1.0e-5 + 2.0e-7 * expected.abs(),
+                "{value} {} {expected}",
+                decibels(value)
+            );
+            value *= 1.37;
+        }
+
+        assert_eq!(decibels(1.0), 0.0);
+        assert_eq!(decibels(0.0), f32::NEG_INFINITY);
+        assert_eq!(decibels(f32::INFINITY), f32::INFINITY);
+        assert!(decibels(f32::NAN).is_nan());
+    }
+
+    fn reference_clips(samples: &[i16], run_length: u32) -> (u64, u64, u32) {
+        let (mut clipped, mut runs, mut run, mut longest) = (0, 0, 0, 0);
+
+        for sample in samples {
+            if *sample == i16::MAX || *sample <= -i16::MAX {
+                clipped += 1;
+                run += 1;
+                longest = longest.max(run);
+
+                if run == run_length {
+                    runs += 1;
+                }
+            } else {
+                run = 0;
+            }
+        }
+
+        (clipped, runs, longest)
+    }
+
+    fn clips<R>()
+    where
+        R: Measure + PartialEq + core::fmt::Debug,
+        R::Value: core::fmt::Debug,
+    {
+        let left = std::vec![
+            0, 32767, 0, 32767, 32767, 0, -32768, -32767, 32767, 1, 32766, -32766, 32767, 32767,
+            32767, 32767, 32767, 0, -32768, -32768, -32768,
+        ];
+        let right: Vec<i16> = left.iter().rev().map(|sample| sample / 2).collect();
+
+        for (channels, signals) in [
+            (1, std::vec![left.clone()]),
+            (2, std::vec![left.clone(), right]),
+        ] {
+            let counter = feed::<R, _>(ClipCounter::<R>::new(), &interleave(&signals), channels);
+
+            assert_eq!(counter.channels(), channels);
+            assert_eq!(counter.run_length(), 3);
+
+            for (channel, signal) in signals.iter().enumerate() {
+                let (clipped, runs, longest) = reference_clips(signal, 3);
+
+                assert_eq!(counter.samples(channel), clipped);
+                assert_eq!(counter.runs(channel), runs);
+                assert_eq!(counter.longest_run(channel), longest);
+            }
+
+            assert_eq!(counter.samples(channels as usize), 0);
+            assert_eq!(counter.samples(MAXIMUM_CHANNELS), 0);
+        }
+
+        let (clipped, runs, longest) = reference_clips(&left, 3);
+
+        assert_eq!((clipped, runs, longest), (14, 3, 5));
+
+        let mut counter = feed::<R, _>(
+            ClipCounter::<R>::with_threshold(R::from_sample(16384i16), 0),
+            &left,
+            1,
+        );
+
+        assert_eq!(counter.run_length(), 1);
+        assert_eq!(counter.samples(0), 16);
+        assert_eq!(counter.runs(0), 5);
+
+        counter.reset();
+        assert_eq!(
+            counter,
+            ClipCounter::with_threshold(R::from_sample(16384i16), 1)
+        );
+
+        let empty = feed::<R, _>(ClipCounter::<R>::default(), &[], 2);
+
+        assert_eq!(empty, ClipCounter::new());
+        assert_eq!(empty.channels(), 0);
+
+        let mut long = ClipCounter::<R>::new();
+
+        long.clips[0].run = u32::MAX - 1;
+        long.analyze(&[R::FULL_SCALE]);
+        long.analyze(&[R::FULL_SCALE]);
+        assert_eq!(long.longest_run(0), u32::MAX);
+        assert_eq!(long.samples(0), 2);
+    }
+
+    #[test]
+    fn clips_fixed() {
+        clips::<Fixed>();
+
+        let mut counter = ClipCounter::<Fixed>::new();
+
+        counter.analyze(&[i32::MIN, i32::MAX, 0x7FFF_0000, 0x7FFE_FFFF]);
+        assert_eq!(
+            [0, 1, 2, 3].map(|channel| counter.samples(channel)),
+            [1, 1, 1, 0]
+        );
+        assert_eq!(counter.threshold(), 0x7FFF_0000);
+    }
+
+    #[test]
+    fn clips_float() {
+        clips::<Float>();
+
+        let mut counter = ClipCounter::<Float>::new();
+
+        counter.analyze(&[f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1.5, -1.0, 0.999]);
+        assert_eq!(
+            [0, 1, 2, 3, 4, 5].map(|channel| counter.samples(channel)),
+            [0, 1, 1, 1, 1, 0]
+        );
+    }
+
+    #[test]
+    fn time_constants() {
+        let constant = |rate, milliseconds| {
+            DcOffset::<Fixed>::with_time_constant(rate, milliseconds).time_constant()
+        };
+
+        assert_eq!(DcOffset::<Fixed>::new(48_000).time_constant(), 65_536);
+        assert_eq!(DcOffset::<Float>::new(44_100).time_constant(), 32_768);
+        assert_eq!(constant(48_000, 10), 512);
+        assert_eq!(constant(1000, 1), 1);
+        assert_eq!(constant(0, 0), 1);
+        assert_eq!(constant(u32::MAX, u32::MAX), 1 << 31);
+
+        for frames in 1u64..5000 {
+            let shift = constant(1000, frames as u32).ilog2() as i32;
+            let error = ((frames as f64).log2() - shift as f64).abs();
+
+            assert!(error <= 0.5 + 1.0e-9, "{frames}");
+        }
+    }
+
+    fn offsets<R>()
+    where
+        R: Representation + PartialEq + core::fmt::Debug,
+    {
+        let rate = 8000;
+        let meter = DcOffset::<R>::with_time_constant(rate, 16);
+        let shift = meter.time_constant().ilog2();
+
+        assert_eq!(meter.time_constant(), 128);
+
+        let frames = 300;
+        let signals = std::vec![std::vec![1000i16; frames], std::vec![-12_345i16; frames]];
+
+        for channels in [1u8, 2] {
+            let meter = feed::<R, _>(meter, &interleave(&signals[..channels as usize]), channels);
+
+            for (channel, signal) in signals.iter().take(channels as usize).enumerate() {
+                let value = signal[0] as f64 / 32_768.0;
+                let expected =
+                    value * (1.0 - (1.0 - 1.0 / (1u64 << shift) as f64).powi(frames as i32));
+                let offset = R::to_sample::<f32>(meter.offset(channel)) as f64;
+
+                assert!((offset - expected).abs() < 1.0e-8, "{offset} {expected}");
+            }
+        }
+
+        let settled = feed::<R, _>(
+            meter,
+            &interleave(&[std::vec![1000i16; 10_000], std::vec![-32_768; 10_000]]),
+            2,
+        );
+
+        assert_eq!(R::to_sample::<i32>(settled.offset(0)), 1000 << 16);
+        assert_eq!(R::to_sample::<i32>(settled.offset(1)), i32::MIN);
+        assert_eq!(R::to_sample::<i16>(settled.offset(2)), 0);
+        assert_eq!(settled.channels(), 2);
+        assert!((settled.offset_decibels(1) as f64).abs() < 1.0e-6);
+        assert!(
+            (settled.offset_decibels(0) as f64 - 20.0 * (1000.0f64 / 32_768.0).log10()).abs()
+                < 1.0e-4
+        );
+        assert_eq!(settled.offset_decibels(2), f32::NEG_INFINITY);
+
+        let biased = sine(48_000, 48.0, 8000.0, 500.0);
+        let meter = feed::<R, _>(DcOffset::<R>::new(48_000), &biased, 1);
+        let ripple = 8000.0 / (2.0 * core::f64::consts::PI * 65_536.0 / 48.0);
+        let expected = 500.0 * (1.0 - (1.0 - 1.0 / 65_536.0f64).powi(48_000));
+        let offset = R::to_sample::<f32>(meter.offset(0)) as f64 * 32_768.0;
+
+        assert!(
+            (offset - expected).abs() < ripple + 1.0,
+            "{offset} {expected}"
+        );
+
+        let mut cleared = settled;
+
+        cleared.reset();
+        assert_eq!(cleared, DcOffset::with_time_constant(rate, 16));
+
+        let empty = feed::<R, _>(DcOffset::<R>::new(rate), &[], 1);
+
+        assert_eq!(empty, DcOffset::new(rate));
+        assert_eq!(empty.offset_decibels(0), f32::NEG_INFINITY);
+    }
+
+    #[test]
+    fn offsets_fixed() {
+        offsets::<Fixed>();
+
+        let mut meter = DcOffset::<Fixed>::with_time_constant(u32::MAX, u32::MAX);
+
+        meter.sums[0] = i64::MIN / 2;
+        meter.sums[1] = i64::MAX / 2;
+
+        for _ in 0..100_000 {
+            meter.analyze(&[i32::MIN, i32::MAX]);
+        }
+
+        assert_eq!(meter.offset(0), i32::MIN);
+        assert_eq!(meter.offset(1), i32::MAX);
+    }
+
+    #[test]
+    fn offsets_float() {
+        offsets::<Float>();
+
+        let mut meter = DcOffset::<Float>::with_time_constant(1, 1);
+
+        meter.analyze(&[f32::NAN, f32::INFINITY, -2.0, 0.25]);
+        assert_eq!(
+            [0, 1, 2, 3].map(|channel| meter.offset(channel)),
+            [0.0, 1.0, -1.0, 0.25]
+        );
+    }
+
+    fn reference_crest(samples: &[i16]) -> (f64, f64) {
+        let peak = samples
+            .iter()
+            .map(|sample| (*sample as f64).abs().min(32_767.0))
+            .fold(0.0, f64::max);
+        let squares: f64 = samples
+            .iter()
+            .map(|sample| (*sample as f64 / 32_768.0).powi(2))
+            .sum();
+
+        (peak / 32_768.0, (squares / samples.len() as f64).sqrt())
+    }
+
+    fn crests<R>()
+    where
+        R: Measure + PartialEq + core::fmt::Debug,
+        R::Value: core::fmt::Debug,
+    {
+        let window = 4800;
+        let signals = std::vec![
+            sine(2 * window + 100, 48.0, 20_000.0, 0.0),
+            (0..2 * window + 100)
+                .map(|index| if index % 10 < 5 { 9000 } else { -9000 })
+                .collect::<Vec<i16>>(),
+        ];
+        let meter = CrestFactor::<R>::with_window(48_000, 100);
+
+        assert_eq!(meter.window(), window as u32);
+        assert_eq!(meter.crest_factor(0), None);
+        assert_eq!(R::to_sample::<i32>(meter.rms(0)), 0);
+
+        for channels in [1u8, 2] {
+            let meter = feed::<R, _>(meter, &interleave(&signals[..channels as usize]), channels);
+
+            assert_eq!(meter.channels(), channels);
+
+            for (channel, signal) in signals.iter().take(channels as usize).enumerate() {
+                let (peak, rms) = reference_crest(&signal[window..2 * window]);
+                let measured_peak = R::to_sample::<f32>(meter.peak(channel)) as f64;
+                let measured_rms = R::to_sample::<f32>(meter.rms(channel)) as f64;
+                let crest = meter.crest_factor(channel).unwrap() as f64;
+
+                assert!(
+                    (measured_peak - peak).abs() < 1.0e-9,
+                    "{measured_peak} {peak}"
+                );
+                assert!(
+                    (measured_rms / rms - 1.0).abs() < 1.0e-6,
+                    "{measured_rms} {rms}"
+                );
+                assert!((crest - 20.0 * (peak / rms).log10()).abs() < 1.0e-4);
+            }
+        }
+
+        let both = feed::<R, _>(meter, &interleave(&signals), 2);
+
+        assert!((both.crest_factor(0).unwrap() - 3.0103).abs() < 0.01);
+        assert!(both.crest_factor(1).unwrap().abs() < 1.0e-4);
+        assert_eq!(both.crest_factor(2), None);
+
+        let quiet = sine(window, 48.0, 3.3, 0.0);
+        let (peak, rms) = reference_crest(&quiet);
+        let measured = feed::<R, _>(meter, &quiet, 1);
+
+        assert!((R::to_sample::<f32>(measured.rms(0)) as f64 - rms).abs() < 1.0e-9);
+        assert!((R::to_sample::<f32>(measured.peak(0)) as f64 - peak).abs() < 1.0e-9);
+
+        let silent = feed::<R, _>(meter, &std::vec![0; window], 1);
+
+        assert_eq!(silent.crest_factor(0), None);
+
+        let mut cleared = both;
+
+        cleared.reset();
+        assert_eq!(cleared, meter);
+
+        let empty = feed::<R, _>(CrestFactor::<R>::new(48_000), &[], 2);
+
+        assert_eq!(empty, CrestFactor::new(48_000));
+    }
+
+    #[test]
+    fn crests_fixed() {
+        crests::<Fixed>();
+
+        let mut meter = CrestFactor::<Fixed>::with_window(1_000_000, 1000);
+
+        for _ in 0..1_000_000 {
+            meter.analyze(&[i32::MIN, i32::MAX, 1 << 15]);
+        }
+
+        assert_eq!(meter.peak(0), i32::MAX);
+        assert_eq!(meter.rms(0), 65_535 << 15);
+        assert_eq!(meter.rms(1), 65_535 << 15);
+        assert_eq!(meter.rms(2), 1 << 15);
+        assert!(meter.crest_factor(0).unwrap().abs() < 0.001);
+    }
+
+    #[test]
+    fn crests_float() {
+        crests::<Float>();
+
+        let mut meter = CrestFactor::<Float>::with_window(1, 1000);
+
+        meter.analyze(&[f32::NAN, 2.0, -0.5]);
+        assert_eq!(meter.peak(0), 0.0);
+        assert_eq!(meter.rms(0), 0.0);
+        assert_eq!(meter.peak(1), 2.0);
+        assert_eq!(meter.rms(1), 65_535.0 / 65_536.0);
+        assert_eq!(meter.rms(2), 0.5);
+        assert!((meter.crest_factor(1).unwrap() - 6.0207).abs() < 0.001);
+    }
+}
