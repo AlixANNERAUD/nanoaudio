@@ -5,6 +5,7 @@ mod ima_adpcm;
 mod mp3;
 mod ms_adpcm;
 mod qoa;
+mod sbc;
 mod wav;
 
 pub use aiff::*;
@@ -14,6 +15,7 @@ pub use ima_adpcm::*;
 pub use mp3::*;
 pub use ms_adpcm::*;
 pub use qoa::*;
+pub use sbc::*;
 pub use wav::*;
 
 use crate::{Configuration, Result, Sample};
