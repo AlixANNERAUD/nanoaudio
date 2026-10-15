@@ -1,6 +1,7 @@
 #![no_std]
 #![doc = include_str!("../README.md")]
 
+mod aiff;
 pub mod codec;
 mod convert;
 mod error;
@@ -13,6 +14,7 @@ mod stream;
 mod volume;
 mod wav;
 
+pub use aiff::*;
 pub use convert::*;
 pub use error::*;
 pub use format::*;

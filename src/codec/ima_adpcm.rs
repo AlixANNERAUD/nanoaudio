@@ -100,6 +100,7 @@ pub struct ImaAdpcm {
     channels: u8,
     block_align: u16,
     states: [ImaAdpcmState; MAXIMUM_CHANNELS],
+    finishing: bool,
 }
 
 impl ImaAdpcm {
@@ -121,6 +122,7 @@ impl ImaAdpcm {
             channels,
             block_align,
             states: [ImaAdpcmState::default(); MAXIMUM_CHANNELS],
+            finishing: false,
         })
     }
 
@@ -160,6 +162,17 @@ impl ImaAdpcm {
 
     fn block_samples(&self) -> usize {
         self.samples_per_block() * self.channels as usize
+    }
+
+    const fn partial_block_samples(&self, length: usize) -> usize {
+        let channels = self.channels as usize;
+
+        match length.checked_sub(CHANNEL_HEADER_SIZE * channels) {
+            Some(data) => {
+                (data / (CHANNEL_GROUP_SIZE * channels) * SAMPLES_PER_GROUP + 1) * channels
+            }
+            None => 0,
+        }
     }
 
     fn pcm_configuration(&self) -> Configuration {
@@ -251,6 +264,10 @@ impl Decoder for ImaAdpcm {
         self.block_samples()
     }
 
+    fn finish(&mut self) {
+        self.finishing = true;
+    }
+
     fn decode(&mut self, input: &[u8], output: &mut [i16]) -> Result<Progress> {
         self.decode_into(input, output)
     }
@@ -274,6 +291,20 @@ impl ImaAdpcm {
 
             progress.consumed += block.len();
             progress.produced += block_samples;
+        }
+
+        let remainder = &input[progress.consumed..];
+        let samples = self.partial_block_samples(remainder.len());
+
+        if self.finishing
+            && remainder.len() < self.block_align as usize
+            && samples > 0
+            && samples <= output.len() - progress.produced
+        {
+            self.decode_block(remainder, &mut output[progress.produced..]);
+
+            progress.consumed += remainder.len();
+            progress.produced += samples;
         }
 
         Ok(progress)

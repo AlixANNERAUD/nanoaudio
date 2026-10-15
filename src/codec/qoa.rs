@@ -597,7 +597,7 @@ impl<S: Sample> Encoder for QoaEncoder<S> {
         FRAME_HEADER_SIZE + CHANNEL_STATE_SIZE * self.channels as usize
     }
 
-    fn finish(&mut self) {
+    fn flush(&mut self) {
         self.finishing = true;
     }
 

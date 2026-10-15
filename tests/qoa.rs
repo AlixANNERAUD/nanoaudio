@@ -86,7 +86,7 @@ fn encode(
 
     loop {
         if end == input.len() {
-            encoder.finish();
+            encoder.flush();
         }
 
         let progress = encoder.encode(&input[position..end], &mut output).unwrap();
