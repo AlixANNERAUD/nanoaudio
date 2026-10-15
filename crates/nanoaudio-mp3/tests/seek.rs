@@ -1,6 +1,6 @@
 use nanoaudio_core::Error;
 use nanoaudio_core::codec::{Decoder, Seek, SeekRequest};
-use nanoaudio_mp3::Mp3Decoder;
+use nanoaudio_mp3::{MP3_DEFAULT_MINIMUM_INPUT, Mp3Decoder};
 
 const CONSTANT: [(&[u8], bool); 4] = [
     (include_bytes!("data/mono_440.mp3"), false),
@@ -15,6 +15,8 @@ const VARIABLE: [&[u8]; 2] = [
 ];
 
 const WINDOW: usize = 16 * 1152 * 2;
+
+const INPUT_WINDOWS: [usize; 2] = [MP3_DEFAULT_MINIMUM_INPUT, 1_445];
 
 fn feed(decoder: &mut Mp3Decoder, input: &[u8], chunk: usize) -> Vec<i16> {
     feed_until(decoder, input, chunk, usize::MAX)
@@ -111,7 +113,7 @@ struct Reference {
 }
 
 fn reference(input: &[u8]) -> Reference {
-    let mut decoder = Mp3Decoder::new();
+    let mut decoder = Mp3Decoder::with_minimum_input(input.len());
     let full = feed(&mut decoder, input, 7);
     let configuration = decoder.configuration().unwrap();
     let channels = configuration.channels as usize;
@@ -129,7 +131,7 @@ fn reference(input: &[u8]) -> Reference {
     }
 }
 
-fn check_constant(input: &[u8], bounded: bool) {
+fn check_constant(input: &[u8], bounded: bool, input_window: usize) {
     let Reference {
         full,
         channels,
@@ -142,7 +144,7 @@ fn check_constant(input: &[u8], bounded: bool) {
 
     for (index, target) in targets(frames, block).into_iter().enumerate() {
         for &chunk in chunks(index) {
-            let mut decoder = Mp3Decoder::new();
+            let mut decoder = Mp3Decoder::with_minimum_input(input_window);
 
             prime(&mut decoder, input);
 
@@ -164,7 +166,7 @@ fn check_constant(input: &[u8], bounded: bool) {
         (frames / 3, frames / 3),
         (1, frames / 2),
     ] {
-        let mut decoder = Mp3Decoder::new();
+        let mut decoder = Mp3Decoder::with_minimum_input(input_window);
 
         prime(&mut decoder, input);
 
@@ -183,7 +185,7 @@ fn check_constant(input: &[u8], bounded: bool) {
         );
     }
 
-    let mut decoder = Mp3Decoder::new();
+    let mut decoder = Mp3Decoder::with_minimum_input(input_window);
 
     prime(&mut decoder, input);
 
@@ -211,7 +213,7 @@ fn aligned(full: &[i16], channels: usize, block: u64, target: u64, decoded: &[i1
         .unwrap_or_else(|| panic!("frame {target}: the output matches no frame"))
 }
 
-fn check_variable(input: &[u8]) -> u64 {
+fn check_variable(input: &[u8], input_window: usize) -> u64 {
     let Reference {
         full,
         channels,
@@ -222,7 +224,7 @@ fn check_variable(input: &[u8]) -> u64 {
 
     for (index, target) in targets(frames, block).into_iter().enumerate() {
         for &chunk in chunks(index) {
-            let mut decoder = Mp3Decoder::new();
+            let mut decoder = Mp3Decoder::with_minimum_input(input_window);
 
             prime(&mut decoder, input);
 
@@ -240,7 +242,7 @@ fn check_variable(input: &[u8]) -> u64 {
         }
     }
 
-    let mut decoder = Mp3Decoder::new();
+    let mut decoder = Mp3Decoder::with_minimum_input(input_window);
 
     prime(&mut decoder, input);
 
@@ -259,18 +261,22 @@ fn check_variable(input: &[u8]) -> u64 {
 
 #[test]
 fn seeks_to_exact_frames_in_constant_bitrate_streams() {
-    for (file, bounded) in CONSTANT {
-        check_constant(file, bounded);
+    for input_window in INPUT_WINDOWS {
+        for (file, bounded) in CONSTANT {
+            check_constant(file, bounded, input_window);
+        }
     }
 }
 
 #[test]
 fn seeks_near_the_target_in_variable_bitrate_streams() {
-    for file in VARIABLE {
-        let Reference { block, frames, .. } = reference(file);
-        let error = check_variable(file);
+    for input_window in INPUT_WINDOWS {
+        for file in VARIABLE {
+            let Reference { block, frames, .. } = reference(file);
+            let error = check_variable(file, input_window);
 
-        assert!(error <= frames / block / 100 + 2, "{error} frames away");
+            assert!(error <= frames / block / 100 + 2, "{error} frames away");
+        }
     }
 }
 

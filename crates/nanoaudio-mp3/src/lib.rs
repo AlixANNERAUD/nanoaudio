@@ -16,10 +16,12 @@ use nanoaudio_core::{Configuration, Error, Result, Sample};
 use stream::{Header, Kind, Table, Tag, find_frame};
 
 /// Default input window of [`Mp3Decoder`], in bytes.
-pub const MP3_DEFAULT_MINIMUM_INPUT: usize = 16 * 1024;
+///
+/// 4 KiB holds the largest frame and the header after it with room to spare, and confirms 2 frames in a row at 320 kbit/s and 32 kHz, 9 at 128 kbit/s and 44.1 kHz. It was 16 KiB in 0.1.
+pub const MP3_DEFAULT_MINIMUM_INPUT: usize = 4 * 1024;
 
 const SYNC_SLACK: u64 = 4;
-const SYNC_KEPT: usize = 4096;
+const SYNC_KEPT: usize = stream::LARGEST_FRAME + stream::HEADER_SIZE;
 const SETTLE_FRAMES: u64 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,7 +152,7 @@ enum Phase {
 ///
 /// It decodes MPEG-1, 2 and 2.5 Layer III, and Layer I and II with the `layer12` feature. The `simd` feature, on by default, enables SIMD on x86, AArch64 and WebAssembly. The decoder state takes about 23 KiB. Decoding runs in floating point, which is slow on cores without an FPU.
 ///
-/// `decode` waits for an input window of [`MP3_DEFAULT_MINIMUM_INPUT`] bytes (16 KiB) by default, because a frame is recognized from the headers that follow it and a frame cut off at the end of the input would be dropped. Call `finish` once the input ends, so the last bytes, shorter than the window, are decoded too.
+/// `decode` waits for an input window of [`MP3_DEFAULT_MINIMUM_INPUT`] bytes (4 KiB) by default, because a frame is recognized from the header that follows it. The bit reservoir is kept inside the decoder, so the window does not need to hold it. Call `finish` once the input ends, so the last bytes, shorter than the window, are decoded too.
 #[derive(Clone)]
 pub struct Mp3Decoder<S: Sample + nanomp3_core::Sample = i16> {
     decoder: nanomp3_core::Decoder,
@@ -173,7 +175,7 @@ impl<S: Sample + nanomp3_core::Sample> Mp3Decoder<S> {
 
     /// Creates a decoder that waits for `minimum_input` bytes of input before decoding.
     ///
-    /// A smaller window saves RAM but must still hold a few whole frames (a 128 kbit/s frame at 44.1 kHz is 418 bytes), or frames are dropped.
+    /// The window must hold the largest frame of the stream plus the 4-byte header after it, or frames are dropped and the output changes: 1,445 bytes covers every Layer III stream (the largest frame is 1,441 bytes, at 320 kbit/s and 32 kHz), 1,733 bytes Layer II as well. A larger window confirms more frames before the first one is accepted, which helps to skip junk or tags that look like frames.
     pub const fn with_minimum_input(minimum_input: usize) -> Self {
         Self {
             decoder: nanomp3_core::Decoder::new(),
@@ -201,16 +203,23 @@ impl<S: Sample + nanomp3_core::Sample> Mp3Decoder<S> {
         self.skip = 0;
     }
 
+    fn skippable(&self, input: &[u8]) -> usize {
+        if self.finishing {
+            return input.len();
+        }
+
+        input
+            .len()
+            .saturating_sub(SYNC_KEPT.min(self.minimum_input.saturating_sub(1)))
+            .max(1)
+    }
+
     fn synchronize(&mut self, input: &[u8], target: u64, start: u64, within: usize) -> usize {
         let Some(stream) = self.stream else {
             return 0;
         };
         let Some((index, _)) = find_frame(input, Some(stream.header)) else {
-            return if self.finishing {
-                input.len()
-            } else {
-                input.len().saturating_sub(SYNC_KEPT)
-            };
+            return self.skippable(input);
         };
         let reached = if stream.is_constant() {
             stream.index(self.offset + index as u64)
@@ -332,7 +341,11 @@ impl<S: Sample + nanomp3_core::Sample> Decoder for Mp3Decoder<S> {
             self.observe(input);
         }
 
-        let (consumed, result) = self.decoder.decode(input, output);
+        let (mut consumed, result) = self.decoder.decode(input, output);
+
+        if let Err(nanomp3_core::DecodeError::NoFrame) = result {
+            consumed = consumed.min(self.skippable(input));
+        }
 
         self.offset += consumed as u64;
 
