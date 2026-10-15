@@ -1,16 +1,25 @@
 use crate::{Error, Result};
 
+/// A PCM sample format.
+///
+/// In byte buffers, samples are little-endian. The `u8` value of each variant is stable, to cross an ABI.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Format {
+    /// Unsigned 8-bit samples, with silence at `0x80`.
     U8,
+    /// Signed 16-bit samples.
     I16,
+    /// Signed 32-bit samples.
     I32,
+    /// 32-bit floating-point samples, with full scale at -1.0 and 1.0.
     F32,
+    /// Signed 24-bit samples, stored in 3 bytes.
     I24,
 }
 
 impl Format {
+    /// Returns the size of one sample in bytes.
     pub const fn sample_size(self) -> usize {
         match self {
             Format::U8 => 1,
@@ -42,17 +51,25 @@ impl From<Format> for u8 {
     }
 }
 
+/// The largest number of channels a stream or codec supports.
 pub const MAXIMUM_CHANNELS: usize = 8;
 
+/// The sample rate, channel count and sample format of a stream.
+///
+/// It is `#[repr(C)]`, to cross an ABI.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Configuration {
+    /// Frames per second, in Hz.
     pub sample_rate: u32,
+    /// Number of interleaved channels.
     pub channels: u8,
+    /// Format of each sample.
     pub format: Format,
 }
 
 impl Configuration {
+    /// Creates a configuration.
     pub const fn new(sample_rate: u32, channels: u8, format: Format) -> Self {
         Self {
             sample_rate,
@@ -61,18 +78,22 @@ impl Configuration {
         }
     }
 
+    /// Returns the size of one frame in bytes, a frame being one sample per channel.
     pub const fn frame_size(&self) -> usize {
         self.channels as usize * self.format.sample_size()
     }
 
+    /// Returns the data rate in bytes per second.
     pub const fn bytes_per_second(&self) -> usize {
         self.sample_rate as usize * self.frame_size()
     }
 
+    /// Converts a number of frames to bytes.
     pub const fn frames_to_bytes(&self, frames: usize) -> usize {
         frames * self.frame_size()
     }
 
+    /// Converts a number of bytes to whole frames, rounding down, or 0 if the frame size is 0.
     pub const fn bytes_to_frames(&self, bytes: usize) -> usize {
         match self.frame_size() {
             0 => 0,
@@ -80,6 +101,7 @@ impl Configuration {
         }
     }
 
+    /// Converts a number of frames to a duration in microseconds, rounding down, or 0 if the sample rate is 0.
     pub const fn frames_to_microseconds(&self, frames: usize) -> u64 {
         match self.sample_rate {
             0 => 0,

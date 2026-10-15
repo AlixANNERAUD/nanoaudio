@@ -21,13 +21,20 @@ fn check_channels(channels: u8) -> Result<u8> {
     }
 }
 
+/// A stage of a single-pass pipeline, producing one interleaved frame at a time.
+///
+/// A pipeline starts from [`source`] or [`samples`], goes through stages such as [`volume`](Self::volume) or [`mix`](Self::mix), and ends in a sink such as [`write_bytes`](Self::write_bytes). Each stage pulls frames from the one before it, so the whole chain runs as one loop, without intermediate buffers.
 pub trait Stream {
+    /// The representation values are processed in.
     type Representation: Representation;
 
+    /// Returns the number of channels in each frame.
     fn channels(&self) -> u8;
 
+    /// Writes the next frame into `frame`, one value per channel, or returns `false` once the stream has ended.
     fn next_frame(&mut self, frame: &mut [Value<Self>]) -> bool;
 
+    /// Multiplies every value by `volume`.
     fn volume(self, volume: Volume) -> Amplify<Self>
     where
         Self: Sized,
@@ -39,6 +46,9 @@ pub trait Stream {
         }
     }
 
+    /// Changes the number of channels.
+    ///
+    /// Mono is copied to every channel, several channels are averaged down to mono, and other layouts keep the first channels and pad with silence. Returns [`Error::TooManyChannels`] if `channels` is 0 or above [`MAXIMUM_CHANNELS`].
     fn to_channels(self, channels: u8) -> Result<Remap<Self>>
     where
         Self: Sized,
@@ -49,6 +59,9 @@ pub trait Stream {
         })
     }
 
+    /// Adds `other` to this stream, frame by frame.
+    ///
+    /// The result has the larger channel count of the two, and lasts until both have ended, the shorter one continuing as silence.
     fn mix<O>(self, other: O) -> Mix<Self, O>
     where
         Self: Sized,
@@ -60,6 +73,7 @@ pub trait Stream {
         }
     }
 
+    /// Applies `function` to every value.
     fn map<F>(self, function: F) -> Map<Self, F>
     where
         Self: Sized,
@@ -72,6 +86,7 @@ pub trait Stream {
     }
 
     /// Adds triangular (TPDF) dither of one LSB of `target`, seeded with `seed`.
+    ///
     /// Use it as the last stage when writing to a narrower format, to turn quantisation distortion into noise.
     fn dither(self, target: Format, seed: u32) -> Dither<Self>
     where
@@ -80,6 +95,9 @@ pub trait Stream {
         Dither::new(self, target, seed)
     }
 
+    /// Writes frames into `output`, replacing its content, and returns the number of frames written.
+    ///
+    /// It stops when `output` has no room for a whole frame or the stream has ended.
     fn write_samples<S: Sample>(&mut self, output: &mut [S]) -> usize
     where
         Self: Sized,
@@ -87,6 +105,7 @@ pub trait Stream {
         process_samples(self, output, |_, value| value)
     }
 
+    /// Adds frames to the samples already in `output`, saturating, and returns the number of frames mixed.
     fn mix_into_samples<S: Sample>(&mut self, output: &mut [S]) -> usize
     where
         Self: Sized,
@@ -96,6 +115,7 @@ pub trait Stream {
         })
     }
 
+    /// Like [`write_samples`](Self::write_samples), into little-endian samples in `format`.
     fn write_bytes(&mut self, output: &mut [u8], format: Format) -> usize
     where
         Self: Sized,
@@ -109,6 +129,7 @@ pub trait Stream {
         }
     }
 
+    /// Like [`mix_into_samples`](Self::mix_into_samples), into little-endian samples in `format`.
     fn mix_into_bytes(&mut self, output: &mut [u8], format: Format) -> usize
     where
         Self: Sized,
@@ -190,6 +211,7 @@ where
     frames
 }
 
+/// A stream reading interleaved samples from a slice, created by [`samples`].
 pub struct SampleSource<'a, S: Sample, R: Representation = DefaultRepresentation> {
     samples: &'a [S],
     channels: u8,
@@ -197,6 +219,9 @@ pub struct SampleSource<'a, S: Sample, R: Representation = DefaultRepresentation
 }
 
 impl<'a, S: Sample, R: Representation> SampleSource<'a, S, R> {
+    /// Creates a source over interleaved `samples` with `channels` channels.
+    ///
+    /// Returns [`Error::TooManyChannels`] if `channels` is 0 or above [`MAXIMUM_CHANNELS`].
     pub fn new(samples: &'a [S], channels: u8) -> Result<Self> {
         Ok(Self {
             samples,
@@ -205,6 +230,7 @@ impl<'a, S: Sample, R: Representation> SampleSource<'a, S, R> {
         })
     }
 
+    /// Returns the samples not consumed yet.
     pub fn remaining(&self) -> &'a [S] {
         self.samples
     }
@@ -232,6 +258,7 @@ impl<S: Sample, R: Representation> Stream for SampleSource<'_, S, R> {
     }
 }
 
+/// A stream reading interleaved little-endian samples from bytes, created by [`source`].
 pub struct ByteSource<'a, R: Representation = DefaultRepresentation> {
     bytes: &'a [u8],
     format: Format,
@@ -240,6 +267,9 @@ pub struct ByteSource<'a, R: Representation = DefaultRepresentation> {
 }
 
 impl<'a, R: Representation> ByteSource<'a, R> {
+    /// Creates a source over interleaved samples in `format` with `channels` channels.
+    ///
+    /// Returns [`Error::TooManyChannels`] if `channels` is 0 or above [`MAXIMUM_CHANNELS`].
     pub fn new(bytes: &'a [u8], format: Format, channels: u8) -> Result<Self> {
         Ok(Self {
             bytes,
@@ -249,6 +279,7 @@ impl<'a, R: Representation> ByteSource<'a, R> {
         })
     }
 
+    /// Returns the bytes not consumed yet.
     pub fn remaining(&self) -> &'a [u8] {
         self.bytes
     }
@@ -287,6 +318,7 @@ impl<R: Representation> Stream for ByteSource<'_, R> {
     }
 }
 
+/// The stage returned by [`Stream::volume`].
 pub struct Amplify<St: Stream> {
     stream: St,
     gain: <St::Representation as Representation>::Gain,
@@ -317,6 +349,7 @@ impl<St: Stream> Stream for Amplify<St> {
     }
 }
 
+/// The stage returned by [`Stream::to_channels`].
 pub struct Remap<St: Stream> {
     stream: St,
     channels: u8,
@@ -356,6 +389,7 @@ impl<St: Stream> Stream for Remap<St> {
     }
 }
 
+/// The stage returned by [`Stream::mix`].
 pub struct Mix<L: Stream, Ri: Stream> {
     left: L,
     right: Ri,
@@ -398,6 +432,7 @@ where
     }
 }
 
+/// The stage returned by [`Stream::map`].
 pub struct Map<St: Stream, F> {
     stream: St,
     function: F,
@@ -427,10 +462,14 @@ where
     }
 }
 
+/// Starts a pipeline from interleaved little-endian samples in `format`, processed with the [`DefaultRepresentation`].
+///
+/// Returns [`Error::TooManyChannels`] if `channels` is 0 or above [`MAXIMUM_CHANNELS`].
 pub fn source(bytes: &[u8], format: Format, channels: u8) -> Result<ByteSource<'_>> {
     ByteSource::new(bytes, format, channels)
 }
 
+/// Like [`source`], with the representation `R`.
 pub fn source_using<R: Representation>(
     bytes: &[u8],
     format: Format,
@@ -439,10 +478,14 @@ pub fn source_using<R: Representation>(
     ByteSource::new(bytes, format, channels)
 }
 
+/// Starts a pipeline from interleaved samples, processed with the [`DefaultRepresentation`].
+///
+/// Returns [`Error::TooManyChannels`] if `channels` is 0 or above [`MAXIMUM_CHANNELS`].
 pub fn samples<S: Sample>(samples: &[S], channels: u8) -> Result<SampleSource<'_, S>> {
     SampleSource::new(samples, channels)
 }
 
+/// Like [`samples`], with the representation `R`.
 pub fn samples_using<R: Representation, S: Sample>(
     samples: &[S],
     channels: u8,

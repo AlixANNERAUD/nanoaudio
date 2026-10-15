@@ -1,4 +1,5 @@
 #![no_std]
+#![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
 use core::{
@@ -7,6 +8,9 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+/// A lock-free ring buffer of `N` bytes, shared by one [`Producer`] and one [`Consumer`].
+///
+/// [`split`](Self::split) hands out the two halves, which can live in different tasks or interrupts. Both work on contiguous slices: a grant or a readable slice stops at the end of the storage, and the rest comes with the next call. `N` must be between 1 and `usize::MAX / 2`, which is checked at compile time.
 pub struct RingBuffer<const N: usize> {
     storage: UnsafeCell<[u8; N]>,
     read: AtomicUsize,
@@ -18,6 +22,7 @@ unsafe impl<const N: usize> Sync for RingBuffer<N> {}
 impl<const N: usize> RingBuffer<N> {
     const CAPACITY_IS_VALID: () = assert!(N > 0 && N <= usize::MAX / 2);
 
+    /// Creates an empty buffer.
     pub const fn new() -> Self {
         let () = Self::CAPACITY_IS_VALID;
 
@@ -28,10 +33,12 @@ impl<const N: usize> RingBuffer<N> {
         }
     }
 
+    /// Returns the capacity in bytes, `N`.
     pub const fn capacity(&self) -> usize {
         N
     }
 
+    /// Returns the number of bytes committed and not yet released.
     pub fn len(&self) -> usize {
         Self::distance(
             self.read.load(Ordering::Acquire),
@@ -39,14 +46,19 @@ impl<const N: usize> RingBuffer<N> {
         )
     }
 
+    /// Returns `true` if there is nothing to read.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Returns `true` if there is no free space.
     pub fn is_full(&self) -> bool {
         self.len() == N
     }
 
+    /// Empties the buffer and splits it into its producer and consumer.
+    ///
+    /// The mutable borrow allows only one producer and one consumer at a time.
     pub fn split(&mut self) -> (Producer<'_, N>, Consumer<'_, N>) {
         *self.read.get_mut() = 0;
         *self.write.get_mut() = 0;
@@ -73,15 +85,20 @@ impl<const N: usize> Default for RingBuffer<N> {
     }
 }
 
+/// The writing half of a [`RingBuffer`].
 pub struct Producer<'a, const N: usize> {
     buffer: &'a RingBuffer<N>,
 }
 
 impl<const N: usize> Producer<'_, N> {
+    /// Returns the number of bytes that can be written.
     pub fn free(&self) -> usize {
         N - self.buffer.len()
     }
 
+    /// Returns the contiguous free space at the write position.
+    ///
+    /// It can be shorter than [`free`](Self::free) when the free space wraps around the end of the storage. Write into it, then [`commit`](Self::commit) the bytes written.
     pub fn grant(&mut self) -> &mut [u8] {
         let read = self.buffer.read.load(Ordering::Acquire);
         let write = self.buffer.write.load(Ordering::Relaxed);
@@ -91,6 +108,7 @@ impl<const N: usize> Producer<'_, N> {
         unsafe { slice::from_raw_parts_mut(self.buffer.pointer(write), length) }
     }
 
+    /// Makes the first `count` bytes of the grant readable, clamped to the free space.
     pub fn commit(&mut self, count: usize) {
         let count = count.min(self.free());
         let write = self.buffer.write.load(Ordering::Relaxed);
@@ -100,6 +118,7 @@ impl<const N: usize> Producer<'_, N> {
             .store(RingBuffer::<N>::advance(write, count), Ordering::Release);
     }
 
+    /// Copies as much of `data` as fits and returns the number of bytes written.
     pub fn write(&mut self, mut data: &[u8]) -> usize {
         let mut total = 0;
 
@@ -122,15 +141,20 @@ impl<const N: usize> Producer<'_, N> {
     }
 }
 
+/// The reading half of a [`RingBuffer`].
 pub struct Consumer<'a, const N: usize> {
     buffer: &'a RingBuffer<N>,
 }
 
 impl<const N: usize> Consumer<'_, N> {
+    /// Returns the number of bytes ready to read.
     pub fn available(&self) -> usize {
         self.buffer.len()
     }
 
+    /// Returns the contiguous readable bytes at the read position.
+    ///
+    /// It can be shorter than [`available`](Self::available) when the data wraps around the end of the storage. [`release`](Self::release) the bytes once they are used.
     pub fn readable(&mut self) -> &[u8] {
         let read = self.buffer.read.load(Ordering::Relaxed);
         let write = self.buffer.write.load(Ordering::Acquire);
@@ -140,6 +164,7 @@ impl<const N: usize> Consumer<'_, N> {
         unsafe { slice::from_raw_parts(self.buffer.pointer(read), length) }
     }
 
+    /// Frees the first `count` readable bytes, clamped to what is available.
     pub fn release(&mut self, count: usize) {
         let count = count.min(self.available());
         let read = self.buffer.read.load(Ordering::Relaxed);
@@ -149,6 +174,7 @@ impl<const N: usize> Consumer<'_, N> {
             .store(RingBuffer::<N>::advance(read, count), Ordering::Release);
     }
 
+    /// Copies as many readable bytes as fit into `data` and returns the number of bytes read.
     pub fn read(&mut self, mut data: &mut [u8]) -> usize {
         let mut total = 0;
 
@@ -170,6 +196,7 @@ impl<const N: usize> Consumer<'_, N> {
         total
     }
 
+    /// Discards everything committed so far.
     pub fn clear(&mut self) {
         let write = self.buffer.write.load(Ordering::Acquire);
 

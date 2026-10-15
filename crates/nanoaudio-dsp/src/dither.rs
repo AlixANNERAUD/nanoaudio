@@ -50,8 +50,9 @@ impl Noise {
     }
 }
 
-/// Adds triangular (TPDF) dither of one LSB of the target format to every sample.
-/// Use it as the last stage before writing to a narrower format, such as float or 24-bit audio to 16 or 8 bits.
+/// The stage returned by [`Stream::dither`], which adds triangular (TPDF) dither of one LSB of the target format to every value.
+///
+/// Use it as the last stage before writing to a narrower format, such as float or 24-bit audio to 16 or 8 bits. It adds nothing when the target is 32-bit.
 pub struct Dither<St: Stream> {
     stream: St,
     noise: Noise,
@@ -86,8 +87,9 @@ impl<St: Stream> Stream for Dither<St> {
     }
 }
 
-/// Converts samples like `convert`, adding triangular (TPDF) dither of one LSB of the output format.
-/// `state` carries the noise generator between calls; seed it once and keep passing it.
+/// Converts samples like [`convert`](fn@crate::convert), adding triangular (TPDF) dither of one LSB of the output format.
+///
+/// `state` carries the noise generator between calls: seed it once, with any value, and keep passing it. Processing uses the [`DefaultRepresentation`].
 pub fn convert_dithered<I: Sample, O: Sample>(
     input: &[I],
     output: &mut [O],
@@ -106,7 +108,9 @@ pub fn convert_dithered<I: Sample, O: Sample>(
     count
 }
 
-/// Converts bytes like `convert_bytes`, adding triangular (TPDF) dither of one LSB of the output format.
+/// Converts bytes like [`convert_bytes`](crate::convert_bytes), adding triangular (TPDF) dither of one LSB of the output format.
+///
+/// `state` works as in [`convert_dithered`].
 pub fn convert_bytes_dithered(
     input: &[u8],
     input_format: Format,

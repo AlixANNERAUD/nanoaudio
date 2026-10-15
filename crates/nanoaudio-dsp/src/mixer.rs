@@ -5,10 +5,14 @@ use nanoaudio_core::{Error, Format, I24, Result, Sample};
 use crate::bytes::Bytes;
 use crate::{DefaultRepresentation, Fixed, Float, Representation, RepresentationKind, Volume};
 
+/// Adds `input` multiplied by `volume` to `output`, and returns the number of samples mixed.
+///
+/// The sum saturates. It uses the [`DefaultRepresentation`] and stops at the end of the shorter slice.
 pub fn mix<S: Sample>(output: &mut [S], input: &[S], volume: Volume) -> usize {
     mix_using::<DefaultRepresentation, S>(output, input, volume)
 }
 
+/// Like [`mix`], with the representation `R`.
 pub fn mix_using<R: Representation, S: Sample>(
     output: &mut [S],
     input: &[S],
@@ -29,10 +33,12 @@ pub fn mix_using<R: Representation, S: Sample>(
     count
 }
 
+/// Like [`mix`], on little-endian samples in `format`.
 pub fn mix_bytes(output: &mut [u8], input: &[u8], format: Format, volume: Volume) -> usize {
     mix_bytes_using::<DefaultRepresentation>(output, input, format, volume)
 }
 
+/// Like [`mix_bytes`], with the representation chosen at run time.
 pub fn mix_bytes_with(
     kind: RepresentationKind,
     output: &mut [u8],
@@ -46,6 +52,7 @@ pub fn mix_bytes_with(
     }
 }
 
+/// Like [`mix_bytes`], with the representation `R`.
 pub fn mix_bytes_using<R: Representation>(
     output: &mut [u8],
     input: &[u8],
@@ -83,6 +90,7 @@ fn mix_bytes_typed<R: Representation, S: Bytes<SIZE>, const SIZE: usize>(
     count
 }
 
+/// Fills `output` with silence in `format`.
 pub fn fill_silence(output: &mut [u8], format: Format) {
     match format {
         Format::U8 => output.fill(u8::SILENCE),
@@ -90,6 +98,23 @@ pub fn fill_silence(output: &mut [u8], format: Format) {
     }
 }
 
+/// A mixer for `SOURCES` sources, each with its own volume, under a master volume.
+///
+/// It only holds the volumes: [`clear`](Self::clear) the output, then [`add`](Self::add) each source into it.
+///
+/// ```
+/// use nanoaudio_dsp::{Mixer, Volume};
+///
+/// let mut mixer = Mixer::<2>::new();
+/// mixer.set_volume(1, Volume::from_percent(50)).unwrap();
+///
+/// let mut output = [0i16; 4];
+/// mixer.clear(&mut output);
+/// mixer.add(0, &mut output, &[1000; 4]).unwrap();
+/// mixer.add(1, &mut output, &[2000; 4]).unwrap();
+///
+/// assert_eq!(output, [2000; 4]);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mixer<const SOURCES: usize, R: Representation = DefaultRepresentation> {
     volumes: [Volume; SOURCES],
@@ -98,6 +123,7 @@ pub struct Mixer<const SOURCES: usize, R: Representation = DefaultRepresentation
 }
 
 impl<const SOURCES: usize, R: Representation> Mixer<SOURCES, R> {
+    /// Creates a mixer with every volume at unity.
     pub const fn new() -> Self {
         Self {
             volumes: [Volume::UNITY; SOURCES],
@@ -106,22 +132,27 @@ impl<const SOURCES: usize, R: Representation> Mixer<SOURCES, R> {
         }
     }
 
+    /// Returns the representation the mixer processes with.
     pub const fn representation(&self) -> RepresentationKind {
         R::KIND
     }
 
+    /// Returns the number of sources, `SOURCES`.
     pub const fn sources(&self) -> usize {
         SOURCES
     }
 
+    /// Returns the master volume.
     pub const fn master_volume(&self) -> Volume {
         self.master
     }
 
+    /// Sets the master volume, applied on top of every source volume.
     pub fn set_master_volume(&mut self, volume: Volume) {
         self.master = volume;
     }
 
+    /// Returns the volume of `source`, or [`Error::InvalidSource`] if it is out of range.
     pub fn volume(&self, source: usize) -> Result<Volume> {
         self.volumes
             .get(source)
@@ -129,20 +160,26 @@ impl<const SOURCES: usize, R: Representation> Mixer<SOURCES, R> {
             .ok_or(Error::InvalidSource)
     }
 
+    /// Sets the volume of `source`, or returns [`Error::InvalidSource`] if it is out of range.
     pub fn set_volume(&mut self, source: usize, volume: Volume) -> Result<()> {
         *self.volumes.get_mut(source).ok_or(Error::InvalidSource)? = volume;
 
         Ok(())
     }
 
+    /// Returns the volume of `source` combined with the master volume, or [`Error::InvalidSource`] if it is out of range.
     pub fn effective_volume(&self, source: usize) -> Result<Volume> {
         Ok(self.volume(source)?.combine(self.master))
     }
 
+    /// Fills `output` with silence.
     pub fn clear<S: Sample>(&self, output: &mut [S]) {
         output.fill(S::SILENCE);
     }
 
+    /// Mixes `input` into `output` at the effective volume of `source`, and returns the number of samples mixed.
+    ///
+    /// Returns [`Error::InvalidSource`] if `source` is out of range.
     pub fn add<S: Sample>(&self, source: usize, output: &mut [S], input: &[S]) -> Result<usize> {
         Ok(mix_using::<R, S>(
             output,
@@ -151,10 +188,12 @@ impl<const SOURCES: usize, R: Representation> Mixer<SOURCES, R> {
         ))
     }
 
+    /// Fills `output` with silence in `format`.
     pub fn clear_bytes(&self, output: &mut [u8], format: Format) {
         fill_silence(output, format);
     }
 
+    /// Like [`add`](Self::add), on little-endian samples in `format`.
     pub fn add_bytes(
         &self,
         source: usize,

@@ -2,13 +2,17 @@ use nanoaudio_core::{Format, Sample};
 
 use crate::Volume;
 
+/// A [`Representation`] chosen at run time, for the `_with` functions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RepresentationKind {
+    /// Fixed-point processing, see [`Fixed`].
     Fixed,
+    /// Floating-point processing, see [`Float`].
     Float,
 }
 
 impl RepresentationKind {
+    /// The kind of [`DefaultRepresentation`].
     pub const DEFAULT: Self = DefaultRepresentation::KIND;
 }
 
@@ -18,30 +22,45 @@ impl Default for RepresentationKind {
     }
 }
 
+/// How samples are held while they are processed: [`Fixed`] or [`Float`].
+///
+/// Every function that processes audio is generic over it, so the choice costs nothing per sample.
 pub trait Representation: Copy + Default + Send + Sync + 'static {
+    /// The value a sample is converted to for processing.
     type Value: Copy;
+    /// The value a [`Volume`] is converted to.
     type Gain: Copy;
 
+    /// The matching [`RepresentationKind`].
     const KIND: RepresentationKind;
+    /// The value of silence.
     const SILENCE: Self::Value;
 
+    /// Converts a sample to a value.
     fn from_sample<S: Sample>(sample: S) -> Self::Value;
 
+    /// Converts a value back to a sample, rounding to the nearest value and saturating.
     fn to_sample<S: Sample>(value: Self::Value) -> S;
 
+    /// Converts a volume to a gain.
     fn gain(volume: Volume) -> Self::Gain;
 
+    /// Multiplies a value by a gain.
     fn amplify(value: Self::Value, gain: Self::Gain) -> Self::Value;
 
+    /// Adds two values.
     fn add(left: Self::Value, right: Self::Value) -> Self::Value;
 
+    /// Returns the average of `values`, or silence if it is empty.
     fn average(values: &[Self::Value]) -> Self::Value;
 
+    /// Multiplies a sample by a gain.
     #[inline]
     fn amplify_sample<S: Sample>(sample: S, gain: Self::Gain) -> S {
         Self::to_sample(Self::amplify(Self::from_sample(sample), gain))
     }
 
+    /// Returns `output` plus `input` multiplied by `gain`.
     #[inline]
     fn mix_sample<S: Sample>(output: S, input: S, gain: Self::Gain) -> S {
         Self::to_sample(Self::add(
@@ -151,6 +170,9 @@ fn mix_split<S: Sample>(output: i32, input: i32, gain: i32) -> i32 {
     saturate::<S>(output + amplify_split::<S>(input, gain))
 }
 
+/// Fixed-point processing, for cores without a floating-point unit.
+///
+/// Values are full-scale `i32` (Q31) and gains are Q4.12. Every operation saturates.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Fixed;
 
@@ -225,6 +247,9 @@ impl Representation for Fixed {
     }
 }
 
+/// Floating-point processing, for cores with a single-precision floating-point unit.
+///
+/// Values are `f32` with full scale at -1.0 and 1.0. They can go beyond it while processing, and are clipped when converted back to samples.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Float;
 
@@ -270,9 +295,15 @@ impl Representation for Float {
     }
 }
 
+/// The representation used when none is given, chosen when the crate is built.
+///
+/// It is [`Float`] on targets with a single-precision floating-point unit (x86, AArch64, WebAssembly, `eabihf` ARM, RISC-V with the `F` extension, ESP32 and ESP32-S3) and [`Fixed`] elsewhere. The `fixed` and `float` features override it, and `fixed` takes precedence when both are enabled.
 #[cfg(nanoaudio_float)]
 pub type DefaultRepresentation = Float;
 
+/// The representation used when none is given, chosen when the crate is built.
+///
+/// It is [`Float`] on targets with a single-precision floating-point unit (x86, AArch64, WebAssembly, `eabihf` ARM, RISC-V with the `F` extension, ESP32 and ESP32-S3) and [`Fixed`] elsewhere. The `fixed` and `float` features override it, and `fixed` takes precedence when both are enabled.
 #[cfg(not(nanoaudio_float))]
 pub type DefaultRepresentation = Fixed;
 

@@ -3,47 +3,73 @@ use nanoaudio_core::{Format, I24, Sample};
 use crate::bytes::{Bytes, each};
 use crate::{DefaultRepresentation, Fixed, Float, Representation, RepresentationKind};
 
+/// A volume, as an unsigned Q4.12 gain.
+///
+/// [`UNITY`](Self::UNITY) is 4096 and leaves samples unchanged, and [`MAXIMUM`](Self::MAXIMUM) is slightly under 16. Applying a volume rounds to the nearest value and saturates. The default is unity.
+///
+/// ```
+/// use nanoaudio_dsp::Volume;
+///
+/// let volume = Volume::from_percent(50);
+/// let mut samples = [1000i16, -1000];
+///
+/// volume.apply_to(&mut samples);
+///
+/// assert_eq!(volume.raw(), 2048);
+/// assert_eq!(samples, [500, -500]);
+/// ```
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Volume(u16);
 
 impl Volume {
+    /// The number of fractional bits.
     pub const FRACTIONAL_BITS: u32 = 12;
 
+    /// A gain of 0.
     pub const MUTE: Self = Self(0);
+    /// A gain of 1, 4096 in Q4.12.
     pub const UNITY: Self = Self(1 << Self::FRACTIONAL_BITS);
+    /// The largest gain, slightly under 16.
     pub const MAXIMUM: Self = Self(u16::MAX);
 
+    /// Creates a volume from a raw Q4.12 value.
     #[inline]
     pub const fn from_raw(raw: u16) -> Self {
         Self(raw)
     }
 
+    /// Returns the raw Q4.12 value.
     #[inline]
     pub const fn raw(self) -> u16 {
         self.0
     }
 
+    /// Creates a volume from a percentage, 100 being unity, rounding down.
     #[inline]
     pub const fn from_percent(percent: u8) -> Self {
         Self(((percent as u32 * Self::UNITY.0 as u32) / 100) as u16)
     }
 
+    /// Returns the volume as a percentage, 100 being unity, rounded to the nearest integer.
     #[inline]
     pub const fn percent(self) -> u16 {
         ((self.0 as u32 * 100 + Self::UNITY.0 as u32 / 2) / Self::UNITY.0 as u32) as u16
     }
 
+    /// Returns `true` if the volume is [`MUTE`](Self::MUTE).
     #[inline]
     pub const fn is_mute(self) -> bool {
         self.0 == 0
     }
 
+    /// Returns `true` if the volume is [`UNITY`](Self::UNITY).
     #[inline]
     pub const fn is_unity(self) -> bool {
         self.0 == Self::UNITY.0
     }
 
+    /// Multiplies two volumes, rounding down and saturating at [`MAXIMUM`](Self::MAXIMUM).
     #[inline]
     pub const fn combine(self, other: Self) -> Self {
         let combined = (self.0 as u32 * other.0 as u32) >> Self::FRACTIONAL_BITS;
@@ -55,20 +81,24 @@ impl Volume {
         }
     }
 
+    /// Applies the volume to one sample, with the [`DefaultRepresentation`].
     #[inline]
     pub fn apply<S: Sample>(self, sample: S) -> S {
         self.apply_using::<DefaultRepresentation, S>(sample)
     }
 
+    /// Applies the volume to one sample, with the representation `R`.
     #[inline]
     pub fn apply_using<R: Representation, S: Sample>(self, sample: S) -> S {
         R::amplify_sample(sample, R::gain(self))
     }
 
+    /// Applies the volume to `samples` in place, with the [`DefaultRepresentation`].
     pub fn apply_to<S: Sample>(self, samples: &mut [S]) {
         self.apply_to_using::<DefaultRepresentation, S>(samples)
     }
 
+    /// Applies the volume to `samples` in place, with the representation `R`.
     pub fn apply_to_using<R: Representation, S: Sample>(self, samples: &mut [S]) {
         if self.is_unity() {
             return;
@@ -86,10 +116,14 @@ impl Volume {
         }
     }
 
+    /// Applies the volume in place to little-endian samples in `format`, with the [`DefaultRepresentation`].
+    ///
+    /// Trailing bytes that do not form a whole sample are left unchanged.
     pub fn apply_to_bytes(self, bytes: &mut [u8], format: Format) {
         self.apply_to_bytes_using::<DefaultRepresentation>(bytes, format)
     }
 
+    /// Like [`apply_to_bytes`](Self::apply_to_bytes), with the representation chosen at run time.
     pub fn apply_to_bytes_with(self, kind: RepresentationKind, bytes: &mut [u8], format: Format) {
         match kind {
             RepresentationKind::Fixed => self.apply_to_bytes_using::<Fixed>(bytes, format),
@@ -97,6 +131,7 @@ impl Volume {
         }
     }
 
+    /// Like [`apply_to_bytes`](Self::apply_to_bytes), with the representation `R`.
     pub fn apply_to_bytes_using<R: Representation>(self, bytes: &mut [u8], format: Format) {
         match format {
             Format::U8 => self.apply_to_bytes_typed::<R, u8, 1>(bytes),
