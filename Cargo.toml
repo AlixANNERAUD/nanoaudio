@@ -24,8 +24,10 @@ nanoaudio-mp3 = { version = "0.1.0", path = "crates/nanoaudio-mp3" }
 nanoaudio-wav = { version = "0.1.0", path = "crates/nanoaudio-wav" }
 nanoaudio-aiff = { version = "0.1.0", path = "crates/nanoaudio-aiff" }
 nanoaudio-metadata = { version = "0.1.0", path = "crates/nanoaudio-metadata" }
+nanoaudio-cpal = { version = "0.1.0", path = "crates/nanoaudio-cpal" }
 nanomp3-core = { version = "0.2", default-features = false }
 wide = { version = "1.7", default-features = false }
+cpal = { version = "0.18.2", default-features = false }
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }

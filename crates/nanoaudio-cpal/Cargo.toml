@@ -1,0 +1,28 @@
+[package]
+name = "nanoaudio-cpal"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Desktop and browser audio output and capture for nanoaudio ring buffers, through cpal."
+documentation = "https://docs.rs/nanoaudio-cpal"
+readme = "README.md"
+keywords = ["audio", "playback", "recording", "cpal", "pcm"]
+categories = ["multimedia::audio"]
+
+[dependencies]
+nanoaudio-core.workspace = true
+nanoaudio-buffer.workspace = true
+nanoaudio-dsp.workspace = true
+cpal.workspace = true
+
+[dev-dependencies]
+nanoaudio-wav.workspace = true
+
+[features]
+web = ["cpal/wasm-bindgen"]
+
+[lints]
+workspace = true
