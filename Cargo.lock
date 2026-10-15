@@ -424,6 +424,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nanoaudio-web"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "nanoaudio-buffer",
+ "nanoaudio-core",
+ "nanoaudio-wav",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "nanomp3-core"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
