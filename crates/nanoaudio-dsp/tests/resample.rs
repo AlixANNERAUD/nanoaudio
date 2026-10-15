@@ -265,7 +265,7 @@ where
         let mut whole = Resampler::<K, R>::new(2, input_rate, output_rate).unwrap();
         let expected = whole.output_frames(frames);
         let mut buffer = vec![0.0f32; 2 * (expected + 1)];
-        let progress = whole.process(&input, &mut buffer);
+        let progress = whole.process(&input, &mut buffer[..2 * expected]);
         let exact = (frames as u128 * output_rate as u128).div_ceil(input_rate as u128);
 
         assert_eq!(expected as u128, exact, "{input_rate}->{output_rate}");

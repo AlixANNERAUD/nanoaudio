@@ -15,15 +15,17 @@ type Value<S> = <<S as Stream>::Representation as Representation>::Value;
 
 /// Linear interpolation between the two nearest input frames.
 ///
-/// It costs a few operations per output sample and keeps two frames of history, but lets through images and aliasing that are audible on music: use it for voice, effects and small ratio changes, and [`Sinc`] otherwise. The output is delayed by one input frame.
+/// It costs a few operations per output sample and keeps two frames of history, but lets images and aliasing through, which is audible on music: use it for voice, effects and ratios close to 1, and [`Sinc`] otherwise. The output is delayed by one input frame.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Linear;
 
 /// A 64-tap Kaiser-windowed sinc filter, for music.
 ///
-/// The pass band is flat to within 0.001 dB up to 80 % of the lower Nyquist frequency, and images and aliases above the Nyquist frequency are attenuated by about 100 dB with [`Float`] and 85 dB with [`Fixed`]. Each output sample costs 64 multiply-adds when upsampling and `64 × input rate / output rate` when downsampling, plus one coefficient interpolation per tap shared by all channels. The output is delayed by [`Resampler::delay`] input frames, 34 when upsampling.
+/// The pass band is flat to within 0.001 dB up to 80 % of the lower of the two Nyquist frequencies, and everything above that Nyquist frequency is attenuated by at least 95 dB with [`Float`]. [`Fixed`] keeps 16 bits per sample and 16-bit coefficients, which limits it to about 80 dB. The output is delayed by [`Resampler::delay`] input frames: 34 when upsampling, about `34 × input rate / output rate` when downsampling.
 ///
-/// `FRAMES` is the history kept per channel, in frames. Downsampling needs more of it: a ratio is accepted when `2 × ceil(32 × input rate / output rate) + 3` is at most `FRAMES`. The default of 512 goes down to an output rate of about 1/7.9 of the input (48 kHz to 6.1 kHz), and 67 is enough for upsampling. The history takes `FRAMES` × 4 bytes per channel with [`Float`] and `FRAMES` × 2 bytes with [`Fixed`], and the coefficient table 16 KiB in flash with [`Float`] and 8 KiB with [`Fixed`].
+/// Each output frame costs 64 multiply-adds per channel when upsampling, and `64 × input rate / output rate` when downsampling, plus one coefficient interpolation per tap shared by all channels. The coefficient table takes 16.1 KiB of flash with [`Float`] and 8.1 KiB with [`Fixed`], shared by every resampler.
+///
+/// `FRAMES` is the history kept per channel, which takes `4 × FRAMES` bytes per channel with [`Float`] and `2 × FRAMES` with [`Fixed`]. A ratio is accepted when `2 × ceil(32 × input rate / output rate) + 3` is at most `FRAMES`: 67 is enough for upsampling, and the default of 512 goes down to an output rate of 1/7.9 of the input, such as 48 kHz to 6.1 kHz.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Sinc<const FRAMES: usize = 512>;
 
@@ -590,7 +592,7 @@ impl Clock {
 
 /// A streaming sample rate converter that does not allocate.
 ///
-/// It converts interleaved audio with up to `CHANNELS` channels from one rate to another, with the interpolation `K` ([`Linear`] or [`Sinc`]) in the representation `R`. Any ratio between two `u32` rates is exact: over any stream, `input` frames give `output_frames(input)` frames, whatever the size of the chunks they come in. State is kept between calls, so a stream can be fed one buffer at a time, from [`process`](Self::process) or from the [`Stream::resample`] stage.
+/// It converts interleaved audio with up to `CHANNELS` channels, with the interpolation `K` ([`Linear`] or [`Sinc`]) in the representation `R`. The ratio between the two rates is kept exactly, so `n` input frames always give `ceil(n × output rate / input rate)` output frames, whatever the size of the buffers they come in. Feed it one buffer at a time with [`process`](Self::process) or the [`Stream::resample`] stage. In an audio callback, [`input_frames`](Self::input_frames) says how much input the next output buffer needs.
 ///
 /// [`set_rates`](Self::set_rates) changes the ratio between two buffers without a click, to follow a device clock that drifts from its nominal rate.
 ///
@@ -697,14 +699,15 @@ where
 
     /// Converts interleaved samples from `input` into `output`, and returns how many samples were consumed and produced.
     ///
-    /// It stops when `output` has no room for another frame or the next output frame needs more input than is left. Input that was not consumed is still needed: pass it again with the next call. Incomplete frames at the end of either slice are ignored.
+    /// It takes every input frame the next output frame needs, then writes that frame, until the input runs out or `output` is full. With room for [`output_frames`](Self::output_frames) of the input, all of it is consumed. Input that was not consumed is still needed: pass it again with the next call. Incomplete frames at the end of either slice are ignored.
     pub fn process<I: Sample, O: Sample>(&mut self, input: &[I], output: &mut [O]) -> Progress {
         let channels = self.channels as usize;
         let mut frames = input.chunks_exact(channels);
+        let mut outputs = output.chunks_exact_mut(channels);
         let mut consumed = 0;
         let mut produced = 0;
 
-        for output in output.chunks_exact_mut(channels) {
+        loop {
             while self.clock.pending > 0 {
                 let Some(frame) = frames.next() else {
                     return Progress::new(consumed, produced);
@@ -720,6 +723,9 @@ where
                 consumed += channels;
             }
 
+            let Some(output) = outputs.next() else {
+                return Progress::new(consumed, produced);
+            };
             let mut values = [R::SILENCE; CHANNELS];
             K::produce(&self.state, self.clock.fraction, &mut values[..channels]);
 
@@ -730,8 +736,6 @@ where
             self.clock.advance();
             produced += channels;
         }
-
-        Progress::new(consumed, produced)
     }
 
     #[inline]
