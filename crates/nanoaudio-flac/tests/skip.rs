@@ -173,7 +173,7 @@ fn encode(signal: &[Vec<i32>], blocks: &[usize], variable: bool) -> (Vec<u8>, Ve
     (bytes, offsets)
 }
 
-fn signal(length: usize, noise: i32) -> Vec<Vec<i32>> {
+fn signal(length: usize, noise: impl Fn(usize) -> i32) -> Vec<Vec<i32>> {
     let mut state = 0x2545_F491_4F6C_DD1Du64;
 
     (0..CHANNELS)
@@ -186,6 +186,8 @@ fn signal(length: usize, noise: i32) -> Vec<Vec<i32>> {
 
                     let tone =
                         (2_000.0 * (index as f64 / (40.0 + channel as f64 * 7.0)).sin()) as i32;
+
+                    let noise = noise(index / BLOCK);
 
                     tone + (state % (2 * noise as u64 + 1)) as i32 - noise
                 })
@@ -215,7 +217,7 @@ fn read(
     chunk: usize,
     wanted: usize,
 ) -> Result<Vec<i32>> {
-    let mut output = vec![0; 4096];
+    let mut output = vec![0; wanted.clamp(CHANNELS, 4096)];
     let mut decoded = Vec::new();
     let mut position = (offset as usize).min(input.len());
     let mut end = position;
@@ -295,7 +297,10 @@ fn check(input: &[u8], expected: &[i32], targets: &[u64]) {
 }
 
 fn quiet(blocks: usize) -> (Vec<Vec<i32>>, Vec<usize>) {
-    (signal(blocks * BLOCK, 1), vec![BLOCK; blocks])
+    (
+        signal(blocks * BLOCK, |block| loudness(block / 3)),
+        vec![BLOCK; blocks],
+    )
 }
 
 fn varying(count: usize) -> Vec<usize> {
@@ -335,7 +340,7 @@ fn skips_variable_block_sizes() {
             vec![BLOCK; 100]
         };
         let total: usize = blocks.iter().sum();
-        let signal = signal(total, 3);
+        let signal = signal(total, |block| loudness(block / 3));
         let (input, _) = encode(&signal, &blocks, variable);
         let expected = reference(&signal);
         let mut boundaries = vec![0u64];
@@ -373,14 +378,16 @@ fn ignores_corruption_in_skipped_frames() {
     let (clean, offsets) = encode(&signal, &blocks, false);
     let expected = reference(&signal);
 
-    for target_frame in [5, 30, 59] {
+    for target_frame in (2..60).step_by(3) {
+        let target = (target_frame * BLOCK + 100) as u64;
         let mut input = clean.clone();
+
+        corrupt_body(&mut input, &offsets, target_frame - 1);
+        check(&input, &expected, &[target]);
 
         for frame in 0..target_frame {
             corrupt_body(&mut input, &offsets, frame);
         }
-
-        let target = (target_frame * BLOCK + 100) as u64;
 
         check(&input, &expected, &[target]);
     }
@@ -450,30 +457,42 @@ fn checks_the_decoded_frame() {
     }
 }
 
+fn loudness(block: usize) -> i32 {
+    let mut state = (block as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+
+    state ^= state >> 29;
+    state = state.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    state ^= state >> 32;
+
+    [0, 2, 40, 3_000][(state % 4) as usize]
+}
+
 #[test]
 #[ignore = "benchmark, run with --release -- --ignored --nocapture"]
 fn seek_benchmark() {
-    let blocks = 3 * 60 * 44_100 / BLOCK;
+    let blocks = 5 * 60 * 44_100 / BLOCK;
+    let signal = signal(blocks * BLOCK, |block| loudness(block / 23));
+    let (input, _) = encode(&signal, &vec![BLOCK; blocks], false);
+    let expected = reference(&signal);
+    let frames = (blocks * BLOCK) as u64;
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    let targets: Vec<u64> = (0..1_000)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % frames
+        })
+        .collect();
 
-    for (name, noise) in [("quiet", 1), ("loud", 2_000)] {
-        let signal = signal(blocks * BLOCK, noise);
-        let (input, _) = encode(&signal, &vec![BLOCK; blocks], false);
-        let expected = reference(&signal);
-        let frames = (blocks * BLOCK) as u64;
-        let mut state = 0x9E37_79B9_7F4A_7C15u64;
-        let targets: Vec<u64> = (0..300)
-            .map(|_| {
-                state ^= state << 13;
-                state ^= state >> 7;
-                state ^= state << 17;
-                state % frames
-            })
-            .collect();
-
-        for (chunk, label) in [(usize::MAX, "whole input"), (64 * 1024, "64 KiB reads")] {
+    for length in [true, false] {
+        for (chunk, reads) in [(usize::MAX, "whole input"), (64 * 1024, "64 KiB reads")] {
             let mut decoder = Flac::new();
 
-            decoder.set_stream_length(input.len() as u64);
+            if length {
+                decoder.set_stream_length(input.len() as u64);
+            }
+
             prime(&mut decoder, &input);
 
             let started = Instant::now();
@@ -488,7 +507,7 @@ fn seek_benchmark() {
             let elapsed = started.elapsed();
 
             println!(
-                "{name} ({} KiB), {label}: {:.1} us per seek",
+                "{} KiB, length {length}, {reads}: {:.1} us per seek",
                 input.len() / 1024,
                 elapsed.as_secs_f64() * 1e6 / targets.len() as f64
             );
