@@ -369,7 +369,7 @@ impl<St: Stream> Stream for Amplify<St> {
             frame.fill(St::Representation::SILENCE);
         } else {
             for value in frame {
-                *value = St::Representation::amplify(*value, self.gain);
+                *value = St::Representation::amplify_volume(*value, self.gain);
             }
         }
 
