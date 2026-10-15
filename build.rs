@@ -30,10 +30,10 @@ fn main() {
     let abi = env::var("CARGO_CFG_TARGET_ABI").unwrap_or_default();
     let features = env::var("CARGO_CFG_TARGET_FEATURE").unwrap_or_default();
 
-    let float = if env::var_os("CARGO_FEATURE_FLOAT").is_some() {
-        true
-    } else if env::var_os("CARGO_FEATURE_FIXED").is_some() {
+    let float = if env::var_os("CARGO_FEATURE_FIXED").is_some() {
         false
+    } else if env::var_os("CARGO_FEATURE_FLOAT").is_some() {
+        true
     } else {
         has_float(&target, &architecture, &abi, &features)
     };

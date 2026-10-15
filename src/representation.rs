@@ -118,9 +118,6 @@ impl Representation for Float {
     }
 }
 
-#[cfg(all(feature = "fixed", feature = "float"))]
-compile_error!("the `fixed` and `float` features are mutually exclusive");
-
 #[cfg(nanoaudio_float)]
 pub type DefaultRepresentation = Float;
 
@@ -210,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "float")]
+    #[cfg(all(feature = "float", not(feature = "fixed")))]
     fn float_feature_overrides_default() {
         assert_eq!(RepresentationKind::default(), RepresentationKind::Float);
     }
