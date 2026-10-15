@@ -2,6 +2,7 @@ use core::marker::PhantomData;
 
 use nanoaudio_core::{Error, Format, I24, MAXIMUM_CHANNELS, Result, Sample};
 
+use crate::bytes::Bytes;
 use crate::{DefaultRepresentation, Dither, Representation, Volume};
 
 type Value<S> = <<S as Stream>::Representation as Representation>::Value;
@@ -100,11 +101,11 @@ pub trait Stream {
         Self: Sized,
     {
         match format {
-            Format::U8 => process_bytes::<Self, u8, _>(self, output, |_, value| value),
-            Format::I16 => process_bytes::<Self, i16, _>(self, output, |_, value| value),
-            Format::I24 => process_bytes::<Self, I24, _>(self, output, |_, value| value),
-            Format::I32 => process_bytes::<Self, i32, _>(self, output, |_, value| value),
-            Format::F32 => process_bytes::<Self, f32, _>(self, output, |_, value| value),
+            Format::U8 => process_bytes::<Self, u8, _, 1>(self, output, |_, value| value),
+            Format::I16 => process_bytes::<Self, i16, _, 2>(self, output, |_, value| value),
+            Format::I24 => process_bytes::<Self, I24, _, 3>(self, output, |_, value| value),
+            Format::I32 => process_bytes::<Self, i32, _, 4>(self, output, |_, value| value),
+            Format::F32 => process_bytes::<Self, f32, _, 4>(self, output, |_, value| value),
         }
     }
 
@@ -113,11 +114,19 @@ pub trait Stream {
         Self: Sized,
     {
         match format {
-            Format::U8 => process_bytes::<Self, u8, _>(self, output, add_existing::<Self, u8>),
-            Format::I16 => process_bytes::<Self, i16, _>(self, output, add_existing::<Self, i16>),
-            Format::I24 => process_bytes::<Self, I24, _>(self, output, add_existing::<Self, I24>),
-            Format::I32 => process_bytes::<Self, i32, _>(self, output, add_existing::<Self, i32>),
-            Format::F32 => process_bytes::<Self, f32, _>(self, output, add_existing::<Self, f32>),
+            Format::U8 => process_bytes::<Self, u8, _, 1>(self, output, add_existing::<Self, u8>),
+            Format::I16 => {
+                process_bytes::<Self, i16, _, 2>(self, output, add_existing::<Self, i16>)
+            }
+            Format::I24 => {
+                process_bytes::<Self, I24, _, 3>(self, output, add_existing::<Self, I24>)
+            }
+            Format::I32 => {
+                process_bytes::<Self, i32, _, 4>(self, output, add_existing::<Self, i32>)
+            }
+            Format::F32 => {
+                process_bytes::<Self, f32, _, 4>(self, output, add_existing::<Self, f32>)
+            }
         }
     }
 }
@@ -151,24 +160,28 @@ where
     frames
 }
 
-fn process_bytes<St, S, F>(stream: &mut St, output: &mut [u8], mut combine: F) -> usize
+fn process_bytes<St, S, F, const SIZE: usize>(
+    stream: &mut St,
+    output: &mut [u8],
+    mut combine: F,
+) -> usize
 where
     St: Stream,
-    S: Sample,
+    S: Bytes<SIZE>,
     F: FnMut(S, Value<St>) -> Value<St>,
 {
     let channels = stream.channels() as usize;
     let mut frame = silent_frame::<St::Representation>();
     let mut frames = 0;
 
-    for output in output.chunks_exact_mut(channels * S::SIZE) {
+    for output in output.as_chunks_mut::<SIZE>().0.chunks_exact_mut(channels) {
         if !stream.next_frame(&mut frame[..channels]) {
             break;
         }
 
-        for (output, value) in output.chunks_exact_mut(S::SIZE).zip(&frame[..channels]) {
-            St::Representation::to_sample::<S>(combine(S::read_le(output), *value))
-                .write_le(output);
+        for (output, value) in output.iter_mut().zip(&frame[..channels]) {
+            St::Representation::to_sample::<S>(combine(S::from_bytes(output), *value))
+                .store(output);
         }
 
         frames += 1;
@@ -240,13 +253,9 @@ impl<'a, R: Representation> ByteSource<'a, R> {
         self.bytes
     }
 
-    fn read(format: Format, bytes: &[u8]) -> R::Value {
-        match format {
-            Format::U8 => R::from_sample(u8::read_le(bytes)),
-            Format::I16 => R::from_sample(i16::read_le(bytes)),
-            Format::I24 => R::from_sample(I24::read_le(bytes)),
-            Format::I32 => R::from_sample(i32::read_le(bytes)),
-            Format::F32 => R::from_sample(f32::read_le(bytes)),
+    fn read<S: Bytes<SIZE>, const SIZE: usize>(frame: &mut [R::Value], bytes: &[u8]) {
+        for (value, bytes) in frame.iter_mut().zip(bytes.as_chunks::<SIZE>().0) {
+            *value = R::from_sample(S::from_bytes(bytes));
         }
     }
 }
@@ -265,8 +274,12 @@ impl<R: Representation> Stream for ByteSource<'_, R> {
             return false;
         };
 
-        for (value, bytes) in frame.iter_mut().zip(current.chunks_exact(size)) {
-            *value = Self::read(self.format, bytes);
+        match self.format {
+            Format::U8 => Self::read::<u8, 1>(frame, current),
+            Format::I16 => Self::read::<i16, 2>(frame, current),
+            Format::I24 => Self::read::<I24, 3>(frame, current),
+            Format::I32 => Self::read::<i32, 4>(frame, current),
+            Format::F32 => Self::read::<f32, 4>(frame, current),
         }
 
         self.bytes = remaining;
@@ -440,7 +453,170 @@ pub fn samples_using<R: Representation, S: Sample>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bytes::testing::{FORMATS, GAINS, LENGTH, ROUNDS, fill, length};
     use crate::{Fixed, Float};
+
+    struct ReferenceSource<'a, R: Representation> {
+        bytes: &'a [u8],
+        format: Format,
+        channels: u8,
+        representation: PhantomData<R>,
+    }
+
+    impl<R: Representation> ReferenceSource<'_, R> {
+        fn read(format: Format, bytes: &[u8]) -> R::Value {
+            match format {
+                Format::U8 => R::from_sample(u8::read_le(bytes)),
+                Format::I16 => R::from_sample(i16::read_le(bytes)),
+                Format::I24 => R::from_sample(I24::read_le(bytes)),
+                Format::I32 => R::from_sample(i32::read_le(bytes)),
+                Format::F32 => R::from_sample(f32::read_le(bytes)),
+            }
+        }
+    }
+
+    impl<R: Representation> Stream for ReferenceSource<'_, R> {
+        type Representation = R;
+
+        fn channels(&self) -> u8 {
+            self.channels
+        }
+
+        fn next_frame(&mut self, frame: &mut [R::Value]) -> bool {
+            let size = self.format.sample_size();
+            let Some((current, remaining)) =
+                self.bytes.split_at_checked(self.channels as usize * size)
+            else {
+                return false;
+            };
+
+            for (value, bytes) in frame.iter_mut().zip(current.chunks_exact(size)) {
+                *value = Self::read(self.format, bytes);
+            }
+
+            self.bytes = remaining;
+            true
+        }
+    }
+
+    fn reference_process<St, S, F>(stream: &mut St, output: &mut [u8], mut combine: F) -> usize
+    where
+        St: Stream,
+        S: Sample,
+        F: FnMut(S, Value<St>) -> Value<St>,
+    {
+        let channels = stream.channels() as usize;
+        let mut frame = silent_frame::<St::Representation>();
+        let mut frames = 0;
+
+        for output in output.chunks_exact_mut(channels * S::SIZE) {
+            if !stream.next_frame(&mut frame[..channels]) {
+                break;
+            }
+
+            for (output, value) in output.chunks_exact_mut(S::SIZE).zip(&frame[..channels]) {
+                St::Representation::to_sample::<S>(combine(S::read_le(output), *value))
+                    .write_le(output);
+            }
+
+            frames += 1;
+        }
+
+        frames
+    }
+
+    fn reference_write<St: Stream>(stream: &mut St, output: &mut [u8], format: Format) -> usize {
+        match format {
+            Format::U8 => reference_process::<St, u8, _>(stream, output, |_, value| value),
+            Format::I16 => reference_process::<St, i16, _>(stream, output, |_, value| value),
+            Format::I24 => reference_process::<St, I24, _>(stream, output, |_, value| value),
+            Format::I32 => reference_process::<St, i32, _>(stream, output, |_, value| value),
+            Format::F32 => reference_process::<St, f32, _>(stream, output, |_, value| value),
+        }
+    }
+
+    fn reference_mix<St: Stream>(stream: &mut St, output: &mut [u8], format: Format) -> usize {
+        match format {
+            Format::U8 => reference_process::<St, u8, _>(stream, output, add_existing::<St, u8>),
+            Format::I16 => reference_process::<St, i16, _>(stream, output, add_existing::<St, i16>),
+            Format::I24 => reference_process::<St, I24, _>(stream, output, add_existing::<St, I24>),
+            Format::I32 => reference_process::<St, i32, _>(stream, output, add_existing::<St, i32>),
+            Format::F32 => reference_process::<St, f32, _>(stream, output, add_existing::<St, f32>),
+        }
+    }
+
+    const CHANNELS: &[u8] = if cfg!(miri) {
+        &[3]
+    } else {
+        &[1, 2, 3, MAXIMUM_CHANNELS as u8]
+    };
+
+    fn bytes_match_reference<R: Representation>() {
+        let mut input = [0u8; LENGTH];
+        let mut expected = [0u8; LENGTH];
+
+        for (round, raw) in (0..ROUNDS).zip(GAINS.iter().cycle()) {
+            let volume = Volume::from_raw(*raw);
+
+            for &channels in CHANNELS {
+                for input_format in FORMATS {
+                    for output_format in FORMATS {
+                        for mix in [false, true] {
+                            let input = &mut input[..length(round, channels as u64)];
+                            let output_length = length(round, channels as u64 + 5);
+                            fill(input, input_format, round, channels as u64);
+                            fill(&mut expected, output_format, round, channels as u64 + 1);
+                            let mut actual = expected;
+                            let input: &[u8] = input;
+
+                            let mut source = source_using::<R>(input, input_format, channels)
+                                .unwrap()
+                                .volume(volume);
+                            let mut reference = ReferenceSource::<R> {
+                                bytes: input,
+                                format: input_format,
+                                channels,
+                                representation: PhantomData,
+                            }
+                            .volume(volume);
+                            let output = &mut actual[..output_length];
+                            let reference_output = &mut expected[..output_length];
+
+                            let (frames, reference_frames) = if mix {
+                                (
+                                    source.mix_into_bytes(output, output_format),
+                                    reference_mix(&mut reference, reference_output, output_format),
+                                )
+                            } else {
+                                (
+                                    source.write_bytes(output, output_format),
+                                    reference_write(
+                                        &mut reference,
+                                        reference_output,
+                                        output_format,
+                                    ),
+                                )
+                            };
+
+                            assert_eq!(frames, reference_frames);
+                            assert_eq!(actual, expected);
+                            assert_eq!(source.stream.remaining(), reference.stream.bytes);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_bytes_match_reference() {
+        bytes_match_reference::<Fixed>();
+    }
+
+    #[test]
+    fn float_bytes_match_reference() {
+        bytes_match_reference::<Float>();
+    }
 
     fn chain<R: Representation>() {
         let input = [0x00u8, 0x80, 0xC0];

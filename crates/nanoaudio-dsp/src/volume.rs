@@ -1,5 +1,6 @@
 use nanoaudio_core::{Format, I24, Sample};
 
+use crate::bytes::{Bytes, each};
 use crate::{DefaultRepresentation, Fixed, Float, Representation, RepresentationKind};
 
 #[repr(transparent)]
@@ -98,24 +99,27 @@ impl Volume {
 
     pub fn apply_to_bytes_using<R: Representation>(self, bytes: &mut [u8], format: Format) {
         match format {
-            Format::U8 => self.apply_to_bytes_typed::<R, u8>(bytes),
-            Format::I16 => self.apply_to_bytes_typed::<R, i16>(bytes),
-            Format::I24 => self.apply_to_bytes_typed::<R, I24>(bytes),
-            Format::I32 => self.apply_to_bytes_typed::<R, i32>(bytes),
-            Format::F32 => self.apply_to_bytes_typed::<R, f32>(bytes),
+            Format::U8 => self.apply_to_bytes_typed::<R, u8, 1>(bytes),
+            Format::I16 => self.apply_to_bytes_typed::<R, i16, 2>(bytes),
+            Format::I24 => self.apply_to_bytes_typed::<R, I24, 3>(bytes),
+            Format::I32 => self.apply_to_bytes_typed::<R, i32, 4>(bytes),
+            Format::F32 => self.apply_to_bytes_typed::<R, f32, 4>(bytes),
         }
     }
 
-    fn apply_to_bytes_typed<R: Representation, S: Sample>(self, bytes: &mut [u8]) {
+    fn apply_to_bytes_typed<R: Representation, S: Bytes<SIZE>, const SIZE: usize>(
+        self,
+        bytes: &mut [u8],
+    ) {
         if self.is_unity() {
             return;
         }
 
         let gain = R::gain(self);
 
-        for chunk in bytes.chunks_exact_mut(S::SIZE) {
-            R::amplify_sample(S::read_le(chunk), gain).write_le(chunk);
-        }
+        each::<SIZE>(bytes, |chunk| {
+            R::amplify_sample(S::from_bytes(chunk), gain).store(chunk);
+        });
     }
 }
 
@@ -128,6 +132,59 @@ impl Default for Volume {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bytes::testing::{FORMATS, GAINS, LENGTH, ROUNDS, fill, length};
+
+    fn reference<R: Representation>(volume: Volume, bytes: &mut [u8], format: Format) {
+        match format {
+            Format::U8 => reference_typed::<R, u8>(volume, bytes),
+            Format::I16 => reference_typed::<R, i16>(volume, bytes),
+            Format::I24 => reference_typed::<R, I24>(volume, bytes),
+            Format::I32 => reference_typed::<R, i32>(volume, bytes),
+            Format::F32 => reference_typed::<R, f32>(volume, bytes),
+        }
+    }
+
+    fn reference_typed<R: Representation, S: Sample>(volume: Volume, bytes: &mut [u8]) {
+        if volume.is_unity() {
+            return;
+        }
+
+        let gain = R::gain(volume);
+
+        for chunk in bytes.chunks_exact_mut(S::SIZE) {
+            R::amplify_sample(S::read_le(chunk), gain).write_le(chunk);
+        }
+    }
+
+    fn bytes_match_reference<R: Representation>() {
+        let mut expected = [0u8; LENGTH];
+
+        for round in 0..ROUNDS {
+            for format in FORMATS {
+                for raw in GAINS {
+                    let volume = Volume::from_raw(raw);
+                    let length = length(round, raw as u64);
+                    fill(&mut expected, format, round, raw as u64);
+                    let mut actual = expected;
+
+                    volume.apply_to_bytes_using::<R>(&mut actual[..length], format);
+                    reference::<R>(volume, &mut expected[..length], format);
+
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_bytes_match_reference() {
+        bytes_match_reference::<Fixed>();
+    }
+
+    #[test]
+    fn float_bytes_match_reference() {
+        bytes_match_reference::<Float>();
+    }
 
     #[test]
     fn percent() {

@@ -1,5 +1,6 @@
 use nanoaudio_core::{Format, I24, Sample};
 
+use crate::bytes::{Bytes, pairs, read};
 use crate::{DefaultRepresentation, Representation, Stream};
 
 type Value<S> = <<S as Stream>::Representation as Representation>::Value;
@@ -114,46 +115,45 @@ pub fn convert_bytes_dithered(
     state: &mut u32,
 ) -> usize {
     match input_format {
-        Format::U8 => convert_bytes_dithered_from::<u8>(input, output, output_format, state),
-        Format::I16 => convert_bytes_dithered_from::<i16>(input, output, output_format, state),
-        Format::I24 => convert_bytes_dithered_from::<I24>(input, output, output_format, state),
-        Format::I32 => convert_bytes_dithered_from::<i32>(input, output, output_format, state),
-        Format::F32 => convert_bytes_dithered_from::<f32>(input, output, output_format, state),
+        Format::U8 => convert_bytes_dithered_from::<u8, 1>(input, output, output_format, state),
+        Format::I16 => convert_bytes_dithered_from::<i16, 2>(input, output, output_format, state),
+        Format::I24 => convert_bytes_dithered_from::<I24, 3>(input, output, output_format, state),
+        Format::I32 => convert_bytes_dithered_from::<i32, 4>(input, output, output_format, state),
+        Format::F32 => convert_bytes_dithered_from::<f32, 4>(input, output, output_format, state),
     }
 }
 
-fn convert_bytes_dithered_from<I: Sample>(
+fn convert_bytes_dithered_from<I: Bytes<INPUT>, const INPUT: usize>(
     input: &[u8],
     output: &mut [u8],
     output_format: Format,
     state: &mut u32,
 ) -> usize {
     match output_format {
-        Format::U8 => convert_bytes_dithered_typed::<I, u8>(input, output, state),
-        Format::I16 => convert_bytes_dithered_typed::<I, i16>(input, output, state),
-        Format::I24 => convert_bytes_dithered_typed::<I, I24>(input, output, state),
-        Format::I32 => convert_bytes_dithered_typed::<I, i32>(input, output, state),
-        Format::F32 => convert_bytes_dithered_typed::<I, f32>(input, output, state),
+        Format::U8 => convert_bytes_dithered_typed::<I, u8, INPUT, 1>(input, output, state),
+        Format::I16 => convert_bytes_dithered_typed::<I, i16, INPUT, 2>(input, output, state),
+        Format::I24 => convert_bytes_dithered_typed::<I, I24, INPUT, 3>(input, output, state),
+        Format::I32 => convert_bytes_dithered_typed::<I, i32, INPUT, 4>(input, output, state),
+        Format::F32 => convert_bytes_dithered_typed::<I, f32, INPUT, 4>(input, output, state),
     }
 }
 
-fn convert_bytes_dithered_typed<I: Sample, O: Sample>(
+fn convert_bytes_dithered_typed<
+    I: Bytes<INPUT>,
+    O: Bytes<OUTPUT>,
+    const INPUT: usize,
+    const OUTPUT: usize,
+>(
     input: &[u8],
     output: &mut [u8],
     state: &mut u32,
 ) -> usize {
     let mut noise = Noise::new(O::FORMAT, *state);
-    let mut count = 0;
-
-    for (input, output) in input
-        .chunks_exact(I::SIZE)
-        .zip(output.chunks_exact_mut(O::SIZE))
-    {
-        let value = DefaultRepresentation::from_sample(I::read_le(input));
+    let count = pairs::<INPUT, OUTPUT>(input, output, |input, output| {
+        let value = DefaultRepresentation::from_sample(read::<I, INPUT, OUTPUT>(input));
         DefaultRepresentation::to_sample::<O>(noise.apply::<DefaultRepresentation>(value))
-            .write_le(output);
-        count += 1;
-    }
+            .store(output);
+    });
 
     *state = noise.state;
     count
@@ -162,6 +162,99 @@ fn convert_bytes_dithered_typed<I: Sample, O: Sample>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bytes::testing::{FORMATS, LENGTH, ROUNDS, fill, length};
+
+    fn reference(
+        input: &[u8],
+        input_format: Format,
+        output: &mut [u8],
+        output_format: Format,
+        state: &mut u32,
+    ) -> usize {
+        match input_format {
+            Format::U8 => reference_from::<u8>(input, output, output_format, state),
+            Format::I16 => reference_from::<i16>(input, output, output_format, state),
+            Format::I24 => reference_from::<I24>(input, output, output_format, state),
+            Format::I32 => reference_from::<i32>(input, output, output_format, state),
+            Format::F32 => reference_from::<f32>(input, output, output_format, state),
+        }
+    }
+
+    fn reference_from<I: Sample>(
+        input: &[u8],
+        output: &mut [u8],
+        output_format: Format,
+        state: &mut u32,
+    ) -> usize {
+        match output_format {
+            Format::U8 => reference_typed::<I, u8>(input, output, state),
+            Format::I16 => reference_typed::<I, i16>(input, output, state),
+            Format::I24 => reference_typed::<I, I24>(input, output, state),
+            Format::I32 => reference_typed::<I, i32>(input, output, state),
+            Format::F32 => reference_typed::<I, f32>(input, output, state),
+        }
+    }
+
+    fn reference_typed<I: Sample, O: Sample>(
+        input: &[u8],
+        output: &mut [u8],
+        state: &mut u32,
+    ) -> usize {
+        let mut noise = Noise::new(O::FORMAT, *state);
+        let mut count = 0;
+
+        for (input, output) in input
+            .chunks_exact(I::SIZE)
+            .zip(output.chunks_exact_mut(O::SIZE))
+        {
+            let value = DefaultRepresentation::from_sample(I::read_le(input));
+            DefaultRepresentation::to_sample::<O>(noise.apply::<DefaultRepresentation>(value))
+                .write_le(output);
+            count += 1;
+        }
+
+        *state = noise.state;
+        count
+    }
+
+    #[test]
+    fn bytes_match_reference() {
+        let mut input = [0u8; LENGTH];
+        let mut expected = [0u8; LENGTH];
+
+        for round in 0..ROUNDS {
+            for input_format in FORMATS {
+                for output_format in FORMATS {
+                    let input = &mut input[..length(round, 0)];
+                    let output_length = length(round, 5);
+                    fill(input, input_format, round, 0);
+                    fill(&mut expected, output_format, round, 1);
+                    let mut actual = expected;
+                    let mut actual_state = round as u32;
+                    let mut expected_state = round as u32;
+
+                    assert_eq!(
+                        convert_bytes_dithered(
+                            input,
+                            input_format,
+                            &mut actual[..output_length],
+                            output_format,
+                            &mut actual_state
+                        ),
+                        reference(
+                            input,
+                            input_format,
+                            &mut expected[..output_length],
+                            output_format,
+                            &mut expected_state
+                        )
+                    );
+                    assert_eq!(actual, expected);
+                    assert_eq!(actual_state, expected_state);
+                }
+            }
+        }
+    }
 
     #[test]
     fn noise_stays_within_one_lsb() {
