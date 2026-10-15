@@ -47,6 +47,15 @@ HELIUM = [
     "probe_float_convert_i16",
 ]
 
+INLINED = [
+    "probe_qoa_decode",
+]
+
+SCALAR = [
+    "probe_qoa_decode",
+    "probe_qoa_encode",
+]
+
 WIDE_MULTIPLY = re.compile(r"__aeabi_lmul|__muldi3")
 CALL = re.compile(r"^(bl|blx|call|jal|jalr|tail)$")
 LABEL = re.compile(r"^(\.L\w+):")
@@ -196,6 +205,11 @@ def loops(lines):
     return found
 
 
+def innermost(lines):
+    found = loops(lines)
+    return [body for body in found if not any(len(other) < len(body) and set(other) <= set(body) for other in found)]
+
+
 def calls(lines):
     return [line for line in instructions(lines) if CALL.match(line.split()[0])]
 
@@ -223,7 +237,7 @@ def analyse(name, assembly, opt_level):
         total = sum(len(instructions(bodies[member])) for member in reached)
         sizes = [len(instructions(body)) for member in reached for body in loops(bodies[member])]
         report.append("{:<8} {:<26} instructions {:>4}  loops {}".format(name, function, total, sizes))
-    expected = set(CALL_FREE + HELIUM + FIXED_I24)
+    expected = set(CALL_FREE + HELIUM + FIXED_I24 + INLINED + SCALAR)
     for function in sorted(expected - set(probes)):
         failures.append(name + ": missing " + function)
     for function in FIXED_NARROW:
@@ -241,6 +255,18 @@ def analyse(name, assembly, opt_level):
             for body in loops(bodies[member]):
                 for call in calls(body):
                     failures.append(name + ": call in hot loop of " + function + ": " + call)
+    if opt_level not in ("s", "z"):
+        for function in INLINED:
+            for member in closure(bodies, function):
+                for body in innermost(bodies[member]):
+                    for call in calls(body):
+                        failures.append(name + ": call in hot loop of " + function + ": " + call)
+    if name == "m55":
+        for function in SCALAR:
+            for member in closure(bodies, function):
+                for body in loops(bodies[member]):
+                    if any(VECTOR_REGISTER.search(line) for line in instructions(body)):
+                        failures.append(name + ": vector instructions in hot loop of " + function)
     if name == "m55" and opt_level not in ("s", "z"):
         for function in HELIUM:
             reached = closure(bodies, function)

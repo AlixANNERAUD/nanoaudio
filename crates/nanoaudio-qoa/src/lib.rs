@@ -44,6 +44,24 @@ const DEQUANTIZE: [[i32; 8]; SCALE_FACTORS] = [
     [1536, -1536, 5120, -5120, 9216, -9216, 14336, -14336],
 ];
 
+const RECONSTRUCT: [[i16; 17]; SCALE_FACTORS] = {
+    let mut table = [[0; 17]; SCALE_FACTORS];
+    let mut scale_factor = 0;
+
+    while scale_factor < SCALE_FACTORS {
+        let mut index = 0;
+
+        while index < 17 {
+            table[scale_factor][index] = DEQUANTIZE[scale_factor][QUANTIZE[index] as usize] as i16;
+            index += 1;
+        }
+
+        scale_factor += 1;
+    }
+
+    table
+};
+
 pub const fn qoa_frame_size(channels: u8, samples: usize) -> usize {
     let channels = channels as usize;
     let slices = samples.div_ceil(QOA_SLICE_LENGTH);
@@ -63,31 +81,44 @@ impl Lms {
         weights: [0, 0, -(1 << 13), 1 << 14],
     };
 
-    fn predict(&self) -> i32 {
-        self.history
-            .iter()
-            .zip(&self.weights)
-            .fold(0i32, |sum, (history, weight)| {
-                sum.wrapping_add(history.wrapping_mul(*weight))
-            })
-            >> 13
+    #[inline(always)]
+    fn predict(&self, partial: i32) -> i32 {
+        partial.wrapping_add(self.history[3].wrapping_mul(self.weights[3])) >> 13
     }
 
+    #[inline(always)]
+    fn partial(&self) -> i32 {
+        let [h0, h1, h2, _] = self.history;
+        let [w0, w1, w2, _] = self.weights;
+
+        h0.wrapping_mul(w0)
+            .wrapping_add(h1.wrapping_mul(w1))
+            .wrapping_add(h2.wrapping_mul(w2))
+    }
+
+    #[inline(always)]
     fn update(&mut self, sample: i32, residual: i32) {
         let delta = residual >> 4;
+        let [h0, h1, h2, h3] = self.history;
+        let [w0, w1, w2, w3] = self.weights;
 
-        for (weight, history) in self.weights.iter_mut().zip(&self.history) {
-            *weight = weight.wrapping_add(if *history < 0 { -delta } else { delta });
-        }
-
-        self.history.copy_within(1.., 0);
-        self.history[LMS_LENGTH - 1] = sample;
+        self.weights = [
+            w0.wrapping_add((delta ^ (h0 >> 31)).wrapping_sub(h0 >> 31)),
+            w1.wrapping_add((delta ^ (h1 >> 31)).wrapping_sub(h1 >> 31)),
+            w2.wrapping_add((delta ^ (h2 >> 31)).wrapping_sub(h2 >> 31)),
+            w3.wrapping_add((delta ^ (h3 >> 31)).wrapping_sub(h3 >> 31)),
+        ];
+        self.history = [h1, h2, h3, sample];
     }
 
+    #[inline]
     fn penalty(&self) -> i32 {
-        let energy = self.weights.iter().fold(0i32, |sum, weight| {
-            sum.wrapping_add(weight.wrapping_mul(*weight))
-        });
+        let [w0, w1, w2, w3] = self.weights;
+        let energy = w0
+            .wrapping_mul(w0)
+            .wrapping_add(w1.wrapping_mul(w1))
+            .wrapping_add(w2.wrapping_mul(w2))
+            .wrapping_add(w3.wrapping_mul(w3));
 
         ((energy >> 18) - 0x8FF).max(0)
     }
@@ -115,10 +146,12 @@ impl Lms {
     }
 }
 
+#[inline]
 fn clamp_i16(value: i32) -> i32 {
     value.clamp(i16::MIN as i32, i16::MAX as i32)
 }
 
+#[inline]
 fn divide(value: i32, scale_factor: usize) -> i32 {
     let quotient = value
         .wrapping_mul(RECIPROCALS[scale_factor])
@@ -263,19 +296,22 @@ impl<S: Sample> QoaDecoder<S> {
             return None;
         }
 
-        for (channel, (bytes, lms)) in input[..size]
+        for (channel, (bytes, state)) in input[..size]
             .as_chunks::<SLICE_SIZE>()
             .0
             .iter()
             .zip(&mut self.lms)
             .enumerate()
         {
+            let mut lms = *state;
             let mut slice = u64::from_be_bytes(*bytes);
             let scale_factor = (slice >> 60) as usize;
             slice <<= 4;
 
+            let mut partial = lms.partial();
+
             for frame in output[..length * channels].chunks_exact_mut(channels) {
-                let predicted = lms.predict();
+                let predicted = lms.predict(partial);
                 let quantized = (slice >> 61) as usize;
                 let dequantized = DEQUANTIZE[scale_factor][quantized];
                 let reconstructed = clamp_i16(predicted.wrapping_add(dequantized));
@@ -283,7 +319,10 @@ impl<S: Sample> QoaDecoder<S> {
                 frame[channel] = (reconstructed as i16).convert();
                 slice <<= 3;
                 lms.update(reconstructed, dequantized);
+                partial = lms.partial();
             }
+
+            *state = lms;
         }
 
         self.frame_remaining -= length;
@@ -557,16 +596,17 @@ impl<S: Sample> QoaEncoder<S> {
             let scale_factor =
                 (offset + self.previous_scale_factors[channel] as usize) % SCALE_FACTORS;
             let mut lms = start;
+            let mut partial = lms.partial();
             let mut slice = scale_factor as u64;
             let mut rank = 0u64;
 
             for frame in input.chunks_exact(channels) {
                 let sample = frame[channel].convert::<i16>() as i32;
-                let predicted = lms.predict();
+                let predicted = lms.predict(partial);
                 let residual = sample.wrapping_sub(predicted);
                 let scaled = divide(residual, scale_factor).clamp(-8, 8);
                 let quantized = QUANTIZE[(scaled + 8) as usize];
-                let dequantized = DEQUANTIZE[scale_factor][quantized as usize];
+                let dequantized = RECONSTRUCT[scale_factor][(scaled + 8) as usize] as i32;
                 let reconstructed = clamp_i16(predicted.wrapping_add(dequantized));
                 let penalty = lms.penalty();
                 let error = (sample - reconstructed) as i64;
@@ -580,6 +620,7 @@ impl<S: Sample> QoaEncoder<S> {
                 }
 
                 lms.update(reconstructed, dequantized);
+                partial = lms.partial();
                 slice = (slice << 3) | quantized as u64;
             }
 
@@ -685,5 +726,333 @@ impl<S: Sample> Encoder for QoaEncoder<S> {
         }
 
         Ok(progress)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use std::vec::Vec;
+
+    use super::*;
+
+    struct Random(u64);
+
+    impl Random {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        fn sample(&mut self) -> i16 {
+            self.next() as i16
+        }
+
+        fn value(&mut self) -> i32 {
+            match self.next() % 4 {
+                0 => self.next() as i32,
+                1 => self.sample() as i32,
+                2 => (self.next() % 33) as i32 - 16,
+                _ => [i32::MIN, i32::MAX, i16::MIN as i32, i16::MAX as i32, 0]
+                    [(self.next() % 5) as usize],
+            }
+        }
+    }
+
+    fn reference_predict(lms: &Lms) -> i32 {
+        lms.history
+            .iter()
+            .zip(&lms.weights)
+            .fold(0i32, |sum, (history, weight)| {
+                sum.wrapping_add(history.wrapping_mul(*weight))
+            })
+            >> 13
+    }
+
+    fn reference_update(lms: &mut Lms, sample: i32, residual: i32) {
+        let delta = residual >> 4;
+
+        for (weight, history) in lms.weights.iter_mut().zip(&lms.history) {
+            *weight = weight.wrapping_add(if *history < 0 { -delta } else { delta });
+        }
+
+        lms.history.copy_within(1.., 0);
+        lms.history[LMS_LENGTH - 1] = sample;
+    }
+
+    fn reference_penalty(lms: &Lms) -> i32 {
+        let energy = lms.weights.iter().fold(0i32, |sum, weight| {
+            sum.wrapping_add(weight.wrapping_mul(*weight))
+        });
+
+        ((energy >> 18) - 0x8FF).max(0)
+    }
+
+    fn reference_encode(input: &[i16], sample_rate: u32, channels: usize) -> Vec<u8> {
+        let frames = input.len() / channels;
+        let mut output = Vec::new();
+        let mut lms = [Lms::INITIAL; MAXIMUM_CHANNELS];
+
+        output.extend_from_slice(&MAGIC);
+        output.extend_from_slice(&(frames as u32).to_be_bytes());
+
+        for start in (0..frames).step_by(QOA_FRAME_LENGTH) {
+            let length = (frames - start).min(QOA_FRAME_LENGTH);
+            let header = (channels as u64) << 56
+                | (sample_rate as u64) << 32
+                | (length as u64) << 16
+                | qoa_frame_size(channels as u8, length) as u64;
+            let mut previous = [0usize; MAXIMUM_CHANNELS];
+
+            output.extend_from_slice(&header.to_be_bytes());
+
+            for state in &lms[..channels] {
+                let mut bytes = [0; CHANNEL_STATE_SIZE];
+
+                state.write(&mut bytes);
+                output.extend_from_slice(&bytes);
+            }
+
+            for slice_start in (start..start + length).step_by(QOA_SLICE_LENGTH) {
+                let slice_length = (start + length - slice_start).min(QOA_SLICE_LENGTH);
+
+                for channel in 0..channels {
+                    let mut best_rank = u64::MAX;
+                    let mut best_slice = 0;
+                    let mut best_lms = lms[channel];
+                    let mut best_scale_factor = 0;
+
+                    for offset in 0..SCALE_FACTORS {
+                        let scale_factor = (offset + previous[channel]) % SCALE_FACTORS;
+                        let mut current = lms[channel];
+                        let mut slice = scale_factor as u64;
+                        let mut rank = 0u64;
+
+                        for index in slice_start..slice_start + slice_length {
+                            let sample = input[index * channels + channel] as i32;
+                            let predicted = reference_predict(&current);
+                            let residual = sample.wrapping_sub(predicted);
+                            let scaled = divide(residual, scale_factor).clamp(-8, 8);
+                            let quantized = QUANTIZE[(scaled + 8) as usize];
+                            let dequantized = DEQUANTIZE[scale_factor][quantized as usize];
+                            let reconstructed = clamp_i16(predicted.wrapping_add(dequantized));
+                            let penalty = reference_penalty(&current);
+                            let error = (sample - reconstructed) as i64;
+
+                            rank = rank
+                                .wrapping_add((error * error) as u64)
+                                .wrapping_add((penalty * penalty) as u64);
+
+                            if rank > best_rank {
+                                break;
+                            }
+
+                            reference_update(&mut current, reconstructed, dequantized);
+                            slice = (slice << 3) | quantized as u64;
+                        }
+
+                        if rank < best_rank {
+                            best_rank = rank;
+                            best_slice = slice;
+                            best_lms = current;
+                            best_scale_factor = scale_factor;
+                        }
+                    }
+
+                    previous[channel] = best_scale_factor;
+                    lms[channel] = best_lms;
+
+                    let slice = best_slice << ((QOA_SLICE_LENGTH - slice_length) * 3);
+
+                    output.extend_from_slice(&slice.to_be_bytes());
+                }
+            }
+        }
+
+        output
+    }
+
+    fn reference_decode(file: &[u8]) -> Vec<i16> {
+        let mut output = Vec::new();
+        let mut position = FILE_HEADER_SIZE;
+
+        while position < file.len() {
+            let header = u64::from_be_bytes(file[position..position + 8].try_into().unwrap());
+            let channels = (header >> 56) as usize;
+            let length = ((header >> 16) & 0xFFFF) as usize;
+            let mut lms = [Lms::INITIAL; MAXIMUM_CHANNELS];
+
+            position += FRAME_HEADER_SIZE;
+
+            for state in &mut lms[..channels] {
+                *state = Lms::read(file[position..position + 16].try_into().unwrap());
+                position += CHANNEL_STATE_SIZE;
+            }
+
+            for slice_start in (0..length).step_by(QOA_SLICE_LENGTH) {
+                let slice_length = (length - slice_start).min(QOA_SLICE_LENGTH);
+                let base = output.len();
+
+                output.resize(base + slice_length * channels, 0);
+
+                for (channel, state) in lms[..channels].iter_mut().enumerate() {
+                    let mut slice =
+                        u64::from_be_bytes(file[position..position + 8].try_into().unwrap());
+                    let scale_factor = (slice >> 60) as usize;
+
+                    slice <<= 4;
+                    position += SLICE_SIZE;
+
+                    for index in 0..slice_length {
+                        let predicted = reference_predict(state);
+                        let dequantized = DEQUANTIZE[scale_factor][(slice >> 61) as usize];
+                        let reconstructed = clamp_i16(predicted.wrapping_add(dequantized));
+
+                        output[base + index * channels + channel] = reconstructed as i16;
+                        slice <<= 3;
+                        reference_update(state, reconstructed, dequantized);
+                    }
+                }
+            }
+        }
+
+        output
+    }
+
+    fn encode(input: &[i16], sample_rate: u32, channels: usize) -> Vec<u8> {
+        let frames = input.len() / channels;
+        let mut encoder =
+            QoaEncoder::<i16>::new(sample_rate, channels as u8, frames as u32).unwrap();
+        let mut output = std::vec![0; input.len() * 2 + 1024];
+        let progress = encoder.encode(input, &mut output).unwrap();
+
+        assert!(encoder.is_finished());
+        assert_eq!(progress.consumed, input.len());
+        output.truncate(progress.produced);
+        output
+    }
+
+    fn decode(file: &[u8]) -> Vec<i16> {
+        let mut decoder = QoaDecoder::<i16>::new();
+        let mut output = std::vec![0; QOA_FRAME_LENGTH * MAXIMUM_CHANNELS];
+        let mut decoded = Vec::new();
+        let mut position = 0;
+
+        decoder.finish();
+
+        loop {
+            let progress = decoder.decode(&file[position..], &mut output).unwrap();
+
+            if progress.is_stalled() {
+                break;
+            }
+
+            position += progress.consumed;
+            decoded.extend_from_slice(&output[..progress.produced]);
+        }
+
+        assert_eq!(position, file.len());
+        decoded
+    }
+
+    fn signals(random: &mut Random, length: usize) -> [Vec<i16>; 6] {
+        [
+            (0..length).map(|_| random.sample()).collect(),
+            (0..length)
+                .map(|index| ((index as f32 * 0.07).sin() * 30_000.0) as i16)
+                .collect(),
+            (0..length)
+                .map(|index| {
+                    if index / 7 % 2 == 0 {
+                        i16::MAX
+                    } else {
+                        i16::MIN
+                    }
+                })
+                .collect(),
+            (0..length)
+                .map(|index| if index % 97 == 0 { i16::MIN } else { 0 })
+                .collect(),
+            (0..length)
+                .map(|index| {
+                    ((index as i32 * 37 + (random.next() % 64) as i32) % 4096 - 2048) as i16
+                })
+                .collect(),
+            std::vec![0; length],
+        ]
+    }
+
+    #[test]
+    fn reconstruct_table_matches_dequantize() {
+        for (scale_factor, row) in RECONSTRUCT.iter().enumerate() {
+            for (index, value) in row.iter().enumerate() {
+                assert_eq!(
+                    *value as i32,
+                    DEQUANTIZE[scale_factor][QUANTIZE[index] as usize]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lms_matches_reference() {
+        let mut random = Random(0x9E37_79B9_7F4A_7C15);
+        let rounds = if cfg!(miri) { 2_000 } else { 1_000_000 };
+
+        for _ in 0..rounds {
+            let mut lms = Lms {
+                history: core::array::from_fn(|_| random.value()),
+                weights: core::array::from_fn(|_| random.value()),
+            };
+            let mut expected = lms;
+            let sample = random.value();
+            let residual = random.value();
+
+            assert_eq!(lms.predict(lms.partial()), reference_predict(&expected));
+            assert_eq!(lms.penalty(), reference_penalty(&expected));
+
+            lms.update(sample, residual);
+            reference_update(&mut expected, sample, residual);
+
+            assert_eq!(lms, expected);
+        }
+    }
+
+    #[test]
+    fn codec_matches_reference() {
+        let mut random = Random(0x2545_F491_4F6C_DD1D);
+        let frames = if cfg!(miri) {
+            45
+        } else {
+            QOA_FRAME_LENGTH + 47
+        };
+
+        for channels in [1, 2, 3, 8] {
+            for signal in signals(&mut random, frames * channels) {
+                let encoded = encode(&signal, 44_100, channels);
+
+                assert_eq!(encoded, reference_encode(&signal, 44_100, channels));
+                assert_eq!(decode(&encoded), reference_decode(&encoded));
+
+                let mut corrupted = encoded.clone();
+
+                for byte in &mut corrupted[FILE_HEADER_SIZE..] {
+                    *byte = random.next() as u8;
+                }
+
+                let mut position = FILE_HEADER_SIZE;
+
+                while position < corrupted.len() {
+                    corrupted[position..position + FRAME_HEADER_SIZE]
+                        .copy_from_slice(&encoded[position..position + FRAME_HEADER_SIZE]);
+                    position += qoa_frame_size(channels as u8, QOA_FRAME_LENGTH);
+                }
+
+                assert_eq!(decode(&corrupted), reference_decode(&corrupted));
+            }
+        }
     }
 }

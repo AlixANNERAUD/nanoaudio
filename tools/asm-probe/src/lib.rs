@@ -1,9 +1,10 @@
 #![no_std]
 
-use nanoaudio_core::codec::Encoder;
+use nanoaudio_core::codec::{Decoder, Encoder};
 use nanoaudio_core::I24;
 use nanoaudio_dsp::{convert, mix_using, samples_using, Fixed, Float, Stream, Volume};
 use nanoaudio_g711::{Law, G711};
+use nanoaudio_qoa::{QoaDecoder, QoaEncoder};
 
 #[inline(never)]
 #[no_mangle]
@@ -121,4 +122,20 @@ fn encode(law: Law, input: &[i16], output: &mut [u8]) -> usize {
             .map_or(0, |progress| progress.produced),
         Err(_) => 0,
     }
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_qoa_decode(decoder: &mut QoaDecoder, input: &[u8], output: &mut [i16]) -> usize {
+    decoder
+        .decode(input, output)
+        .map_or(0, |progress| progress.produced)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_qoa_encode(encoder: &mut QoaEncoder, input: &[i16], output: &mut [u8]) -> usize {
+    encoder
+        .encode(input, output)
+        .map_or(0, |progress| progress.produced)
 }
