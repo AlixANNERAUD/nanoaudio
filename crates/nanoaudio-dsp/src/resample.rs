@@ -363,7 +363,12 @@ impl<R: Arithmetic, const CHANNELS: usize, const FRAMES: usize> SincState<R, CHA
         let future = &self.history[center + 1..center + 1 + HALF_LENGTH];
         let mut lanes = [[R::ZERO; CHANNELS]; 4];
 
-        for (coefficients, frames) in left.chunks_exact(4).zip(past.rchunks_exact(4)) {
+        for (coefficients, frames) in left
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(past.as_rchunks::<4>().1.iter().rev())
+        {
             for (lane, (coefficient, frame)) in lanes
                 .iter_mut()
                 .zip(coefficients.iter().zip(frames.iter().rev()))
@@ -374,7 +379,12 @@ impl<R: Arithmetic, const CHANNELS: usize, const FRAMES: usize> SincState<R, CHA
             }
         }
 
-        for (coefficients, frames) in right.chunks_exact(4).zip(future.chunks_exact(4)) {
+        for (coefficients, frames) in right
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(future.as_chunks::<4>().0)
+        {
             for (lane, (coefficient, frame)) in
                 lanes.iter_mut().zip(coefficients.iter().zip(frames))
             {
