@@ -6,7 +6,6 @@ rust-version = "1.89"
 authors = ["Alix ANNERAUD <alix@anneraud.fr>"]
 description = "Allocation-free no_std audio for embedded Rust: PCM conversion, volume, mixing, ring buffer, single-pass pipelines, WAV, G.711, IMA ADPCM and MP3 decoding."
 repository = "https://github.com/AlixANNERAUD/nanoaudio"
-homepage = "https://github.com/AlixANNERAUD/nanoaudio"
 documentation = "https://docs.rs/nanoaudio"
 license = "MIT"
 readme = "README.md"
