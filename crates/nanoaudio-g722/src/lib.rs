@@ -4,6 +4,39 @@
 use nanoaudio_core::codec::{Decoder, Encoder, Progress, Seek, SeekRequest};
 use nanoaudio_core::{Configuration, Format, Result, Sample};
 
+#[cfg(any(
+    test,
+    not(any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    ))
+))]
+mod scalar;
+#[cfg(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "wasm32", target_feature = "simd128")
+))]
+mod simd;
+
+#[cfg(not(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "wasm32", target_feature = "simd128")
+)))]
+use scalar::{low_interval, qmf_analysis, qmf_synthesis};
+#[cfg(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "wasm32", target_feature = "simd128")
+))]
+use simd::{low_interval, qmf_analysis, qmf_synthesis};
+
 pub const G722_SAMPLE_RATE: u32 = 16_000;
 pub const G722_RTP_CLOCK_RATE: u32 = 8_000;
 
@@ -256,17 +289,7 @@ impl G722Encoder {
         self.history[22] = first as i32;
         self.history[23] = second as i32;
 
-        let (mut even, mut odd) = (0, 0);
-
-        for (age, coefficient) in FILTER.iter().enumerate() {
-            let product = coefficient * self.history[23 - age];
-
-            if age % 2 == 0 {
-                even += product;
-            } else {
-                odd += product;
-            }
-        }
+        let (even, odd) = qmf_analysis!(self.history);
 
         let low = self.encode_low((even + odd) >> 14);
         let high = self.encode_high((even - odd) >> 14);
@@ -278,9 +301,7 @@ impl G722Encoder {
         let band = &mut self.low;
         let error = saturate(sample - band.estimate);
         let magnitude = if error >= 0 { error } else { -(error + 1) };
-        let interval = (1..LOW_DECISION_LEVELS.len())
-            .find(|interval| magnitude < (LOW_DECISION_LEVELS[*interval] * band.scale) >> 12)
-            .unwrap_or(LOW_DECISION_LEVELS.len()) as u8;
+        let interval = low_interval!(magnitude, band.scale);
 
         let code = match (error < 0, interval) {
             (false, interval) => 62 - interval,
@@ -392,12 +413,7 @@ impl G722Decoder {
         self.sums[11] = low + high;
         self.differences[11] = low - high;
 
-        let (mut first, mut second) = (0, 0);
-
-        for age in 0..12 {
-            first += self.differences[11 - age] * FILTER[2 * age];
-            second += self.sums[11 - age] * FILTER[2 * age + 1];
-        }
+        let (first, second) = qmf_synthesis!(self.differences, self.sums);
 
         [saturate(first >> 11) as i16, saturate(second >> 11) as i16]
     }

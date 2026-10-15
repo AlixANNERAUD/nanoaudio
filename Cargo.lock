@@ -77,6 +77,7 @@ name = "nanoaudio-g722"
 version = "0.1.0"
 dependencies = [
  "nanoaudio-core",
+ "wide",
 ]
 
 [[package]]
