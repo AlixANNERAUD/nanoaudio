@@ -15,7 +15,7 @@ The worklet loads its own instance of your WebAssembly module, on the browser's 
 
 The two instances share no memory, so the decoder and the pipeline run inside the worklet: the page sends them compressed data or commands with `Output::post`, and they answer with `Port::post`. Playback does not depend on the page's main thread, so a busy page does not cause underruns, and the only buffering is what the source keeps ahead in the ring buffer.
 
-The audio context is opened at the stream's sample rate. If the browser picks another rate, `Output::start` returns `Error::SampleRate`.
+The audio context is opened at the stream's sample rate, or the one in `Options::sample_rate`. If the browser picks another rate, the worklet resamples between the ring buffer and the render quantum, with `Quality::Sinc` by default, transparent for music, or `Quality::Linear` for voice or a slow CPU. The sinc filter downsamples by up to `MAXIMUM_RATIO` (31); a wider ratio fails with `Error::UnsupportedSampleRate`. Drift between the source's clock and the context's is not compensated yet.
 
 ## Example
 
@@ -43,7 +43,7 @@ pub fn noise() -> Worklet {
 
 #[wasm_bindgen]
 pub async fn play() -> Result<(), JsValue> {
-    let output = Output::start(STREAM, "noise").await?;
+    let output = Output::open(STREAM, "noise").await?;
     std::mem::forget(output);
     Ok(())
 }
@@ -72,7 +72,7 @@ assert_eq!(renderer.underruns(), 1);
 
 ## Demo Page
 
-[`examples/player.rs`](https://github.com/AlixANNERAUD/nanoaudio/blob/main/crates/nanoaudio-web/examples/player.rs) plays a sine, plays a WAV file decoded in the worklet, and shows the microphone level. From the repository root, with [`wasm-bindgen-cli`](https://crates.io/crates/wasm-bindgen-cli) at the `wasm-bindgen` version in `Cargo.lock`:
+[`examples/player.rs`](https://github.com/AlixANNERAUD/nanoaudio/blob/main/crates/nanoaudio-web/examples/player.rs) plays a sine, plays a WAV file decoded in the worklet, and shows the microphone level. The WAV file plays with the audio context at 48 kHz by default, so a 44.1 kHz or 22.05 kHz file goes through the resampler; the page shows both rates and lets you pick another context rate and the quality. From the repository root, with [`wasm-bindgen-cli`](https://crates.io/crates/wasm-bindgen-cli) at the `wasm-bindgen` version in `Cargo.lock`:
 
 ```sh
 cargo install wasm-bindgen-cli --version 0.2.129 --locked

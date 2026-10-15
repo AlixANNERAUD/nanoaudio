@@ -6,7 +6,7 @@ use std::{
 
 use js_sys::{Array, Object, Reflect};
 use nanoaudio_buffer::{Consumer, Producer, RingBuffer};
-use nanoaudio_core::{Configuration, Format};
+use nanoaudio_core::{Configuration, Format, MAXIMUM_CHANNELS};
 use wasm_bindgen::{JsCast, JsError, JsValue, closure::Closure, prelude::wasm_bindgen};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
@@ -15,7 +15,7 @@ use web_sys::{
     MessageEvent, MessagePort, Url,
 };
 
-use crate::{Recorder, Renderer};
+use crate::{Quality, Recorder, Renderer};
 
 /// The size in bytes of the ring buffer between a [`Source`] or a [`Sink`] and the audio stream.
 pub const CAPACITY: usize = 16384;
@@ -30,32 +30,37 @@ extern "C" {
     static MODULE_URL: String;
 }
 
-/// The errors returned when starting a stream.
+/// The errors returned when opening or controlling a stream.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum Error {
-    /// The configuration is not valid.
-    Configuration(nanoaudio_core::Error),
-    /// The browser opened the audio context at another sample rate than the stream's.
-    SampleRate {
-        /// The sample rate of the stream, in Hz.
+    /// The sample rate is 0, or the channel count is 0 or above [`MAXIMUM_CHANNELS`].
+    InvalidConfiguration,
+    /// The stream cannot be resampled to or from the rate the audio context runs at.
+    ///
+    /// This happens when [`Quality::Sinc`] would downsample by more than [`MAXIMUM_RATIO`](crate::MAXIMUM_RATIO).
+    UnsupportedSampleRate {
+        /// The rate of the stream, in Hz.
         requested: u32,
-        /// The sample rate of the audio context, in Hz.
-        actual: u32,
+        /// The rate of the audio context, in Hz.
+        device: u32,
     },
     /// A browser API failed, with the JavaScript exception.
-    Browser(JsValue),
+    Backend(JsValue),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Configuration(error) => write!(formatter, "invalid configuration: {error}"),
-            Error::SampleRate { requested, actual } => write!(
+            Error::InvalidConfiguration => write!(
                 formatter,
-                "the audio context runs at {actual} Hz instead of {requested} Hz"
+                "the sample rate must not be 0 and the channel count must be between 1 and {MAXIMUM_CHANNELS}"
             ),
-            Error::Browser(error) => write!(formatter, "browser error: {error:?}"),
+            Error::UnsupportedSampleRate { requested, device } => write!(
+                formatter,
+                "cannot resample between {requested} Hz and the audio context rate of {device} Hz"
+            ),
+            Error::Backend(error) => write!(formatter, "browser error: {error:?}"),
         }
     }
 }
@@ -64,20 +69,20 @@ impl std::error::Error for Error {}
 
 impl From<JsValue> for Error {
     fn from(error: JsValue) -> Self {
-        Error::Browser(error)
+        Error::Backend(error)
     }
 }
 
 impl From<nanoaudio_core::Error> for Error {
-    fn from(error: nanoaudio_core::Error) -> Self {
-        Error::Configuration(error)
+    fn from(_: nanoaudio_core::Error) -> Self {
+        Error::InvalidConfiguration
     }
 }
 
 impl From<Error> for JsValue {
     fn from(error: Error) -> Self {
         match error {
-            Error::Browser(error) => error,
+            Error::Backend(error) => error,
             error => JsError::new(&error.to_string()).into(),
         }
     }
@@ -133,19 +138,19 @@ enum Stream {
         source: Box<dyn Source>,
         producer: Producer<'static, CAPACITY>,
         consumer: Consumer<'static, CAPACITY>,
-        renderer: Option<Renderer>,
+        renderer: Option<Box<Renderer>>,
     },
     Input {
         sink: Box<dyn Sink>,
         producer: Producer<'static, CAPACITY>,
         consumer: Consumer<'static, CAPACITY>,
-        recorder: Option<Recorder>,
+        recorder: Option<Box<Recorder>>,
     },
 }
 
 /// The audio side of a stream, living in the audio worklet.
 ///
-/// The application exports a function without arguments that returns one, and passes its JavaScript name to [`Output::start`] or [`Input::start`]. The worklet runs its own instance of the WebAssembly module, which calls that function, so the [`Source`] or [`Sink`] runs on the audio thread and shares no memory with the page.
+/// The application exports a function without arguments that returns one, and passes its JavaScript name to [`Output::open`] or [`Input::open`]. The worklet runs its own instance of the WebAssembly module, which calls that function, so the [`Source`] or [`Sink`] runs on the audio thread and shares no memory with the page.
 #[wasm_bindgen]
 pub struct Worklet {
     stream: Stream,
@@ -216,12 +221,27 @@ impl Worklet {
         sample_rate: u32,
         channels: u8,
         format: u8,
+        context_rate: u32,
+        quality: u8,
     ) -> Result<(), JsError> {
         let configuration = Configuration::new(sample_rate, channels, Format::try_from(format)?);
+        let quality = Quality::from(quality);
 
         match &mut self.stream {
-            Stream::Output { renderer, .. } => *renderer = Some(Renderer::new(configuration)?),
-            Stream::Input { recorder, .. } => *recorder = Some(Recorder::new(configuration)?),
+            Stream::Output { renderer, .. } => {
+                *renderer = Some(Box::new(Renderer::with_rate(
+                    configuration,
+                    context_rate,
+                    quality,
+                )?))
+            }
+            Stream::Input { recorder, .. } => {
+                *recorder = Some(Box::new(Recorder::with_rate(
+                    configuration,
+                    context_rate,
+                    quality,
+                )?))
+            }
         }
 
         self.port = Some(Port(port));
@@ -313,8 +333,20 @@ struct Shared {
     handler: RefCell<Option<Handler>>,
 }
 
+/// Choices for opening a stream, beyond its configuration.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Options {
+    /// The resampler used when the audio context runs at another rate than the stream.
+    pub quality: Quality,
+    /// The rate to ask the audio context for, in Hz, or `None` for the stream's rate.
+    ///
+    /// The browser may still pick another rate. Asking for the device's own rate, such as 48 kHz, leaves the conversion to the driver instead of the browser.
+    pub sample_rate: Option<u32>,
+}
+
 struct Node {
     configuration: Configuration,
+    device: u32,
     context: AudioContext,
     node: AudioWorkletNode,
     port: MessagePort,
@@ -337,18 +369,20 @@ fn quote(text: &str) -> Result<String, JsValue> {
 }
 
 impl Node {
-    async fn start(
+    async fn open(
         configuration: Configuration,
         factory: &str,
         input: Option<&MediaStream>,
+        options: Options,
     ) -> Result<Self, Error> {
         Renderer::new(configuration)?;
 
-        let options = AudioContextOptions::new();
-        options.set_sample_rate(configuration.sample_rate as f32);
-        let context = AudioContext::new_with_context_options(&options)?;
+        let context_options = AudioContextOptions::new();
+        context_options
+            .set_sample_rate(options.sample_rate.unwrap_or(configuration.sample_rate) as f32);
+        let context = AudioContext::new_with_context_options(&context_options)?;
 
-        match Self::connect(&context, configuration, factory, input).await {
+        match Self::connect(&context, configuration, factory, input, options.quality).await {
             Ok(node) => Ok(node),
             Err(error) => {
                 let _ = context.close();
@@ -362,13 +396,19 @@ impl Node {
         configuration: Configuration,
         factory: &str,
         input: Option<&MediaStream>,
+        quality: Quality,
     ) -> Result<Self, Error> {
-        let actual = context.sample_rate() as u32;
+        let device = context.sample_rate() as u32;
+        let supported = if input.is_some() {
+            Recorder::with_rate(configuration, device, quality).map(drop)
+        } else {
+            Renderer::with_rate(configuration, device, quality).map(drop)
+        };
 
-        if actual != configuration.sample_rate {
-            return Err(Error::SampleRate {
+        if supported.is_err() {
+            return Err(Error::UnsupportedSampleRate {
                 requested: configuration.sample_rate,
-                actual,
+                device,
             });
         }
 
@@ -406,6 +446,8 @@ impl Node {
             &"format".into(),
             &u8::from(configuration.format).into(),
         )?;
+        Reflect::set(&processor, &"contextRate".into(), &device.into())?;
+        Reflect::set(&processor, &"quality".into(), &u8::from(quality).into())?;
 
         let options = AudioWorkletNodeOptions::new();
         options.set_number_of_inputs(u32::from(input.is_some()));
@@ -449,6 +491,7 @@ impl Node {
 
         Ok(Self {
             configuration,
+            device,
             context: context.clone(),
             node,
             port,
@@ -469,12 +512,12 @@ impl Node {
         *self.shared.handler.borrow_mut() = Some(Box::new(handler));
     }
 
-    async fn resume(&self) -> Result<(), Error> {
+    async fn play(&self) -> Result<(), Error> {
         JsFuture::from(self.context.resume()?).await?;
         Ok(())
     }
 
-    async fn suspend(&self) -> Result<(), Error> {
+    async fn pause(&self) -> Result<(), Error> {
         JsFuture::from(self.context.suspend()?).await?;
         Ok(())
     }
@@ -496,18 +539,34 @@ pub struct Output(Node);
 impl Output {
     /// Opens an audio context at the stream's sample rate and starts a worklet built by the exported function named `factory`.
     ///
-    /// `factory` is the JavaScript name of a `#[wasm_bindgen]` function without arguments that returns [`Worklet::output`]. The page must be built with `wasm-bindgen --target web`. Browsers start audio only after a user gesture: call it from a click handler, or call [`resume`](Self::resume) from one.
+    /// `factory` is the JavaScript name of a `#[wasm_bindgen]` function without arguments that returns [`Worklet::output`]. The page must be built with `wasm-bindgen --target web`. Browsers start audio only after a user gesture: call it from a click handler, or call [`play`](Self::play) from one. When the browser opens the context at another rate, the worklet resamples with [`Quality::Sinc`].
     ///
     /// # Errors
     ///
-    /// [`Error::SampleRate`] when the browser does not open the context at the requested rate, [`Error::Configuration`] for an invalid configuration and [`Error::Browser`] when a Web Audio call fails.
-    pub async fn start(configuration: Configuration, factory: &str) -> Result<Self, Error> {
-        Ok(Self(Node::start(configuration, factory, None).await?))
+    /// [`Error::InvalidConfiguration`] for an invalid configuration, [`Error::UnsupportedSampleRate`] when the context rate is too far from the stream's to resample, and [`Error::Backend`] when a Web Audio call fails.
+    pub async fn open(configuration: Configuration, factory: &str) -> Result<Self, Error> {
+        Self::open_with(configuration, factory, Options::default()).await
+    }
+
+    /// Opens a stream like [`open`](Self::open), with `options`.
+    pub async fn open_with(
+        configuration: Configuration,
+        factory: &str,
+        options: Options,
+    ) -> Result<Self, Error> {
+        Ok(Self(
+            Node::open(configuration, factory, None, options).await?,
+        ))
     }
 
     /// Returns the configuration of the stream.
     pub fn configuration(&self) -> Configuration {
         self.0.configuration
+    }
+
+    /// Returns the sample rate of the audio context in Hz, which differs from the stream's when the worklet resamples.
+    pub fn device_sample_rate(&self) -> u32 {
+        self.0.device
     }
 
     /// Returns the number of render quanta that ran out of frames, as last reported by the worklet.
@@ -530,14 +589,14 @@ impl Output {
         self.0.set_on_message(handler);
     }
 
-    /// Resumes the audio context, for example from a user gesture.
-    pub async fn resume(&self) -> Result<(), Error> {
-        self.0.resume().await
+    /// Starts or resumes the audio context, for example from a user gesture.
+    pub async fn play(&self) -> Result<(), Error> {
+        self.0.play().await
     }
 
     /// Suspends the audio context: the worklet stops being called.
-    pub async fn suspend(&self) -> Result<(), Error> {
-        self.0.suspend().await
+    pub async fn pause(&self) -> Result<(), Error> {
+        self.0.pause().await
     }
 
     /// Returns the audio context.
@@ -562,12 +621,21 @@ pub struct Input {
 impl Input {
     /// Asks for the microphone, opens an audio context at the stream's sample rate and starts a worklet built by the exported function named `factory`.
     ///
-    /// `factory` is the JavaScript name of a `#[wasm_bindgen]` function without arguments that returns [`Worklet::input`]. Echo cancellation, noise suppression and automatic gain are turned off. The browser mixes the microphone to the stream's channel count.
+    /// `factory` is the JavaScript name of a `#[wasm_bindgen]` function without arguments that returns [`Worklet::input`]. Echo cancellation, noise suppression and automatic gain are turned off. The browser mixes the microphone to the stream's channel count. When the browser opens the context at another rate, the worklet resamples with [`Quality::Sinc`].
     ///
     /// # Errors
     ///
-    /// [`Error::SampleRate`] when the browser does not open the context at the requested rate, [`Error::Configuration`] for an invalid configuration and [`Error::Browser`] when the microphone is refused or a Web Audio call fails.
-    pub async fn start(configuration: Configuration, factory: &str) -> Result<Self, Error> {
+    /// [`Error::InvalidConfiguration`] for an invalid configuration, [`Error::UnsupportedSampleRate`] when the context rate is too far from the stream's to resample, and [`Error::Backend`] when the microphone is refused or a Web Audio call fails.
+    pub async fn open(configuration: Configuration, factory: &str) -> Result<Self, Error> {
+        Self::open_with(configuration, factory, Options::default()).await
+    }
+
+    /// Opens a stream like [`open`](Self::open), with `options`.
+    pub async fn open_with(
+        configuration: Configuration,
+        factory: &str,
+        options: Options,
+    ) -> Result<Self, Error> {
         Renderer::new(configuration)?;
 
         let window = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
@@ -586,7 +654,7 @@ impl Input {
         .await?
         .unchecked_into();
 
-        match Node::start(configuration, factory, Some(&media)).await {
+        match Node::open(configuration, factory, Some(&media), options).await {
             Ok(node) => Ok(Self { node, media }),
             Err(error) => {
                 stop(&media);
@@ -598,6 +666,11 @@ impl Input {
     /// Returns the configuration of the stream.
     pub fn configuration(&self) -> Configuration {
         self.node.configuration
+    }
+
+    /// Returns the sample rate of the audio context in Hz, which differs from the stream's when the worklet resamples.
+    pub fn device_sample_rate(&self) -> u32 {
+        self.node.device
     }
 
     /// Returns the number of render quanta that dropped frames, as last reported by the worklet.
@@ -620,14 +693,14 @@ impl Input {
         self.node.set_on_message(handler);
     }
 
-    /// Resumes the audio context, for example from a user gesture.
-    pub async fn resume(&self) -> Result<(), Error> {
-        self.node.resume().await
+    /// Starts or resumes the audio context, for example from a user gesture.
+    pub async fn play(&self) -> Result<(), Error> {
+        self.node.play().await
     }
 
     /// Suspends the audio context: the worklet stops being called.
-    pub async fn suspend(&self) -> Result<(), Error> {
-        self.node.suspend().await
+    pub async fn pause(&self) -> Result<(), Error> {
+        self.node.pause().await
     }
 
     /// Returns the audio context.

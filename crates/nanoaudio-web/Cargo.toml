@@ -18,6 +18,7 @@ targets = ["wasm32-unknown-unknown"]
 [dependencies]
 nanoaudio-core.workspace = true
 nanoaudio-buffer.workspace = true
+nanoaudio-dsp.workspace = true
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 wasm-bindgen.workspace = true

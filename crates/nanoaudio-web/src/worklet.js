@@ -1,11 +1,11 @@
 registerProcessor("nanoaudio", class extends AudioWorkletProcessor {
   constructor(options) {
     super();
-    const { module, factory, sampleRate, channels, format } = options.processorOptions;
+    const { module, factory, sampleRate, channels, format, contextRate, quality } = options.processorOptions;
     this.memory = bindgen.initSync({ module }).memory;
     this.channels = channels;
     this.worklet = bindgen[factory]();
-    this.worklet.configure(this.port, sampleRate, channels, format);
+    this.worklet.configure(this.port, sampleRate, channels, format, contextRate, quality);
     this.port.onmessage = (event) => this.worklet.message(event.data);
   }
 
