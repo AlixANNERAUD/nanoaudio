@@ -3,6 +3,7 @@
 #![doc = include_str!("../README.md")]
 
 mod ballistics;
+mod bands;
 mod counter;
 mod goertzel;
 mod level;
@@ -11,6 +12,7 @@ mod silence;
 mod stereo;
 
 pub use ballistics::*;
+pub use bands::*;
 pub use counter::*;
 pub use goertzel::*;
 pub use level::*;
