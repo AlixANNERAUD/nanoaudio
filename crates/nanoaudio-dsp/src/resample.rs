@@ -7,7 +7,9 @@ use crate::{DefaultRepresentation, Fixed, Float, Representation, Stream};
 
 mod table;
 
-use table::{FIXED_BITS, FRACTION_BITS, HALF_LENGTH, LIMIT, UNIT_INCREMENT};
+use table::{
+    FIXED_BITS, FRACTION_BITS, HALF_LENGTH, LIMIT, PHASE_BITS, PHASES, Table, UNIT_INCREMENT,
+};
 
 type Value<S> = <<S as Stream>::Representation as Representation>::Value;
 
@@ -28,10 +30,12 @@ pub struct Sinc<const FRAMES: usize = 512>;
 mod sealed {
     use nanoaudio_core::Result;
 
+    use super::Table;
     use crate::Representation;
 
     pub trait Arithmetic: Representation {
         type Stored: Copy;
+        type Entry: Copy + 'static;
         type Coefficient: Copy;
         type Scale: Copy;
 
@@ -42,7 +46,10 @@ mod sealed {
         fn load(stored: Self::Stored) -> Self::Value;
         fn interpolate(previous: Self::Value, current: Self::Value, fraction: u32) -> Self::Value;
         fn scale(input_rate: u32, output_rate: u32) -> Self::Scale;
-        fn coefficient<const SCALED: bool>(position: u32, scale: Self::Scale) -> Self::Coefficient;
+        fn table() -> &'static Table<Self::Entry>;
+        fn blend(low: Self::Entry, high: Self::Entry, weight: u32) -> Self::Coefficient;
+        fn rescale(coefficient: Self::Coefficient, scale: Self::Scale) -> Self::Coefficient;
+        fn combine(left: Self::Coefficient, right: Self::Coefficient) -> Self::Coefficient;
         fn accumulate(
             sum: Self::Coefficient,
             stored: Self::Stored,
@@ -93,6 +100,7 @@ impl<R: Representation, const CHANNELS: usize, K: Kernel<R, CHANNELS>> Interpola
 
 impl Arithmetic for Fixed {
     type Stored = i16;
+    type Entry = i16;
     type Coefficient = i32;
     type Scale = i32;
 
@@ -121,20 +129,26 @@ impl Arithmetic for Fixed {
         (((output_rate as u64) << FIXED_BITS) / input_rate as u64) as i32
     }
 
-    #[inline(always)]
-    fn coefficient<const SCALED: bool>(position: u32, scale: i32) -> i32 {
-        let index = (position >> FRACTION_BITS) as usize;
-        let fraction = (position & ((1 << FRACTION_BITS) - 1)) as i32;
-        let low = table::FIXED[index] as i32;
-        let high = table::FIXED[index + 1] as i32;
-        let coefficient =
-            low + (((high - low) * fraction + (1 << (FRACTION_BITS - 1))) >> FRACTION_BITS);
+    fn table() -> &'static Table<i16> {
+        &table::FIXED
+    }
 
-        if SCALED {
-            (coefficient * scale + (1 << (FIXED_BITS - 1))) >> FIXED_BITS
-        } else {
-            coefficient
-        }
+    #[inline(always)]
+    fn blend(low: i16, high: i16, weight: u32) -> i32 {
+        let low = low as i32;
+        let high = high as i32;
+
+        low + (((high - low) * weight as i32 + (1 << (FRACTION_BITS - 1))) >> FRACTION_BITS)
+    }
+
+    #[inline(always)]
+    fn rescale(coefficient: i32, scale: i32) -> i32 {
+        (coefficient * scale + (1 << (FIXED_BITS - 1))) >> FIXED_BITS
+    }
+
+    #[inline(always)]
+    fn combine(left: i32, right: i32) -> i32 {
+        left.saturating_add(right)
     }
 
     #[inline(always)]
@@ -150,6 +164,7 @@ impl Arithmetic for Fixed {
 
 impl Arithmetic for Float {
     type Stored = f32;
+    type Entry = f32;
     type Coefficient = f32;
     type Scale = f32;
 
@@ -175,14 +190,23 @@ impl Arithmetic for Float {
         (output_rate as f64 / input_rate as f64) as f32
     }
 
-    #[inline(always)]
-    fn coefficient<const SCALED: bool>(position: u32, _: f32) -> f32 {
-        let index = (position >> FRACTION_BITS) as usize;
-        let fraction = (position & ((1 << FRACTION_BITS) - 1)) as f32 * (1.0 / 65_536.0);
-        let low = table::FLOAT[index];
-        let high = table::FLOAT[index + 1];
+    fn table() -> &'static Table<f32> {
+        &table::FLOAT
+    }
 
-        low + (high - low) * fraction
+    #[inline(always)]
+    fn blend(low: f32, high: f32, weight: u32) -> f32 {
+        low + (high - low) * (weight as f32 * (1.0 / 65_536.0))
+    }
+
+    #[inline(always)]
+    fn rescale(coefficient: f32, _: f32) -> f32 {
+        coefficient
+    }
+
+    #[inline(always)]
+    fn combine(left: f32, right: f32) -> f32 {
+        left + right
     }
 
     #[inline(always)]
@@ -250,20 +274,33 @@ impl<R: Arithmetic, const CHANNELS: usize, const FRAMES: usize> SincState<R, CHA
     }
 
     #[inline(always)]
-    fn taps<const SCALED: bool>(
-        &self,
-        center: usize,
-        left: u32,
-        sums: &mut [R::Coefficient; CHANNELS],
-    ) {
-        let mut position = left;
+    fn coefficient(&self, position: u32) -> R::Coefficient {
+        let table = R::table();
+        let phase = (position >> FRACTION_BITS) as usize & (PHASES - 1);
+        let tap = (position >> (FRACTION_BITS + PHASE_BITS)) as usize;
+        let weight = position & ((1 << FRACTION_BITS) - 1);
 
-        for frame in self.history[..=center].iter().rev() {
+        R::rescale(
+            R::blend(table[phase][tap], table[phase + 1][tap], weight),
+            self.scale,
+        )
+    }
+
+    #[inline(always)]
+    fn walk<'a>(
+        &self,
+        frames: impl Iterator<Item = &'a [R::Stored; CHANNELS]>,
+        mut position: u32,
+        sums: &mut [R::Coefficient; CHANNELS],
+    ) where
+        R::Stored: 'a,
+    {
+        for frame in frames {
             if position >= LIMIT {
                 break;
             }
 
-            let coefficient = R::coefficient::<SCALED>(position, self.scale);
+            let coefficient = self.coefficient(position);
 
             for (sum, value) in sums.iter_mut().zip(frame) {
                 *sum = R::accumulate(*sum, *value, coefficient);
@@ -271,21 +308,87 @@ impl<R: Arithmetic, const CHANNELS: usize, const FRAMES: usize> SincState<R, CHA
 
             position += self.increment;
         }
+    }
 
-        let mut position = self.increment - left;
+    #[inline(always)]
+    fn downsample(&self, center: usize, fraction: u32, sums: &mut [R::Coefficient; CHANNELS]) {
+        let left = ((fraction as u64 * self.increment as u64) >> 32) as u32;
+        let (past, future) = self.history[..self.end].split_at(center + 1);
 
-        for frame in &self.history[center + 1..self.end] {
-            if position >= LIMIT {
-                break;
+        let mut right = [R::ZERO; CHANNELS];
+
+        self.walk(past.iter().rev(), left, sums);
+        self.walk(future.iter(), self.increment - left, &mut right);
+
+        for (sum, right) in sums.iter_mut().zip(right) {
+            *sum = R::combine(*sum, right);
+        }
+    }
+
+    #[inline(always)]
+    fn blend_row(
+        coefficients: &mut [R::Coefficient; HALF_LENGTH],
+        low: &[R::Entry; HALF_LENGTH],
+        high: &[R::Entry; HALF_LENGTH],
+        weight: u32,
+    ) {
+        for ((coefficient, low), high) in coefficients.iter_mut().zip(low).zip(high) {
+            *coefficient = R::blend(*low, *high, weight);
+        }
+    }
+
+    #[inline(always)]
+    fn upsample(&self, center: usize, fraction: u32, sums: &mut [R::Coefficient; CHANNELS]) {
+        let table = R::table();
+        let position = fraction >> (32 - PHASE_BITS - FRACTION_BITS);
+        let phase = (position >> FRACTION_BITS) as usize;
+        let weight = position & ((1 << FRACTION_BITS) - 1);
+        let (row, opposite) = if weight == 0 {
+            (PHASES - phase, 0)
+        } else {
+            (PHASES - 1 - phase, (1 << FRACTION_BITS) - weight)
+        };
+        let mut left = [R::ZERO; HALF_LENGTH];
+        let mut right = [R::ZERO; HALF_LENGTH];
+
+        Self::blend_row(&mut left, &table[phase], &table[phase + 1], weight);
+        Self::blend_row(
+            &mut right,
+            &table[row],
+            &table[(row + 1).min(PHASES)],
+            opposite,
+        );
+
+        let past = &self.history[center + 1 - HALF_LENGTH..=center];
+        let future = &self.history[center + 1..center + 1 + HALF_LENGTH];
+        let mut lanes = [[R::ZERO; CHANNELS]; 4];
+
+        for (coefficients, frames) in left.chunks_exact(4).zip(past.rchunks_exact(4)) {
+            for (lane, (coefficient, frame)) in lanes
+                .iter_mut()
+                .zip(coefficients.iter().zip(frames.iter().rev()))
+            {
+                for (sum, value) in lane.iter_mut().zip(frame) {
+                    *sum = R::accumulate(*sum, *value, *coefficient);
+                }
             }
+        }
 
-            let coefficient = R::coefficient::<SCALED>(position, self.scale);
-
-            for (sum, value) in sums.iter_mut().zip(frame) {
-                *sum = R::accumulate(*sum, *value, coefficient);
+        for (coefficients, frames) in right.chunks_exact(4).zip(future.chunks_exact(4)) {
+            for (lane, (coefficient, frame)) in
+                lanes.iter_mut().zip(coefficients.iter().zip(frames))
+            {
+                for (sum, value) in lane.iter_mut().zip(frame) {
+                    *sum = R::accumulate(*sum, *value, *coefficient);
+                }
             }
+        }
 
-            position += self.increment;
+        for (channel, sum) in sums.iter_mut().enumerate() {
+            *sum = R::combine(
+                R::combine(lanes[0][channel], lanes[1][channel]),
+                R::combine(lanes[2][channel], lanes[3][channel]),
+            );
         }
     }
 }
@@ -381,13 +484,12 @@ impl<R: Arithmetic, const CHANNELS: usize, const FRAMES: usize> Kernel<R, CHANNE
             return;
         }
 
-        let left = ((fraction as u64 * state.increment as u64) >> 32) as u32;
         let mut sums = [R::ZERO; CHANNELS];
 
         if state.scaled {
-            state.taps::<true>(center, left, &mut sums);
+            state.downsample(center, fraction, &mut sums);
         } else {
-            state.taps::<false>(center, left, &mut sums);
+            state.upsample(center, fraction, &mut sums);
         }
 
         for (output, sum) in frame.iter_mut().zip(sums) {

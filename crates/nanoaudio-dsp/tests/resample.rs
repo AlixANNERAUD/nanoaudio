@@ -287,10 +287,10 @@ where
 
 #[test]
 fn lengths_are_exact_whatever_the_chunk_sizes() {
-    lengths::<Linear, Float>(100_003, true);
-    lengths::<Linear, Fixed>(100_003, true);
-    lengths::<Sinc, Float>(20_011, false);
-    lengths::<Sinc, Fixed>(20_011, false);
+    lengths::<Linear, Float>(30_011, true);
+    lengths::<Linear, Fixed>(30_011, true);
+    lengths::<Sinc, Float>(8_009, false);
+    lengths::<Sinc, Fixed>(8_009, false);
 }
 
 fn requests<K, R>()

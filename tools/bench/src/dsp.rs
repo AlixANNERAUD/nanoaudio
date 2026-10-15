@@ -1,7 +1,7 @@
 use nanoaudio_core::Format;
 use nanoaudio_dsp::{
-    Fixed, Float, Representation, Stream, Volume, convert, convert_bytes, mix_bytes_using,
-    mix_using, source_using,
+    Fixed, Float, Interpolation, Linear, Representation, Resampler, Sinc, Stream, Volume, convert,
+    convert_bytes, mix_bytes_using, mix_using, source_using,
 };
 
 use crate::signal;
@@ -58,7 +58,31 @@ fn alternate(toggle: &mut bool) -> Volume {
     if *toggle { QUIETER } else { LOUDER }
 }
 
-pub fn representation_operations<R: Representation + 'static>(data: &Data) -> Vec<Operation> {
+fn resample<K, R>(name: &'static str, data: &Data, input_rate: u32, output_rate: u32) -> Operation
+where
+    R: Representation + 'static,
+    K: Interpolation<R, 2> + 'static,
+{
+    let music = data.music.clone();
+    let mut output = vec![0i16; music.len() * 2];
+
+    Operation {
+        name,
+        run: Box::new(move || {
+            let mut resampler = Resampler::<K, R>::new(2, input_rate, output_rate).unwrap();
+            let progress = resampler.process(&music, &mut output);
+            debug_assert_eq!(progress.consumed, music.len());
+            progress.produced
+        }),
+    }
+}
+
+pub fn representation_operations<R>(data: &Data) -> Vec<Operation>
+where
+    R: Representation + 'static,
+    Linear: Interpolation<R, 2>,
+    Sinc: Interpolation<R, 2>,
+{
     let mut volume_samples = data.music.clone();
     let mut volume_bytes = data.music_bytes.clone();
     let mut volume_i24 = data.music_i24.clone();
@@ -132,6 +156,30 @@ pub fn representation_operations<R: Representation + 'static>(data: &Data) -> Ve
                 frames * 2
             }),
         },
+        resample::<Linear, R>(
+            "Resample 44.1 to 48 kHz, linear, i16 slice (per output sample)",
+            data,
+            44_100,
+            48_000,
+        ),
+        resample::<Sinc, R>(
+            "Resample 44.1 to 48 kHz, sinc, i16 slice (per output sample)",
+            data,
+            44_100,
+            48_000,
+        ),
+        resample::<Sinc, R>(
+            "Resample 48 to 44.1 kHz, sinc, i16 slice (per output sample)",
+            data,
+            48_000,
+            44_100,
+        ),
+        resample::<Sinc, R>(
+            "Resample 48 to 16 kHz, sinc, i16 slice (per output sample)",
+            data,
+            48_000,
+            16_000,
+        ),
     ]
 }
 
