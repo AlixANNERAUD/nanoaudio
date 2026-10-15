@@ -47,6 +47,9 @@ const MINIMUM_LEVEL: i32 = -100 << 8;
 const FLOOR_SLOTS: usize = 4;
 const DC_BITS: u32 = 12;
 const MIX_SHIFTS: [u8; 9] = [0, 0, 1, 2, 2, 3, 3, 3, 3];
+const MIX_SCALES: [f32; 9] = [
+    32768.0, 32768.0, 16384.0, 8192.0, 8192.0, 4096.0, 4096.0, 4096.0, 4096.0,
+];
 
 /// Tells when someone is talking, from the short-term energy and zero-crossing rate of the signal.
 ///
@@ -93,9 +96,9 @@ pub struct VoiceActivityDetector {
     dc: i32,
     sign: i32,
     energy: u64,
-    crossings: u32,
+    counting: u32,
     level: i32,
-    counted: u32,
+    crossings: u32,
     floor: i32,
     dead: i32,
     smooth: i32,
@@ -107,7 +110,7 @@ pub struct VoiceActivityDetector {
     voice: bool,
     pending: u32,
     start: u64,
-    frames: u64,
+    completed: u64,
     blocks: u64,
     transition: u64,
 }
@@ -171,9 +174,9 @@ impl VoiceActivityDetector {
             dc: 0,
             sign: 0,
             energy: 0,
-            crossings: 0,
+            counting: 0,
             level: MINIMUM_LEVEL,
-            counted: 0,
+            crossings: 0,
             floor: MINIMUM_LEVEL,
             dead: 0,
             smooth: MINIMUM_LEVEL,
@@ -185,7 +188,7 @@ impl VoiceActivityDetector {
             voice: false,
             pending: 0,
             start: 0,
-            frames: 0,
+            completed: 0,
             blocks: 0,
             transition: 0,
         }
@@ -240,18 +243,18 @@ impl VoiceActivityDetector {
 
     /// Returns the zero-crossing rate of the last block, in crossings per second.
     pub const fn crossing_rate(&self) -> u32 {
-        ((self.counted as u64 * self.sample_rate as u64 + self.length as u64 / 2)
+        ((self.crossings as u64 * self.sample_rate as u64 + self.length as u64 / 2)
             / self.length as u64) as u32
     }
 
     /// Returns the number of zero crossings in the last block.
     pub const fn crossings(&self) -> u32 {
-        self.counted
+        self.crossings
     }
 
     /// Returns the number of frames analyzed.
     pub const fn frames(&self) -> u64 {
-        self.frames
+        self.completed + self.position as u64
     }
 
     /// Returns the number of blocks completed.
@@ -288,9 +291,8 @@ impl VoiceActivityDetector {
         };
 
         self.energy += (magnitude * magnitude) as u64;
-        self.crossings += (sign ^ self.sign) as u32 & 1;
+        self.counting += (sign ^ self.sign) as u32 & 1;
         self.sign = sign;
-        self.frames += 1;
         self.position += 1;
 
         if self.position >= self.length {
@@ -300,14 +302,15 @@ impl VoiceActivityDetector {
 
     fn finish(&mut self) {
         let level = decibels(logarithm(self.energy) - self.logarithm).max(MINIMUM_LEVEL);
-        let crossings = self.crossings;
+        let crossings = self.counting;
 
+        self.completed += self.position as u64;
         self.position = 0;
         self.energy = 0;
-        self.crossings = 0;
+        self.counting = 0;
         self.blocks += 1;
         self.level = level;
-        self.counted = crossings;
+        self.crossings = crossings;
 
         self.smooth = if self.blocks == 1 {
             level
@@ -318,7 +321,7 @@ impl VoiceActivityDetector {
         self.count += 1;
 
         if self.count >= self.window {
-            self.minima[self.slot as usize] = self.current;
+            self.minima[self.slot as usize % FLOOR_SLOTS] = self.current;
             self.slot = (self.slot + 1) % FLOOR_SLOTS as u8;
             self.count = 0;
         }
@@ -340,7 +343,7 @@ impl VoiceActivityDetector {
         let loud = audible && above >= self.threshold;
         let ranged = crossings >= self.lowest && crossings <= self.highest;
         let target = if audible && ranged {
-            ((above.clamp(0, span(self.threshold)) * self.scale) >> 16).min(255)
+            ((above.max(0).min(span(self.threshold)) * self.scale) >> 16).min(255)
         } else {
             0
         };
@@ -355,7 +358,7 @@ impl VoiceActivityDetector {
         }
 
         if self.pending == 0 {
-            self.start = self.frames - self.length as u64;
+            self.start = self.completed - self.length as u64;
         }
 
         self.pending += 1;
@@ -389,9 +392,8 @@ impl Analyzer<Fixed> for VoiceActivityDetector {
 impl Analyzer<Float> for VoiceActivityDetector {
     #[inline]
     fn analyze(&mut self, frame: &[f32]) {
-        let shift = MIX_SHIFTS[frame.len().min(8)];
         let sum: f32 = frame.iter().sum();
-        let mixed = sum * (32768 >> shift) as f32;
+        let mixed = sum * MIX_SCALES[frame.len().min(8)];
 
         self.push((mixed as i32).clamp(-32768, 32767));
     }
@@ -1441,7 +1443,7 @@ mod tests {
 
         assert_eq!(long.block_frames(), 65535);
 
-        long.frames = u64::MAX - 70000;
+        long.completed = u64::MAX - 70000;
 
         for index in 0..65535 {
             let value = if index % 2 == 0 { i16::MIN } else { i16::MAX };
