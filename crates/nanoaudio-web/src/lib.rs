@@ -2,6 +2,8 @@
 #![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
+extern crate alloc;
+
 mod convert;
 mod resample;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]

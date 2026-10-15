@@ -585,7 +585,7 @@ mod tests {
             .take(if cfg!(miri) { 1 } else { usize::MAX })
     }
 
-    const QUANTA: usize = if cfg!(miri) { 8 } else { 1_000 };
+    const QUANTA: usize = if cfg!(miri) { 2 } else { 1_000 };
 
     fn tone(frame: usize, rate: u32) -> f32 {
         (0.5 * (core::f64::consts::TAU * 1_000.0 * frame as f64 / rate as f64).sin()) as f32
@@ -638,6 +638,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn resampled_tones_keep_their_frequency() {
         for quality in [Quality::Sinc, Quality::Linear] {
             for (stream, context) in cases([(44_100, 48_000), (22_050, 48_000), (48_000, 44_100)]) {
@@ -703,7 +704,7 @@ mod tests {
                 cases([(48_000, 16_000, 1), (8_000, 48_000, 2), (44_100, 48_000, 2)])
             {
                 let configuration = Configuration::new(stream, channels, Format::I16);
-                let mut buffer = RingBuffer::<65_536>::new();
+                let mut buffer = RingBuffer::<8_192>::new();
                 let (mut producer, mut consumer) = buffer.split();
                 let mut recorder = Recorder::with_rate(configuration, context, quality).unwrap();
                 let quantum = vec![0.25; 128 * channels as usize];

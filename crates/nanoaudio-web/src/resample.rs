@@ -1,3 +1,5 @@
+use alloc::boxed::Box;
+
 use nanoaudio_core::{Format, MAXIMUM_CHANNELS, Result, codec::Progress};
 use nanoaudio_dsp::{Float, Linear, Resampler, Sinc, Stream, source_using};
 
@@ -40,10 +42,9 @@ impl From<u8> for Quality {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 pub(crate) enum Rate {
     Linear(Resampler<Linear, Float, MAXIMUM_CHANNELS>),
-    Sinc(Resampler<Sinc<HISTORY>, Float, MAXIMUM_CHANNELS>),
+    Sinc(Box<Resampler<Sinc<HISTORY>, Float, MAXIMUM_CHANNELS>>),
 }
 
 impl Rate {
@@ -55,7 +56,9 @@ impl Rate {
     ) -> Result<Self> {
         Ok(match quality {
             Quality::Linear => Self::Linear(Resampler::new(channels, input_rate, output_rate)?),
-            Quality::Sinc => Self::Sinc(Resampler::new(channels, input_rate, output_rate)?),
+            Quality::Sinc => {
+                Self::Sinc(Box::new(Resampler::new(channels, input_rate, output_rate)?))
+            }
         })
     }
 
@@ -96,7 +99,7 @@ impl Rate {
                 .resample(resampler)
                 .map_or(0, |mut stream| stream.write_samples(output)),
             Self::Sinc(resampler) => source
-                .resample(resampler)
+                .resample(&mut **resampler)
                 .map_or(0, |mut stream| stream.write_samples(output)),
         }
     }
