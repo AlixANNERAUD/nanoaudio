@@ -6,6 +6,7 @@ pub mod codec;
 mod convert;
 mod error;
 mod format;
+pub mod metadata;
 mod mixer;
 mod representation;
 mod ring_buffer;
