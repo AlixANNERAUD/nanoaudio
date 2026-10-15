@@ -1,8 +1,8 @@
 use core::marker::PhantomData;
 
 use nanoaudio_adpcm::{ImaAdpcm, MsAdpcm};
-use nanoaudio_core::codec::{Decoder, Progress};
-use nanoaudio_core::{Configuration, Format, I24, Result, Sample};
+use nanoaudio_core::codec::{Decoder, Progress, Seek, SeekRequest};
+use nanoaudio_core::{Configuration, Error, Format, I24, Result, Sample};
 use nanoaudio_g711::{G711, Law};
 
 use crate::{Encoding, WavHeader};
@@ -20,6 +20,7 @@ pub struct WavDecoder<S: Sample = i16> {
     codec: Codec,
     sample_rate: u32,
     channels: u8,
+    frames: u64,
     sample: PhantomData<S>,
 }
 
@@ -55,6 +56,7 @@ impl<S: Sample> WavDecoder<S> {
             codec,
             sample_rate,
             channels,
+            frames: header.frames() as u64,
             sample: PhantomData,
         })
     }
@@ -117,6 +119,24 @@ impl<S: Sample> Decoder for WavDecoder<S> {
             Codec::G711(codec) => codec.decode_into(input, output),
             Codec::ImaAdpcm(codec) => codec.decode_into(input, output),
             Codec::MsAdpcm(codec) => codec.decode_into(input, output),
+        }
+    }
+}
+
+impl<S: Sample> Seek for WavDecoder<S> {
+    fn seek(&mut self, frame: u64) -> Result<SeekRequest> {
+        if frame > self.frames {
+            return Err(Error::InvalidParameter);
+        }
+
+        match &mut self.codec {
+            Codec::Pcm(format) => Ok(SeekRequest {
+                byte_offset: frame * self.channels as u64 * format.sample_size() as u64,
+                skip_frames: 0,
+            }),
+            Codec::G711(codec) => codec.seek(frame),
+            Codec::ImaAdpcm(codec) => codec.seek(frame),
+            Codec::MsAdpcm(codec) => codec.seek(frame),
         }
     }
 }
