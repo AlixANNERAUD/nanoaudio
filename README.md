@@ -131,6 +131,28 @@ fn decode_wav(file: &[u8]) -> Result<Vec<i16>, Error> {
 | IMA ADPCM           | `ImaAdpcm`, `WavDecoder` |      | 40 bytes                                                  | Encoder and decoder, WAV block layout, bit-exact sample codec     |
 | MP3                 | `Mp3Decoder`          | `mp3`   | ~22 KiB, plus 16 KiB of input and one frame of output     | MPEG-1/2/2.5 Layer III, decodes in floating point                  |
 
+## Choosing a Codec
+
+| Codec     | Kind     | Typical bitrate                                     | RAM to decode                             | Flash, Cortex-M4 | Decoding speed | Best for                                |
+| --------- | -------- | --------------------------------------------------- | ----------------------------------------- | ---------------- | -------------- | --------------------------------------- |
+| G.711     | lossy    | 64 kbit/s (8 kHz mono)                              | a few bytes                               | 1.3 KiB          | fastest        | Telephony, 8 kHz voice                  |
+| IMA ADPCM | lossy    | 4 bits per sample (354 kbit/s at 44.1 kHz stereo)   | 1.3 to 10 KiB, by block size              | 3.0 KiB          | very fast      | Sound effects and prompts on small MCUs |
+| MS ADPCM  | lossy    | 4 bits per sample                                   | 1.3 to 10 KiB, by block size              | 2.9 KiB          | very fast      | Existing WAV files                      |
+| QOA       | lossy    | 3.2 bits per sample (285 kbit/s at 44.1 kHz stereo) | 0.6 KiB                                   | 4.0 KiB          | fast           | Music and effects on MCUs               |
+| G.722     | lossy    | 64 kbit/s (16 kHz mono)                             | 0.3 KiB                                   | 3.5 KiB          | fast           | Wideband voice                          |
+| SBC       | lossy    | 60 kbit/s (mSBC) to 330 kbit/s (A2DP)               | 1.9 KiB                                   | 8.4 KiB          | fast           | Bluetooth                               |
+| FLAC      | lossless | 50 to 70 % of PCM, by material                      | ~50 KiB for 16-bit stereo                 | 13.8 KiB         | moderate       | Lossless playback                       |
+| MP3       | lossy    | 128 kbit/s                                          | ~44 KiB, less with a smaller input window | 46.7 KiB         | moderate       | Music files                             |
+
+- For the lowest CPU and flash use G.711 at 8 kHz, or IMA ADPCM at higher sample rates.
+- On a microcontroller, QOA gives the best quality per byte: about the same signal-to-noise ratio as IMA ADPCM at 80 % of the size, in integer arithmetic and under 1 KiB of RAM.
+- For lossless audio use FLAC, if you can spare around 50 KiB of RAM; set its maximum block size to the one your files use.
+- For Bluetooth use SBC (A2DP, or mSBC for hands-free), and for wideband voice over IP use G.722.
+- For music files use MP3, preferably on a core with an FPU, since it decodes in floating point.
+- If the device encodes, prefer G.711 or IMA ADPCM: the MS ADPCM and QOA encoders search for the best parameters and take 6 to 20 times longer than their decoders.
+
+Flash is `.text` and `.rodata` for decoding only at `opt-level = "s"`, and RAM includes the decoder and the smallest input and output buffers on a 32-bit target. The full numbers, for more targets and configurations, are in [docs/benchmarks.md](https://github.com/AlixANNERAUD/nanoaudio/blob/main/docs/benchmarks.md).
+
 ## Feeding Hardware
 
 `RingBuffer` connects the code producing audio to the code consuming it, such as a DMA interrupt, an I2S driver or a host audio callback. The producer and the consumer can live in different tasks or interrupts, without locks, and both work on contiguous slices:

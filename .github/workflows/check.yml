@@ -146,6 +146,29 @@ jobs:
       - name: Check Hot Loops optimized for Size
         run: python3 tools/asm-probe/check.py --opt-level s
 
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv6m-none-eabi
+
+      - name: Build the Benchmarks
+        run: cargo build --release --manifest-path tools/bench/Cargo.toml
+
+      - name: Run the untimed Benchmarks
+        run: |
+          cargo run --release --manifest-path tools/bench/Cargo.toml -- memory
+          cargo run --release --manifest-path tools/bench/Cargo.toml -- quality
+
+      - name: Build the Flash Probes
+        run: cargo build --release --manifest-path tools/bench/flash/Cargo.toml --target thumbv6m-none-eabi
+
+      - name: Check the Script
+        run: python3 -m py_compile tools/bench/run.py
+
   miri:
     runs-on: ubuntu-latest
     steps:

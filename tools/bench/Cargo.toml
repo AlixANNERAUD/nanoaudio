@@ -1,0 +1,28 @@
+[package]
+name = "nanoaudio-bench"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+publish = false
+
+[dependencies]
+nanoaudio-core = { path = "../../crates/nanoaudio-core" }
+nanoaudio-dsp = { path = "../../crates/nanoaudio-dsp" }
+nanoaudio-g711 = { path = "../../crates/nanoaudio-g711" }
+nanoaudio-adpcm = { path = "../../crates/nanoaudio-adpcm" }
+nanoaudio-qoa = { path = "../../crates/nanoaudio-qoa" }
+nanoaudio-flac = { path = "../../crates/nanoaudio-flac" }
+nanoaudio-g722 = { path = "../../crates/nanoaudio-g722" }
+nanoaudio-sbc = { path = "../../crates/nanoaudio-sbc" }
+nanoaudio-mp3 = { path = "../../crates/nanoaudio-mp3", default-features = false }
+
+[features]
+default = ["mp3-simd"]
+mp3-simd = ["nanoaudio-mp3/simd"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+
+[workspace]
