@@ -143,12 +143,12 @@ fn decode_wav(file: &[u8]) -> Result<Vec<i16>, Error> {
 | QOA       | lossy    | 3.2 bits per sample (285 kbit/s at 44.1 kHz stereo) | 0.6 KiB                                   | 4.1 KiB          | very fast      | Music and effects on MCUs               |
 | G.722     | lossy    | 64 kbit/s (16 kHz mono)                             | 0.3 KiB                                   | 3.5 KiB          | fast           | Wideband voice                          |
 | SBC       | lossy    | 60 kbit/s (mSBC) to 330 kbit/s (A2DP)               | 1.9 KiB                                   | 8.4 KiB          | fast           | Bluetooth                               |
-| FLAC      | lossless | 50 to 70 % of PCM, by material                      | ~50 KiB for 16-bit stereo                 | 13.8 KiB         | moderate       | Lossless playback                       |
+| FLAC      | lossless | 50 to 70 % of PCM, by material                      | ~32 KiB for 16-bit stereo, `i16` blocks   | 13.8 KiB         | moderate       | Lossless playback                       |
 | MP3       | lossy    | 128 kbit/s                                          | ~32 KiB, less with a smaller input window | 46.7 KiB         | moderate       | Music files                             |
 
 - For the lowest CPU and flash use G.711 at 8 kHz, or IMA ADPCM at higher sample rates.
 - On a microcontroller, QOA gives the best quality per byte: about the same signal-to-noise ratio as IMA ADPCM at 80 % of the size, in integer arithmetic and under 1 KiB of RAM.
-- For lossless audio use FLAC, if you can spare around 50 KiB of RAM; set its maximum block size to the one your files use.
+- For lossless audio use FLAC, if you can spare around 32 KiB of RAM for 16-bit files (`i16` blocks) or 50 KiB for deeper ones; set its maximum block size to the one your files use.
 - For Bluetooth use SBC (A2DP, or mSBC for hands-free), and for wideband voice over IP use G.722.
 - For music files use MP3, preferably on a core with an FPU, since it decodes in floating point.
 - If the device encodes, prefer G.711 or IMA ADPCM: the MS ADPCM and QOA encoders search for the best parameters and take 10 to 30 times longer than their decoders.

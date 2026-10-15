@@ -438,7 +438,7 @@ def write(info, notes, speeds, memory, dsp, quality, flash, host, arguments):
         ])
     add(markdown_table(["Codec", "Direction", "Configuration", "State, 32-bit", "State, 64-bit", "Input", "Output", "Total, 32-bit"], rows))
     add("")
-    add("FLAC needs one `i32` per sample of its largest block for every channel: pick `MAXIMUM_BLOCK_SIZE` and `MAXIMUM_CHANNELS` to match your files (most encoders use 4096 samples), and give it an input window of at least the largest frame. The MP3 input window defaults to 4 KiB and can be lowered with `Mp3Decoder::with_minimum_input`, down to the largest frame plus the next header (1,445 bytes for Layer III, whose largest frame is 1,441 bytes at 320 kbit/s and 32 kHz); the bit reservoir is kept inside the decoder state. The FLAC input shown is the bound computed from the test file's header.")
+    add("FLAC needs one `i32` per sample of its largest block for every channel, or one `i16` with `i16` blocks for streams of up to 16 bits: pick `MAXIMUM_BLOCK_SIZE` and `MAXIMUM_CHANNELS` to match your files (most encoders use 4096 samples), and give it an input window of at least the largest frame. The MP3 input window defaults to 4 KiB and can be lowered with `Mp3Decoder::with_minimum_input`, down to the largest frame plus the next header (1,445 bytes for Layer III, whose largest frame is 1,441 bytes at 320 kbit/s and 32 kHz); the bit reservoir is kept inside the decoder state. The FLAC input shown is the bound computed from the test file's header.")
     add("")
     add("## Flash")
     add("")

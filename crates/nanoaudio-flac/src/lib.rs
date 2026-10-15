@@ -44,6 +44,7 @@ const MINIMUM_BITS_PER_SAMPLE: u32 = 4;
 const MAXIMUM_FRAME_HEADER_SIZE: usize = 16;
 const FRAME_FOOTER_SIZE: usize = 2;
 const MAXIMUM_ORDER: usize = 32;
+const CHUNK: usize = 256;
 
 const FIXED_COEFFICIENTS: [&[i32]; 5] = [&[], &[1], &[2, -1], &[3, -3, 1], &[4, -6, 4, -1]];
 
@@ -595,6 +596,491 @@ fn decode_subframe(
     Ok(())
 }
 
+struct Residual {
+    escape: u32,
+    parameter_bits: u32,
+    partition_size: usize,
+    remaining: usize,
+    parameter: u32,
+    escaped: bool,
+}
+
+impl Residual {
+    fn new(reader: &mut BitReader, block_size: usize, order: usize) -> Result<Self> {
+        let parameter_bits = match reader.read(2)? {
+            0 => 4,
+            1 => 5,
+            _ => return Err(Error::InvalidData),
+        };
+        let partition_order = reader.read(4)?;
+        let partition_size = block_size >> partition_order;
+
+        if partition_size << partition_order != block_size || partition_size < order {
+            return Err(Error::InvalidData);
+        }
+
+        let mut residual = Self {
+            escape: (1 << parameter_bits) - 1,
+            parameter_bits,
+            partition_size,
+            remaining: 0,
+            parameter: 0,
+            escaped: false,
+        };
+
+        residual.start(reader, partition_size - order)?;
+
+        Ok(residual)
+    }
+
+    fn start(&mut self, reader: &mut BitReader, size: usize) -> Result<()> {
+        let parameter = reader.read(self.parameter_bits)?;
+
+        self.escaped = parameter == self.escape;
+        self.parameter = if self.escaped {
+            reader.read(5)?
+        } else {
+            parameter
+        };
+        self.remaining = size;
+
+        Ok(())
+    }
+
+    fn read(&mut self, reader: &mut BitReader, mut samples: &mut [i32]) -> Result<()> {
+        while !samples.is_empty() {
+            if self.remaining == 0 {
+                self.start(reader, self.partition_size)?;
+            }
+
+            let count = self.remaining.min(samples.len());
+            let (head, tail) = core::mem::take(&mut samples).split_at_mut(count);
+
+            if self.escaped {
+                for sample in head {
+                    *sample = reader.read_signed(self.parameter)?;
+                }
+            } else {
+                for sample in head {
+                    *sample = read_rice(reader, self.parameter)?;
+                }
+            }
+
+            self.remaining -= count;
+            samples = tail;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Target {
+    Channel(usize),
+    Left,
+    Right,
+    Side,
+}
+
+fn store<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
+    samples: &mut [[i16; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+    target: Target,
+    start: usize,
+    values: &[i32],
+    wasted_bits: u32,
+) -> Result<()> {
+    let end = start + values.len();
+
+    if let Target::Channel(channel) = target {
+        for (sample, value) in samples[channel][start..end].iter_mut().zip(values) {
+            *sample = (value << wasted_bits) as i16;
+        }
+
+        return Ok(());
+    }
+
+    let [first, second] = samples
+        .get_disjoint_mut([0, 1])
+        .map_err(|_| Error::UnsupportedFormat)?;
+    let pairs = first[start..end].iter_mut().zip(&mut second[start..end]);
+
+    match target {
+        Target::Channel(_) => {}
+        Target::Left => {
+            for ((left, right), value) in pairs.zip(values) {
+                *right = left.wrapping_sub((value << wasted_bits) as i16);
+            }
+        }
+        Target::Right => {
+            for ((side, right), value) in pairs.zip(values) {
+                *right = (value << wasted_bits) as i16;
+                *side = side.wrapping_add(*right);
+            }
+        }
+        Target::Side => {
+            for ((mid, side), value) in pairs.zip(values) {
+                let difference = value << wasted_bits;
+                let sum = (i32::from(*mid) << 1) | (difference & 1);
+
+                *mid = (sum.wrapping_add(difference) >> 1) as i16;
+                *side = (sum.wrapping_sub(difference) >> 1) as i16;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn decode_narrow_subframe<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
+    reader: &mut BitReader,
+    samples: &mut [[i16; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+    block_size: usize,
+    bits_per_sample: u32,
+    target: Target,
+) -> Result<()> {
+    let header = SubframeHeader::read(reader, bits_per_sample)?;
+    let bits = header.bits_per_sample;
+    let wasted_bits = header.wasted_bits;
+    let mut scratch = [0i32; MAXIMUM_ORDER + CHUNK];
+
+    let Some(mut predictor) = read_predictor(header.kind)? else {
+        let constant = if header.kind == 0 {
+            let value = reader.read_signed(bits)?;
+
+            scratch.fill(value);
+
+            true
+        } else {
+            false
+        };
+        let mut start = 0;
+
+        while start < block_size {
+            let count = CHUNK.min(block_size - start);
+
+            if !constant {
+                for sample in &mut scratch[..count] {
+                    *sample = reader.read_signed(bits)?;
+                }
+            }
+
+            store(samples, target, start, &scratch[..count], wasted_bits)?;
+            start += count;
+        }
+
+        return Ok(());
+    };
+
+    let order = predictor.order();
+
+    if order > block_size {
+        return Err(Error::InvalidData);
+    }
+
+    for sample in &mut scratch[..order] {
+        *sample = reader.read_signed(bits)?;
+    }
+
+    predictor.read_parameters(reader)?;
+
+    let mut residual = Residual::new(reader, block_size, order)?;
+    let mut start = order;
+
+    store(samples, target, 0, &scratch[..order], wasted_bits)?;
+
+    while start < block_size {
+        let count = CHUNK.min(block_size - start);
+        let window = &mut scratch[..order + count];
+
+        residual.read(reader, &mut window[order..])?;
+
+        match &predictor {
+            Predictor::Fixed(order) => predict_fixed(window, *order),
+            Predictor::Linear {
+                coefficients,
+                order,
+                precision,
+                shift,
+            } => predict_linear(window, &coefficients[..*order], *precision, *shift, bits),
+        }
+
+        store(samples, target, start, &window[order..], wasted_bits)?;
+        scratch.copy_within(count..count + order, 0);
+        start += count;
+    }
+
+    Ok(())
+}
+
+fn decode_narrow_frame<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
+    reader: &mut BitReader,
+    samples: &mut [[i16; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+    header: &FrameHeader,
+) -> Result<()> {
+    let block_size = header.block_size;
+    let bits = header.bits_per_sample;
+    let [first, second] = match header.assignment {
+        Assignment::Independent(channels) => {
+            for channel in 0..channels {
+                decode_narrow_subframe(
+                    reader,
+                    samples,
+                    block_size,
+                    bits,
+                    Target::Channel(channel),
+                )?;
+            }
+
+            return Ok(());
+        }
+        Assignment::LeftSide => [(bits, Target::Channel(0)), (bits + 1, Target::Left)],
+        Assignment::RightSide => [(bits + 1, Target::Channel(0)), (bits, Target::Right)],
+        Assignment::MidSide => [(bits, Target::Channel(0)), (bits + 1, Target::Side)],
+    };
+
+    if MAXIMUM_CHANNELS < 2 {
+        return Err(Error::UnsupportedFormat);
+    }
+
+    decode_narrow_subframe(reader, samples, block_size, first.0, first.1)?;
+    decode_narrow_subframe(reader, samples, block_size, second.0, second.1)
+}
+
+fn decode_wide_subframe<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
+    reader: &mut BitReader,
+    samples: &mut [[i32; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+    block_size: usize,
+    side: usize,
+    mid_side: bool,
+) -> Result<()> {
+    let header = SubframeHeader::read(reader, 33)?;
+    let bits = header.bits_per_sample;
+    let wasted_bits = header.wasted_bits;
+    let store =
+        |samples: &mut [[i32; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS], index: usize, value: i64| {
+            let value = value << wasted_bits;
+
+            if mid_side {
+                let sum = (i64::from(samples[0][index]) << 1) | (value & 1);
+
+                samples[0][index] = (sum.wrapping_add(value) >> 1) as i32;
+                samples[1][index] = (sum.wrapping_sub(value) >> 1) as i32;
+            } else {
+                samples[side][index] = value as i32;
+            }
+        };
+
+    let Some(mut predictor) = read_predictor(header.kind)? else {
+        if header.kind == 0 {
+            let value = read_signed_wide(reader, bits)?;
+
+            for index in 0..block_size {
+                store(samples, index, value);
+            }
+        } else {
+            for index in 0..block_size {
+                let value = read_signed_wide(reader, bits)?;
+
+                store(samples, index, value);
+            }
+        }
+
+        return Ok(());
+    };
+
+    let order = predictor.order();
+
+    if order > block_size {
+        return Err(Error::InvalidData);
+    }
+
+    let mut history = [0i64; MAXIMUM_ORDER];
+
+    for index in 0..order {
+        history[order - 1 - index] = read_signed_wide(reader, bits)?;
+    }
+
+    predictor.read_parameters(reader)?;
+    decode_residual(reader, &mut samples[side][..block_size], order)?;
+
+    for index in 0..order {
+        store(samples, index, history[order - 1 - index]);
+    }
+
+    let (coefficients, shift) = predictor.coefficients();
+
+    for index in order..block_size {
+        let prediction =
+            coefficients
+                .iter()
+                .zip(&history)
+                .fold(0i64, |sum, (coefficient, sample)| {
+                    sum.wrapping_add(i64::from(*coefficient).wrapping_mul(*sample))
+                });
+        let value = i64::from(samples[side][index]).wrapping_add(prediction >> shift);
+
+        if order > 0 {
+            history.copy_within(..order - 1, 1);
+            history[0] = value;
+        }
+
+        store(samples, index, value);
+    }
+
+    Ok(())
+}
+
+fn decode_channel<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
+    reader: &mut BitReader,
+    samples: &mut [[i32; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+    block_size: usize,
+    channel: usize,
+    bits_per_sample: u32,
+    mid_side: bool,
+) -> Result<bool> {
+    if bits_per_sample > 32 {
+        decode_wide_subframe(reader, samples, block_size, channel, mid_side)?;
+
+        return Ok(mid_side);
+    }
+
+    decode_subframe(reader, &mut samples[channel][..block_size], bits_per_sample)?;
+
+    Ok(false)
+}
+
+fn stereo<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
+    samples: &mut [[i32; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+) -> Result<[&mut [i32; MAXIMUM_BLOCK_SIZE]; 2]> {
+    samples
+        .get_disjoint_mut([0, 1])
+        .map_err(|_| Error::UnsupportedFormat)
+}
+
+fn decode_wide_frame<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
+    reader: &mut BitReader,
+    samples: &mut [[i32; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+    header: &FrameHeader,
+) -> Result<()> {
+    let block_size = header.block_size;
+    let bits = header.bits_per_sample;
+
+    match header.assignment {
+        Assignment::Independent(channels) => {
+            for channel in 0..channels {
+                decode_channel(reader, samples, block_size, channel, bits, false)?;
+            }
+        }
+        Assignment::LeftSide => {
+            decode_channel(reader, samples, block_size, 0, bits, false)?;
+            decode_channel(reader, samples, block_size, 1, bits + 1, false)?;
+
+            let [left, side] = stereo(samples)?;
+
+            for (side, left) in side[..block_size].iter_mut().zip(&left[..block_size]) {
+                *side = left.wrapping_sub(*side);
+            }
+        }
+        Assignment::RightSide => {
+            decode_channel(reader, samples, block_size, 0, bits + 1, false)?;
+            decode_channel(reader, samples, block_size, 1, bits, false)?;
+
+            let [side, right] = stereo(samples)?;
+
+            for (side, right) in side[..block_size].iter_mut().zip(&right[..block_size]) {
+                *side = side.wrapping_add(*right);
+            }
+        }
+        Assignment::MidSide => {
+            decode_channel(reader, samples, block_size, 0, bits, false)?;
+
+            if !decode_channel(reader, samples, block_size, 1, bits + 1, true)? {
+                let [mid, side] = stereo(samples)?;
+
+                for (mid, side) in mid[..block_size].iter_mut().zip(&mut side[..block_size]) {
+                    let sum = (i64::from(*mid) << 1) | i64::from(*side & 1);
+                    let difference = i64::from(*side);
+
+                    *mid = ((sum + difference) >> 1) as i32;
+                    *side = ((sum - difference) >> 1) as i32;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+mod sealed {
+    pub trait Sealed: Copy {
+        const ZERO: Self;
+        const BITS: u32;
+
+        fn widen(self) -> i32;
+
+        fn wide<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
+            samples: &mut [[Self; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+        ) -> Option<&mut [[i32; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS]>;
+
+        fn narrow<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
+            samples: &mut [[Self; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+        ) -> Option<&mut [[i16; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS]>;
+    }
+
+    impl Sealed for i32 {
+        const ZERO: Self = 0;
+        const BITS: u32 = 32;
+
+        #[inline(always)]
+        fn widen(self) -> i32 {
+            self
+        }
+
+        fn wide<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
+            samples: &mut [[Self; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+        ) -> Option<&mut [[i32; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS]> {
+            Some(samples)
+        }
+
+        fn narrow<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
+            _: &mut [[Self; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+        ) -> Option<&mut [[i16; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS]> {
+            None
+        }
+    }
+
+    impl Sealed for i16 {
+        const ZERO: Self = 0;
+        const BITS: u32 = 16;
+
+        #[inline(always)]
+        fn widen(self) -> i32 {
+            self.into()
+        }
+
+        fn wide<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
+            _: &mut [[Self; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+        ) -> Option<&mut [[i32; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS]> {
+            None
+        }
+
+        fn narrow<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
+            samples: &mut [[Self; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+        ) -> Option<&mut [[i16; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS]> {
+            Some(samples)
+        }
+    }
+}
+
+/// The integer type [`FlacDecoder`] keeps a decoded block in.
+///
+/// `i32`, the default, decodes every stream. `i16` halves the block buffer and decodes streams of up to 16 bits per sample; deeper streams are rejected with [`Error::UnsupportedFormat`].
+pub trait FlacBlockSample: sealed::Sealed {}
+
+impl FlacBlockSample for i32 {}
+
+impl FlacBlockSample for i16 {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct Point {
     byte: u64,
@@ -618,7 +1104,17 @@ struct Search {
 
 /// A FLAC decoder that does not allocate.
 ///
-/// `MAXIMUM_BLOCK_SIZE` (in samples per channel) and `MAXIMUM_CHANNELS` size the block buffer, which holds one `i32` per sample: `size_of` grows with their product, about 37 KiB with the defaults (4608 samples, 2 channels) and 33 KiB for 4096-sample stereo blocks. A stream whose STREAMINFO announces larger blocks is rejected with [`Error::UnsupportedFormat`], and one with more channels with [`Error::TooManyChannels`].
+/// `MAXIMUM_BLOCK_SIZE` (in samples per channel) and `MAXIMUM_CHANNELS` size the block buffer, which holds one `B` per sample: `size_of` grows with their product, about 37 KiB with the defaults (4608 samples, 2 channels, `i32`) and 33 KiB for 4096-sample stereo blocks. A stream whose STREAMINFO announces larger blocks is rejected with [`Error::UnsupportedFormat`], and one with more channels with [`Error::TooManyChannels`].
+///
+/// With `B = i16` the buffer is half as large (about 18 KiB with the defaults) and decodes streams of up to 16 bits per sample, which covers most files; deeper streams are rejected with [`Error::UnsupportedFormat`]. Decoding a subframe then also uses about 1 KiB of stack.
+///
+/// ```
+/// use nanoaudio_flac::FlacDecoder;
+///
+/// let decoder = FlacDecoder::<i16, 4608, 2, i16>::new();
+///
+/// assert!(size_of_val(&decoder) < 20 * 1024);
+/// ```
 ///
 /// Streams of 4 to 32 bits per sample decode to any [`Sample`] type, scaled to its full range: a narrower type is rounded (24-bit audio to `i16`), a wider one is shifted up, and `f32` stays within -1.0 to 1.0. Use `i32` to keep every bit of any stream.
 ///
@@ -652,10 +1148,11 @@ pub struct FlacDecoder<
     S: Sample = i16,
     const MAXIMUM_BLOCK_SIZE: usize = FLAC_DEFAULT_MAXIMUM_BLOCK_SIZE,
     const MAXIMUM_CHANNELS: usize = FLAC_DEFAULT_MAXIMUM_CHANNELS,
+    B: FlacBlockSample = i32,
 > {
     state: State,
     information: Option<FlacStreamInformation>,
-    samples: [[i32; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+    samples: [[B; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
     block_size: usize,
     position: usize,
     required: usize,
@@ -671,16 +1168,16 @@ pub struct FlacDecoder<
     sample: PhantomData<S>,
 }
 
-impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize> Default
-    for FlacDecoder<S, MAXIMUM_BLOCK_SIZE, MAXIMUM_CHANNELS>
+impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize, B: FlacBlockSample>
+    Default for FlacDecoder<S, MAXIMUM_BLOCK_SIZE, MAXIMUM_CHANNELS, B>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
-    FlacDecoder<S, MAXIMUM_BLOCK_SIZE, MAXIMUM_CHANNELS>
+impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize, B: FlacBlockSample>
+    FlacDecoder<S, MAXIMUM_BLOCK_SIZE, MAXIMUM_CHANNELS, B>
 {
     /// Creates a decoder waiting for the `fLaC` marker.
     ///
@@ -701,7 +1198,7 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
         Self {
             state: State::Marker,
             information: None,
-            samples: [[0; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
+            samples: [[B::ZERO; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
             block_size: 0,
             position: 0,
             required: 0,
@@ -808,6 +1305,7 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
                 }
 
                 if information.maximum_block_size as usize > MAXIMUM_BLOCK_SIZE
+                    || information.bits_per_sample as u32 > B::BITS
                     || information.sample_rate == 0
                 {
                     return Err(Error::UnsupportedFormat);
@@ -872,163 +1370,15 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
         }
     }
 
-    fn decode_wide_subframe(
-        &mut self,
-        reader: &mut BitReader,
-        block_size: usize,
-        side: usize,
-        mid_side: bool,
-    ) -> Result<()> {
-        let header = SubframeHeader::read(reader, 33)?;
-        let bits = header.bits_per_sample;
-        let wasted_bits = header.wasted_bits;
-        let samples = &mut self.samples;
-        let store = |samples: &mut [[i32; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
-                     index: usize,
-                     value: i64| {
-            let value = value << wasted_bits;
-
-            if mid_side {
-                let sum = (i64::from(samples[0][index]) << 1) | (value & 1);
-
-                samples[0][index] = (sum.wrapping_add(value) >> 1) as i32;
-                samples[1][index] = (sum.wrapping_sub(value) >> 1) as i32;
-            } else {
-                samples[side][index] = value as i32;
-            }
-        };
-
-        let Some(mut predictor) = read_predictor(header.kind)? else {
-            if header.kind == 0 {
-                let value = read_signed_wide(reader, bits)?;
-
-                for index in 0..block_size {
-                    store(samples, index, value);
-                }
-            } else {
-                for index in 0..block_size {
-                    let value = read_signed_wide(reader, bits)?;
-
-                    store(samples, index, value);
-                }
-            }
-
-            return Ok(());
-        };
-
-        let order = predictor.order();
-
-        if order > block_size {
-            return Err(Error::InvalidData);
-        }
-
-        let mut history = [0i64; MAXIMUM_ORDER];
-
-        for index in 0..order {
-            history[order - 1 - index] = read_signed_wide(reader, bits)?;
-        }
-
-        predictor.read_parameters(reader)?;
-        decode_residual(reader, &mut samples[side][..block_size], order)?;
-
-        for index in 0..order {
-            store(samples, index, history[order - 1 - index]);
-        }
-
-        let (coefficients, shift) = predictor.coefficients();
-
-        for index in order..block_size {
-            let prediction =
-                coefficients
-                    .iter()
-                    .zip(&history)
-                    .fold(0i64, |sum, (coefficient, sample)| {
-                        sum.wrapping_add(i64::from(*coefficient).wrapping_mul(*sample))
-                    });
-            let value = i64::from(samples[side][index]).wrapping_add(prediction >> shift);
-
-            if order > 0 {
-                history.copy_within(..order - 1, 1);
-                history[0] = value;
-            }
-
-            store(samples, index, value);
-        }
-
-        Ok(())
-    }
-
-    fn decode_channel(
-        &mut self,
-        reader: &mut BitReader,
-        block_size: usize,
-        channel: usize,
-        bits_per_sample: u32,
-        mid_side: bool,
-    ) -> Result<bool> {
-        if bits_per_sample > 32 {
-            self.decode_wide_subframe(reader, block_size, channel, mid_side)?;
-
-            return Ok(mid_side);
-        }
-
-        decode_subframe(
-            reader,
-            &mut self.samples[channel][..block_size],
-            bits_per_sample,
-        )?;
-
-        Ok(false)
-    }
-
     fn decode_frame(&mut self, input: &[u8]) -> Result<usize> {
         let information = self.information.ok_or(Error::InvalidHeader)?;
         let header = FrameHeader::parse(input, &information)?;
-        let block_size = header.block_size;
-        let bits = header.bits_per_sample;
         let mut reader = BitReader::new(&input[header.size..]);
 
-        match header.assignment {
-            Assignment::Independent(channels) => {
-                for channel in 0..channels {
-                    self.decode_channel(&mut reader, block_size, channel, bits, false)?;
-                }
-            }
-            Assignment::LeftSide => {
-                self.decode_channel(&mut reader, block_size, 0, bits, false)?;
-                self.decode_channel(&mut reader, block_size, 1, bits + 1, false)?;
-
-                let [left, side] = self.stereo()?;
-
-                for (side, left) in side[..block_size].iter_mut().zip(&left[..block_size]) {
-                    *side = left.wrapping_sub(*side);
-                }
-            }
-            Assignment::RightSide => {
-                self.decode_channel(&mut reader, block_size, 0, bits + 1, false)?;
-                self.decode_channel(&mut reader, block_size, 1, bits, false)?;
-
-                let [side, right] = self.stereo()?;
-
-                for (side, right) in side[..block_size].iter_mut().zip(&right[..block_size]) {
-                    *side = side.wrapping_add(*right);
-                }
-            }
-            Assignment::MidSide => {
-                self.decode_channel(&mut reader, block_size, 0, bits, false)?;
-
-                if !self.decode_channel(&mut reader, block_size, 1, bits + 1, true)? {
-                    let [mid, side] = self.stereo()?;
-
-                    for (mid, side) in mid[..block_size].iter_mut().zip(&mut side[..block_size]) {
-                        let sum = (i64::from(*mid) << 1) | i64::from(*side & 1);
-                        let difference = i64::from(*side);
-
-                        *mid = ((sum + difference) >> 1) as i32;
-                        *side = ((sum - difference) >> 1) as i32;
-                    }
-                }
-            }
+        if let Some(samples) = B::wide(&mut self.samples) {
+            decode_wide_frame(&mut reader, samples, &header)?;
+        } else if let Some(samples) = B::narrow(&mut self.samples) {
+            decode_narrow_frame(&mut reader, samples, &header)?;
         }
 
         reader.align();
@@ -1042,7 +1392,7 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
             return Err(Error::InvalidData);
         }
 
-        self.block_size = block_size;
+        self.block_size = header.block_size;
         self.position = 0;
         self.last = Some(Point {
             byte: self.offset,
@@ -1321,12 +1671,6 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
             .clamp(low.byte + 1, high.byte.saturating_sub(1).max(low.byte + 1))
     }
 
-    fn stereo(&mut self) -> Result<[&mut [i32; MAXIMUM_BLOCK_SIZE]; 2]> {
-        self.samples
-            .get_disjoint_mut([0, 1])
-            .map_err(|_| Error::UnsupportedFormat)
-    }
-
     fn drain(&mut self, output: &mut [S]) -> usize {
         let Some(information) = self.information else {
             return 0;
@@ -1337,7 +1681,8 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
 
         for (frame, output) in output.chunks_exact_mut(channels).take(frames).enumerate() {
             for (channel, output) in output.iter_mut().enumerate() {
-                *output = S::from_i32(self.samples[channel][self.position + frame] << shift);
+                *output =
+                    S::from_i32(self.samples[channel][self.position + frame].widen() << shift);
             }
         }
 
@@ -1347,8 +1692,8 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>
     }
 }
 
-impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize> Decoder
-    for FlacDecoder<S, MAXIMUM_BLOCK_SIZE, MAXIMUM_CHANNELS>
+impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize, B: FlacBlockSample>
+    Decoder for FlacDecoder<S, MAXIMUM_BLOCK_SIZE, MAXIMUM_CHANNELS, B>
 {
     type Sample = S;
 
@@ -1449,8 +1794,8 @@ impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize> 
     }
 }
 
-impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize> Seek
-    for FlacDecoder<S, MAXIMUM_BLOCK_SIZE, MAXIMUM_CHANNELS>
+impl<S: Sample, const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize, B: FlacBlockSample>
+    Seek for FlacDecoder<S, MAXIMUM_BLOCK_SIZE, MAXIMUM_CHANNELS, B>
 {
     /// Starts a search for `frame`, from the seek table when there is one, and returns the byte offset to resume from, counted from `fLaC`.
     ///

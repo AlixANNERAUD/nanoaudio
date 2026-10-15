@@ -361,6 +361,26 @@ pub fn cases(data: Option<&Path>, filter: Option<&str>) -> Vec<Case> {
                 )
             }),
         ));
+        let flac = data.clone();
+        builders.push((
+            "flac",
+            Box::new(move || {
+                file_case(
+                    &flac,
+                    "signal.flac",
+                    "FLAC",
+                    "44.1 kHz stereo 16-bit, level 5, i16 blocks",
+                    true,
+                    Box::new(|input, output| {
+                        decode_all(
+                            &mut *Box::new(FlacDecoder::<i16, 4608, 2, i16>::new()),
+                            input,
+                            output,
+                        )
+                    }),
+                )
+            }),
+        ));
         builders.push((
             "mp3",
             Box::new(move || {

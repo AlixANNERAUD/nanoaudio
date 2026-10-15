@@ -3,7 +3,7 @@ use std::path::Path;
 
 use nanoaudio_adpcm::{ImaAdpcm, MsAdpcm};
 use nanoaudio_core::codec::{Decoder, Encoder};
-use nanoaudio_flac::FlacDecoder;
+use nanoaudio_flac::{FlacBlockSample, FlacDecoder};
 use nanoaudio_g711::{G711, Law};
 use nanoaudio_g722::{G722BitRate, G722Decoder, G722Encoder};
 use nanoaudio_mp3::Mp3Decoder;
@@ -68,8 +68,10 @@ fn encoder<E: Encoder<Sample = i16>>(
     )
 }
 
-fn flac<const BLOCK: usize, const CHANNELS: usize>(file: Option<&[u8]>) -> Entry {
-    let mut decoder = Box::new(FlacDecoder::<i16, BLOCK, CHANNELS>::new());
+fn flac<const BLOCK: usize, const CHANNELS: usize, B: FlacBlockSample>(
+    file: Option<&[u8]>,
+) -> Entry {
+    let mut decoder = Box::new(FlacDecoder::<i16, BLOCK, CHANNELS, B>::new());
     let mut input = None;
 
     if let Some(file) = file.filter(|_| BLOCK >= 4_096 && CHANNELS >= 2) {
@@ -87,10 +89,15 @@ fn flac<const BLOCK: usize, const CHANNELS: usize>(file: Option<&[u8]>) -> Entry
         "FLAC",
         "decode",
         &format!(
-            "up to {BLOCK}-sample blocks, {CHANNELS} channel{}",
-            if CHANNELS == 1 { "" } else { "s" }
+            "up to {BLOCK}-sample blocks, {CHANNELS} channel{}{}",
+            if CHANNELS == 1 { "" } else { "s" },
+            if size_of::<B>() == 2 {
+                ", i16 blocks"
+            } else {
+                ""
+            }
         ),
-        size_of::<FlacDecoder<i16, BLOCK, CHANNELS>>(),
+        size_of::<FlacDecoder<i16, BLOCK, CHANNELS, B>>(),
         input,
         Some(CHANNELS * 2),
     )
@@ -159,11 +166,13 @@ pub fn entries(data: Option<&Path>) -> Vec<Entry> {
             "44.1 kHz stereo, up to 2 channels",
             &qoa_stereo_limited,
         ),
-        flac::<1_152, 2>(flac_file),
-        flac::<4_096, 1>(flac_file),
-        flac::<4_096, 2>(flac_file),
-        flac::<4_608, 2>(flac_file),
-        flac::<4_608, 8>(flac_file),
+        flac::<1_152, 2, i32>(flac_file),
+        flac::<4_096, 1, i32>(flac_file),
+        flac::<4_096, 2, i32>(flac_file),
+        flac::<4_096, 2, i16>(flac_file),
+        flac::<4_608, 2, i32>(flac_file),
+        flac::<4_608, 2, i16>(flac_file),
+        flac::<4_608, 8, i32>(flac_file),
         decoder("G.722", "16 kHz mono", &g722_decoder, 1),
         encoder("G.722", "16 kHz mono", &g722_encoder),
         decoder(
