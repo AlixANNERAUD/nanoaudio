@@ -13,6 +13,7 @@ Allocation-free, `no_std` building blocks for PCM audio on microcontrollers and 
 - Saturating mixing, and a fixed-size mixer with per-source and master volumes
 - Single-producer/single-consumer ring buffer with contiguous grants, for DMA and audio callbacks
 - WAV header parser that works on a partial buffer and reports when it needs more bytes
+- Codecs (`codec` module), behind allocation-free `Decoder` and `Encoder` traits: G.711 A-law and µ-law, IMA ADPCM (WAV block layout)
 
 ## Number representation
 
@@ -34,7 +35,7 @@ Every API is generic and monomorphized, so picking a representation costs nothin
 - `no_std`, no `alloc`, no `unsafe` outside of the ring buffer
 - Caller-provided storage, no allocation on the hot path
 - Synchronous, non-blocking APIs: operations process what fits and report how much they did
-- No codecs: decoding is left to applications
+- Codecs are push-based: feed any amount of input, get back how much was consumed and produced
 
 ## Pipelines
 

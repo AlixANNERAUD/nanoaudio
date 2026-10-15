@@ -1,5 +1,6 @@
 #![no_std]
 
+pub mod codec;
 mod convert;
 mod error;
 mod format;

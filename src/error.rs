@@ -7,6 +7,8 @@ pub enum Error {
     UnsupportedFormat,
     Incomplete,
     TooManyChannels,
+    InvalidParameter,
+    BufferTooSmall,
 }
 
 impl fmt::Display for Error {
@@ -17,6 +19,8 @@ impl fmt::Display for Error {
             Error::UnsupportedFormat => formatter.write_str("unsupported format"),
             Error::Incomplete => formatter.write_str("incomplete data"),
             Error::TooManyChannels => formatter.write_str("too many channels"),
+            Error::InvalidParameter => formatter.write_str("invalid parameter"),
+            Error::BufferTooSmall => formatter.write_str("buffer too small"),
         }
     }
 }
