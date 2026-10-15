@@ -1,11 +1,13 @@
-use crate::{Format, Sample};
+use crate::{
+    DefaultRepresentation, Fixed, Float, Format, Representation, RepresentationKind, Sample,
+};
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Volume(u16);
 
 impl Volume {
-    const FRACTIONAL_BITS: u32 = 12;
+    pub const FRACTIONAL_BITS: u32 = 12;
 
     pub const MUTE: Self = Self(0);
     pub const UNITY: Self = Self(1 << Self::FRACTIONAL_BITS);
@@ -46,12 +48,18 @@ impl Volume {
     }
 
     pub fn apply<S: Sample>(self, sample: S) -> S {
-        let scaled = (sample.to_i32() as i64 * self.0 as i64) >> Self::FRACTIONAL_BITS;
+        self.apply_using::<DefaultRepresentation, S>(sample)
+    }
 
-        S::from_i32(scaled.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
+    pub fn apply_using<R: Representation, S: Sample>(self, sample: S) -> S {
+        R::to_sample(R::amplify(R::from_sample(sample), R::gain(self)))
     }
 
     pub fn apply_to<S: Sample>(self, samples: &mut [S]) {
+        self.apply_to_using::<DefaultRepresentation, S>(samples)
+    }
+
+    pub fn apply_to_using<R: Representation, S: Sample>(self, samples: &mut [S]) {
         if self.is_unity() {
             return;
         }
@@ -61,27 +69,42 @@ impl Volume {
             return;
         }
 
+        let gain = R::gain(self);
+
         for sample in samples {
-            *sample = self.apply(*sample);
+            *sample = R::to_sample(R::amplify(R::from_sample(*sample), gain));
         }
     }
 
     pub fn apply_to_bytes(self, bytes: &mut [u8], format: Format) {
-        match format {
-            Format::U8 => self.apply_to_bytes_typed::<u8>(bytes),
-            Format::I16 => self.apply_to_bytes_typed::<i16>(bytes),
-            Format::I32 => self.apply_to_bytes_typed::<i32>(bytes),
-            Format::F32 => self.apply_to_bytes_typed::<f32>(bytes),
+        self.apply_to_bytes_using::<DefaultRepresentation>(bytes, format)
+    }
+
+    pub fn apply_to_bytes_with(self, kind: RepresentationKind, bytes: &mut [u8], format: Format) {
+        match kind {
+            RepresentationKind::Fixed => self.apply_to_bytes_using::<Fixed>(bytes, format),
+            RepresentationKind::Float => self.apply_to_bytes_using::<Float>(bytes, format),
         }
     }
 
-    fn apply_to_bytes_typed<S: Sample>(self, bytes: &mut [u8]) {
+    pub fn apply_to_bytes_using<R: Representation>(self, bytes: &mut [u8], format: Format) {
+        match format {
+            Format::U8 => self.apply_to_bytes_typed::<R, u8>(bytes),
+            Format::I16 => self.apply_to_bytes_typed::<R, i16>(bytes),
+            Format::I32 => self.apply_to_bytes_typed::<R, i32>(bytes),
+            Format::F32 => self.apply_to_bytes_typed::<R, f32>(bytes),
+        }
+    }
+
+    fn apply_to_bytes_typed<R: Representation, S: Sample>(self, bytes: &mut [u8]) {
         if self.is_unity() {
             return;
         }
 
+        let gain = R::gain(self);
+
         for chunk in bytes.chunks_exact_mut(S::SIZE) {
-            self.apply(S::read_le(chunk)).write_le(chunk);
+            R::to_sample::<S>(R::amplify(R::from_sample(S::read_le(chunk)), gain)).write_le(chunk);
         }
     }
 }
@@ -120,18 +143,41 @@ mod tests {
         assert_eq!(Volume::MUTE.combine(Volume::MAXIMUM), Volume::MUTE);
     }
 
-    #[test]
-    fn apply_to_samples() {
+    fn apply_to_samples<R: Representation>() {
         let mut samples = [1000i16, -1000, i16::MAX];
 
-        Volume::from_percent(50).apply_to(&mut samples);
+        Volume::from_percent(50).apply_to_using::<R, _>(&mut samples);
         assert_eq!(samples, [500, -500, i16::MAX / 2]);
 
-        Volume::MAXIMUM.apply_to(&mut samples);
-        assert_eq!(samples, [7999, -8000, i16::MAX]);
+        Volume::MAXIMUM.apply_to_using::<R, _>(&mut samples);
+        assert!((7999..=8000).contains(&samples[0]));
+        assert!((-8000..=-7999).contains(&samples[1]));
+        assert_eq!(samples[2], i16::MAX);
 
-        Volume::MUTE.apply_to(&mut samples);
+        Volume::MUTE.apply_to_using::<R, _>(&mut samples);
         assert_eq!(samples, [0, 0, 0]);
+    }
+
+    #[test]
+    fn apply_to_samples_fixed() {
+        apply_to_samples::<Fixed>();
+    }
+
+    #[test]
+    fn apply_to_samples_float() {
+        apply_to_samples::<Float>();
+    }
+
+    #[test]
+    fn apply_to_bytes_at_runtime() {
+        for kind in [RepresentationKind::Fixed, RepresentationKind::Float] {
+            let mut bytes = [0u8; 4];
+            0.5f32.write_le(&mut bytes);
+
+            Volume::from_percent(50).apply_to_bytes_with(kind, &mut bytes, Format::F32);
+
+            assert_eq!(f32::read_le(&bytes), 0.25);
+        }
     }
 
     #[test]

@@ -9,16 +9,16 @@ pub trait Sample: Copy + Default + PartialEq + Send + Sync + 'static {
 
     fn from_i32(value: i32) -> Self;
 
+    fn to_f32(self) -> f32;
+
+    fn from_f32(value: f32) -> Self;
+
     fn read_le(bytes: &[u8]) -> Self;
 
     fn write_le(self, bytes: &mut [u8]);
 
     fn convert<O: Sample>(self) -> O {
         O::from_i32(self.to_i32())
-    }
-
-    fn mix(self, other: Self) -> Self {
-        Self::from_i32(self.to_i32().saturating_add(other.to_i32()))
     }
 }
 
@@ -32,6 +32,14 @@ impl Sample for u8 {
 
     fn from_i32(value: i32) -> Self {
         ((value >> 24) + 0x80) as u8
+    }
+
+    fn to_f32(self) -> f32 {
+        (self as f32 - 128.0) / 128.0
+    }
+
+    fn from_f32(value: f32) -> Self {
+        (value * 128.0 + 128.0) as u8
     }
 
     fn read_le(bytes: &[u8]) -> Self {
@@ -55,6 +63,14 @@ impl Sample for i16 {
         (value >> 16) as i16
     }
 
+    fn to_f32(self) -> f32 {
+        self as f32 / 32_768.0
+    }
+
+    fn from_f32(value: f32) -> Self {
+        (value * 32_768.0) as i16
+    }
+
     fn read_le(bytes: &[u8]) -> Self {
         i16::from_le_bytes([bytes[0], bytes[1]])
     }
@@ -74,6 +90,14 @@ impl Sample for i32 {
 
     fn from_i32(value: i32) -> Self {
         value
+    }
+
+    fn to_f32(self) -> f32 {
+        self as f32 / F32_SCALE
+    }
+
+    fn from_f32(value: f32) -> Self {
+        (value * F32_SCALE) as i32
     }
 
     fn read_le(bytes: &[u8]) -> Self {
@@ -97,6 +121,14 @@ impl Sample for f32 {
 
     fn from_i32(value: i32) -> Self {
         value as f32 / F32_SCALE
+    }
+
+    fn to_f32(self) -> f32 {
+        self
+    }
+
+    fn from_f32(value: f32) -> Self {
+        value.clamp(-1.0, 1.0)
     }
 
     fn read_le(bytes: &[u8]) -> Self {
@@ -128,12 +160,15 @@ mod tests {
     }
 
     #[test]
-    fn mixing_saturates() {
-        assert_eq!(i16::MAX.mix(i16::MAX), i16::MAX);
-        assert_eq!(i16::MIN.mix(-1), i16::MIN);
-        assert_eq!(100i16.mix(-40), 60);
-        assert_eq!(0xF0u8.mix(0xF0), 0xFF);
-        assert_eq!(u8::SILENCE.mix(u8::SILENCE), u8::SILENCE);
+    fn float_conversions() {
+        assert_eq!(i16::MIN.to_f32(), -1.0);
+        assert_eq!(i16::from_f32(1.0), i16::MAX);
+        assert_eq!(i16::from_f32(f32::NAN), 0);
+        assert_eq!(u8::from_f32(-1.0), 0);
+        assert_eq!(u8::from_f32(1.0), u8::MAX);
+        assert_eq!(u8::SILENCE.to_f32(), 0.0);
+        assert_eq!(i32::from_f32(-2.0), i32::MIN);
+        assert_eq!(f32::from_f32(3.0), 1.0);
     }
 
     #[test]

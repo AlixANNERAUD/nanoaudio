@@ -8,10 +8,25 @@ Allocation-free, `no_std` building blocks for PCM audio on microcontrollers and 
 
 - Sample formats (`U8`, `I16`, `I32`, `F32`) and stream configuration (`#[repr(C)]`, ready to cross an ABI)
 - Sample conversion between formats and channel layouts, on typed slices or raw little-endian bytes
-- Fixed-point volume (Q4.12), applied in place
+- Volume (Q4.12 control value), applied in place
 - Saturating mixing, and a fixed-size mixer with per-source and master volumes
 - Single-producer/single-consumer ring buffer with contiguous grants, for DMA and audio callbacks
 - WAV header parser that works on a partial buffer and reports when it needs more bytes
+
+## Number representation
+
+Volume and mixing are computed with a `Representation`:
+
+| Representation | Values | Gain | Best for |
+|---|---|---|---|
+| `Fixed` | `i32` (Q31), saturating | `i32` (Q4.12) | Cores without a floating-point unit |
+| `Float` | `f32`, clipped on output | `f32` | Cores with a single-precision floating-point unit |
+
+Every API is generic and monomorphized, so picking a representation costs nothing per sample:
+
+- At build time, `DefaultRepresentation` (used by `mix`, `Volume::apply_to`, `Mixer<N>`, …) is chosen from the target: `Float` on x86, AArch64, WebAssembly, `eabihf` ARM, RISC-V with the `F` extension, ESP32 and ESP32-S3; `Fixed` otherwise (Cortex-M0/M3, ESP32-C3/C6, ESP32-S2, …). The `fixed` and `float` features override this choice.
+- Explicitly, with the `_using::<R>` functions or `Mixer<N, Fixed>` / `Mixer<N, Float>`.
+- At runtime, with `RepresentationKind` and the `_with` functions, which dispatch once per buffer, not per sample. Both implementations are then linked in.
 
 ## Design rules
 

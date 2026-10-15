@@ -12,3 +12,7 @@ keywords = ["audio", "pcm", "no_std", "embedded", "mixer"]
 categories = ["embedded", "no-std", "multimedia::audio"]
 
 [dependencies]
+
+[features]
+fixed = []
+float = []
