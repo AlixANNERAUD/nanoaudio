@@ -18,7 +18,7 @@ nanoaudio does not own a runtime or talk to hardware: it gives your driver, mixe
 - **Integer or floating point, your call.** Processing runs in fixed point on cores without an FPU and in `f32` on cores with one, chosen from the target at build time, overridable with a feature, or selectable at run time.
 - **Made for DMA and audio callbacks.** A lock-free single-producer/single-consumer ring buffer hands out contiguous slices, and every operation is synchronous and non-blocking: it processes what fits and reports how much it did.
 - **Codecs included.** WAV (PCM, A-law, µ-law, IMA ADPCM), G.711 and IMA ADPCM encoders and decoders, bit-exact with reference implementations, and MP3 decoding behind a feature.
-- **Small and dependency-free.** No dependency by default; MP3 support adds [`nanomp3-core`](https://crates.io/crates/nanomp3-core), itself `no_std` and free of `unsafe`.
+- **Small and dependency-free.** No third-party dependency by default; MP3 support adds [`nanomp3-core`](https://crates.io/crates/nanomp3-core), itself `no_std` and free of `unsafe`.
 - **Checked.** Tested on every combination of features, run under Miri, and built for Cortex-M0, Cortex-M4F and RISC-V in CI.
 
 ## Installation
@@ -34,16 +34,28 @@ or in `Cargo.toml`:
 nanoaudio = "0.1"
 ```
 
-No feature is enabled by default:
+Every feature except MP3 is enabled by default. With `default-features = false`, only the types from `nanoaudio-core` remain, and you pick what you need:
 
 | Feature        | Enables                                                                                                   |
 | -------------- | --------------------------------------------------------------------------------------------------------- |
-| *(none)*       | Everything except MP3, in `no_std` without an allocator.                                                  |
-| `mp3`          | `codec::Mp3Decoder`, MP3 decoding with [`nanomp3-core`](https://crates.io/crates/nanomp3-core).           |
+| `dsp`          | Conversion, volume, mixing and pipelines (`nanoaudio-dsp`).                                                |
+| `buffer`       | `RingBuffer`, `Producer` and `Consumer` (`nanoaudio-buffer`).                                              |
+| `g711`         | `codec::G711` and the A-law and µ-law functions (`nanoaudio-g711`).                                        |
+| `adpcm`        | `codec::ImaAdpcm` and `codec::MsAdpcm` (`nanoaudio-adpcm`).                                                |
+| `qoa`          | `codec::QoaDecoder` and `codec::QoaEncoder` (`nanoaudio-qoa`).                                             |
+| `flac`         | `codec::FlacDecoder` (`nanoaudio-flac`).                                                                   |
+| `g722`         | `codec::G722Decoder` and `codec::G722Encoder` (`nanoaudio-g722`).                                          |
+| `sbc`          | `codec::SbcDecoder` and `codec::SbcEncoder` (`nanoaudio-sbc`).                                             |
+| `wav`          | `WavHeader` and `codec::WavDecoder` (`nanoaudio-wav`). Implies `g711` and `adpcm`.                         |
+| `aiff`         | `AiffHeader` and `codec::AiffDecoder` (`nanoaudio-aiff`). Implies `g711`.                                  |
+| `metadata`     | The `metadata` module (`nanoaudio-metadata`).                                                              |
+| `mp3`          | `codec::Mp3Decoder`, MP3 decoding with [`nanomp3-core`](https://crates.io/crates/nanomp3-core). Not default. |
 | `mp3-simd`     | SIMD in the MP3 decoder. Implies `mp3`.                                                                    |
 | `mpeg-layer12` | MPEG Layer I and II (MP1, MP2) decoding. Implies `mp3`.                                                    |
 | `fixed`        | Forces fixed-point processing by default. See [Integer or Floating Point](#integer-or-floating-point).    |
 | `float`        | Forces floating-point processing by default. If `fixed` is also enabled, `fixed` takes precedence.        |
+
+`nanoaudio` re-exports a set of smaller crates, one per codec or building block, which can also be used on their own: [`nanoaudio-core`](https://crates.io/crates/nanoaudio-core), [`nanoaudio-dsp`](https://crates.io/crates/nanoaudio-dsp), [`nanoaudio-buffer`](https://crates.io/crates/nanoaudio-buffer), [`nanoaudio-g711`](https://crates.io/crates/nanoaudio-g711), [`nanoaudio-adpcm`](https://crates.io/crates/nanoaudio-adpcm), [`nanoaudio-qoa`](https://crates.io/crates/nanoaudio-qoa), [`nanoaudio-flac`](https://crates.io/crates/nanoaudio-flac), [`nanoaudio-g722`](https://crates.io/crates/nanoaudio-g722), [`nanoaudio-sbc`](https://crates.io/crates/nanoaudio-sbc), [`nanoaudio-mp3`](https://crates.io/crates/nanoaudio-mp3), [`nanoaudio-wav`](https://crates.io/crates/nanoaudio-wav), [`nanoaudio-aiff`](https://crates.io/crates/nanoaudio-aiff) and [`nanoaudio-metadata`](https://crates.io/crates/nanoaudio-metadata).
 
 ## Quick Start
 

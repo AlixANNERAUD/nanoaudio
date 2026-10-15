@@ -20,10 +20,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Test
-        run: cargo test --features mp3
+        run: cargo test --workspace --all-features
 
       - name: Package
-        run: cargo package
+        run: cargo package --workspace
 
   release-plz-release:
     needs: validate

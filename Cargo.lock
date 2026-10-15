@@ -12,7 +12,109 @@ checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
 name = "nanoaudio"
 version = "0.1.0"
 dependencies = [
+ "nanoaudio-adpcm",
+ "nanoaudio-aiff",
+ "nanoaudio-buffer",
+ "nanoaudio-core",
+ "nanoaudio-dsp",
+ "nanoaudio-flac",
+ "nanoaudio-g711",
+ "nanoaudio-g722",
+ "nanoaudio-metadata",
+ "nanoaudio-mp3",
+ "nanoaudio-qoa",
+ "nanoaudio-sbc",
+ "nanoaudio-wav",
+]
+
+[[package]]
+name = "nanoaudio-adpcm"
+version = "0.1.0"
+dependencies = [
+ "nanoaudio-core",
+]
+
+[[package]]
+name = "nanoaudio-aiff"
+version = "0.1.0"
+dependencies = [
+ "nanoaudio-core",
+ "nanoaudio-g711",
+]
+
+[[package]]
+name = "nanoaudio-buffer"
+version = "0.1.0"
+
+[[package]]
+name = "nanoaudio-core"
+version = "0.1.0"
+
+[[package]]
+name = "nanoaudio-dsp"
+version = "0.1.0"
+dependencies = [
+ "nanoaudio-core",
+]
+
+[[package]]
+name = "nanoaudio-flac"
+version = "0.1.0"
+dependencies = [
+ "nanoaudio-core",
+]
+
+[[package]]
+name = "nanoaudio-g711"
+version = "0.1.0"
+dependencies = [
+ "nanoaudio-core",
+]
+
+[[package]]
+name = "nanoaudio-g722"
+version = "0.1.0"
+dependencies = [
+ "nanoaudio-core",
+]
+
+[[package]]
+name = "nanoaudio-metadata"
+version = "0.1.0"
+dependencies = [
+ "nanoaudio-core",
+]
+
+[[package]]
+name = "nanoaudio-mp3"
+version = "0.1.0"
+dependencies = [
+ "nanoaudio-core",
  "nanomp3-core",
+]
+
+[[package]]
+name = "nanoaudio-qoa"
+version = "0.1.0"
+dependencies = [
+ "nanoaudio-core",
+]
+
+[[package]]
+name = "nanoaudio-sbc"
+version = "0.1.0"
+dependencies = [
+ "nanoaudio-core",
+]
+
+[[package]]
+name = "nanoaudio-wav"
+version = "0.1.0"
+dependencies = [
+ "nanoaudio-adpcm",
+ "nanoaudio-core",
+ "nanoaudio-dsp",
+ "nanoaudio-g711",
 ]
 
 [[package]]

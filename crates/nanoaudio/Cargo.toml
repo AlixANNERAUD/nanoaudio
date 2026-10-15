@@ -1,0 +1,54 @@
+[package]
+name = "nanoaudio"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Allocation-free no_std audio for embedded Rust: PCM conversion, volume, mixing, ring buffer, single-pass pipelines, WAV, G.711, IMA ADPCM and MP3 decoding."
+documentation = "https://docs.rs/nanoaudio"
+readme = "README.md"
+keywords = ["audio", "no-std", "embedded", "pcm", "mixer"]
+categories = ["multimedia::audio", "embedded", "no-std", "no-std::no-alloc", "multimedia::encoding"]
+
+[package.metadata.docs.rs]
+features = ["mp3"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+nanoaudio-core.workspace = true
+nanoaudio-buffer = { workspace = true, optional = true }
+nanoaudio-dsp = { workspace = true, optional = true }
+nanoaudio-g711 = { workspace = true, optional = true }
+nanoaudio-adpcm = { workspace = true, optional = true }
+nanoaudio-qoa = { workspace = true, optional = true }
+nanoaudio-flac = { workspace = true, optional = true }
+nanoaudio-g722 = { workspace = true, optional = true }
+nanoaudio-sbc = { workspace = true, optional = true }
+nanoaudio-mp3 = { workspace = true, optional = true }
+nanoaudio-wav = { workspace = true, optional = true }
+nanoaudio-aiff = { workspace = true, optional = true }
+nanoaudio-metadata = { workspace = true, optional = true, features = ["core"] }
+
+[features]
+default = ["buffer", "dsp", "g711", "adpcm", "qoa", "flac", "g722", "sbc", "wav", "aiff", "metadata"]
+buffer = ["dep:nanoaudio-buffer"]
+dsp = ["dep:nanoaudio-dsp"]
+fixed = ["dsp", "nanoaudio-dsp/fixed"]
+float = ["dsp", "nanoaudio-dsp/float"]
+g711 = ["dep:nanoaudio-g711"]
+adpcm = ["dep:nanoaudio-adpcm"]
+qoa = ["dep:nanoaudio-qoa"]
+flac = ["dep:nanoaudio-flac"]
+g722 = ["dep:nanoaudio-g722"]
+sbc = ["dep:nanoaudio-sbc"]
+wav = ["g711", "adpcm", "dep:nanoaudio-wav"]
+aiff = ["g711", "dep:nanoaudio-aiff"]
+metadata = ["dep:nanoaudio-metadata"]
+mp3 = ["dep:nanoaudio-mp3"]
+mp3-simd = ["mp3", "nanoaudio-mp3/simd"]
+mpeg-layer12 = ["mp3", "nanoaudio-mp3/layer12"]
+
+[lints]
+workspace = true

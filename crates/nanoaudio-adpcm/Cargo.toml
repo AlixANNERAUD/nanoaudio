@@ -1,0 +1,19 @@
+[package]
+name = "nanoaudio-adpcm"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Allocation-free IMA and Microsoft ADPCM encoders and decoders for embedded Rust."
+documentation = "https://docs.rs/nanoaudio-adpcm"
+readme = "README.md"
+keywords = ["audio", "no-std", "embedded", "adpcm", "codec"]
+categories = ["multimedia::audio", "multimedia::encoding", "embedded", "no-std", "no-std::no-alloc"]
+
+[dependencies]
+nanoaudio-core.workspace = true
+
+[lints]
+workspace = true

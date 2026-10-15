@@ -28,33 +28,30 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Clippy with mp3
-        run: cargo clippy --all-targets --features mp3 -- -D warnings
+      - name: Clippy with all Features
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Documentation
-        run: cargo doc --no-deps --features mp3
+        run: cargo doc --workspace --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
 
       - name: Test
-        run: cargo test
+        run: cargo test --workspace
+
+      - name: Test without default Features
+        run: cargo test -p nanoaudio --no-default-features
 
       - name: Test with fixed
-        run: cargo test --features fixed
+        run: cargo test -p nanoaudio -p nanoaudio-dsp --features fixed
 
       - name: Test with float
-        run: cargo test --features float
+        run: cargo test -p nanoaudio -p nanoaudio-dsp --features float
 
-      - name: Test with all Features
-        run: cargo test --all-features
-
-      - name: Test with every mp3 option
-        run: cargo test --features mp3-simd,mpeg-layer12
-
-      - name: Test with mp3 and Coverage
-        run: cargo llvm-cov --features mp3 --lcov --output-path lcov.info
+      - name: Test with all Features and Coverage
+        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
 
       - name: Upload Coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -63,6 +60,24 @@ jobs:
           slug: AlixANNERAUD/nanoaudio
           files: lcov.info
           fail_ci_if_error: true
+
+  crates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv6m-none-eabi
+
+      - name: Test and build each Crate on its own
+        run: |
+          for crate in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name'); do
+            echo "::group::$crate"
+            cargo test -p "$crate"
+            cargo build -p "$crate" --target thumbv6m-none-eabi
+            echo "::endgroup::"
+          done
 
   embedded:
     runs-on: ubuntu-latest
@@ -81,10 +96,10 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build
-        run: cargo build --target ${{ matrix.target }}
+        run: cargo build --workspace --target ${{ matrix.target }}
 
-      - name: Build with mp3
-        run: cargo build --target ${{ matrix.target }} --features mp3
+      - name: Build with all Features
+        run: cargo build --workspace --target ${{ matrix.target }} --all-features
 
   miri:
     runs-on: ubuntu-latest
@@ -96,7 +111,7 @@ jobs:
           components: miri
 
       - name: Miri
-        run: cargo miri test --lib
+        run: cargo miri test --workspace --lib
 
   msrv:
     runs-on: ubuntu-latest
@@ -106,10 +121,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89
 
       - name: Test
-        run: cargo test
+        run: cargo test --workspace
 
-      - name: Test with mp3
-        run: cargo test --features mp3
+      - name: Test with all Features
+        run: cargo test --workspace --all-features
 
   package:
     runs-on: ubuntu-latest
@@ -119,4 +134,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Package
-        run: cargo package
+        run: cargo package --workspace

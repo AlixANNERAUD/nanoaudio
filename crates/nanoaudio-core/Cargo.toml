@@ -1,0 +1,17 @@
+[package]
+name = "nanoaudio-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Sample formats, errors and codec traits shared by the nanoaudio crates."
+documentation = "https://docs.rs/nanoaudio-core"
+readme = "README.md"
+keywords = ["audio", "no-std", "embedded", "pcm", "codec"]
+categories = ["multimedia::audio", "embedded", "no-std", "no-std::no-alloc"]
+exclude = ["tests/data"]
+
+[lints]
+workspace = true
