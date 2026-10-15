@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
+mod analyze;
 mod bytes;
 mod convert;
 mod dither;
@@ -10,6 +11,7 @@ mod representation;
 mod stream;
 mod volume;
 
+pub use analyze::*;
 pub use convert::*;
 pub use dither::*;
 pub use mixer::*;

@@ -13,6 +13,8 @@ pub use nanoaudio_core::*;
 
 #[cfg(feature = "aiff")]
 pub use nanoaudio_aiff::{AiffEncoding, AiffHeader};
+#[cfg(feature = "analysis")]
+pub use nanoaudio_analysis as analysis;
 #[cfg(feature = "buffer")]
 pub use nanoaudio_buffer::*;
 #[cfg(feature = "dsp")]

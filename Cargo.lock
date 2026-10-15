@@ -14,6 +14,7 @@ version = "0.2.0"
 dependencies = [
  "nanoaudio-adpcm",
  "nanoaudio-aiff",
+ "nanoaudio-analysis",
  "nanoaudio-buffer",
  "nanoaudio-core",
  "nanoaudio-dsp",
@@ -40,6 +41,14 @@ version = "0.1.0"
 dependencies = [
  "nanoaudio-core",
  "nanoaudio-g711",
+]
+
+[[package]]
+name = "nanoaudio-analysis"
+version = "0.1.0"
+dependencies = [
+ "nanoaudio-core",
+ "nanoaudio-dsp",
 ]
 
 [[package]]
