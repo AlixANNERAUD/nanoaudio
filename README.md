@@ -178,6 +178,8 @@ consumer.release(ready);
 
 `Producer::write` and `Consumer::read` copy as much as fits and return how much they did, so a writer never blocks.
 
+On a desktop or in the browser, [`nanoaudio-cpal`](https://crates.io/crates/nanoaudio-cpal) plays and records through [cpal](https://crates.io/crates/cpal), with a ring buffer between the application and the audio callback. It needs `std` and is not part of `nanoaudio`.
+
 ## Integer or Floating Point
 
 Volume and mixing are computed with a `Representation`:
