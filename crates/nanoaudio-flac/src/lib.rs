@@ -957,6 +957,7 @@ fn stereo<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
         .map_err(|_| Error::UnsupportedFormat)
 }
 
+#[inline(always)]
 fn decode_wide_frame<const MAXIMUM_BLOCK_SIZE: usize, const MAXIMUM_CHANNELS: usize>(
     reader: &mut BitReader,
     samples: &mut [[i32; MAXIMUM_BLOCK_SIZE]; MAXIMUM_CHANNELS],
