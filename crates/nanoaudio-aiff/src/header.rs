@@ -1,7 +1,7 @@
+use nanoaudio_core::chunk::{ByteOrder, Chunks};
 use nanoaudio_core::{Configuration, Error, Format, Result};
 
 const FORM_HEADER_SIZE: usize = 12;
-const CHUNK_HEADER_SIZE: usize = 8;
 const COMMON_CHUNK_SIZE: usize = 18;
 const COMPRESSED_COMMON_CHUNK_SIZE: usize = 22;
 const SOUND_HEADER_SIZE: usize = 8;
@@ -70,23 +70,15 @@ impl AiffHeader {
             _ => return Err(Error::InvalidHeader),
         };
 
-        let mut offset = FORM_HEADER_SIZE;
+        let mut chunks = Chunks::new(bytes, FORM_HEADER_SIZE, ByteOrder::BigEndian);
         let mut common = None;
         let mut sound = None;
 
         loop {
-            if let (Some(common), Some((data_offset, size))) = (common, sound) {
-                return Ok(Self::new(common, data_offset, size));
-            }
+            let chunk = chunks.next_chunk()?;
+            let size = chunk.size as usize;
 
-            let chunk = bytes
-                .get(offset..offset.saturating_add(CHUNK_HEADER_SIZE))
-                .ok_or(Error::Incomplete)?;
-            let identifier = &chunk[0..4];
-            let size = read_u32(&chunk[4..8]) as usize;
-            let body = offset.saturating_add(CHUNK_HEADER_SIZE);
-
-            match identifier {
+            match chunk.identifier {
                 b"COMM" => {
                     let length = if compressed {
                         COMPRESSED_COMMON_CHUNK_SIZE
@@ -98,23 +90,17 @@ impl AiffHeader {
                         return Err(Error::InvalidHeader);
                     }
 
-                    let chunk = bytes
-                        .get(body..body.saturating_add(length))
-                        .ok_or(Error::Incomplete)?;
-
-                    common = Some(parse_common(chunk, compressed)?);
+                    common = Some(parse_common(chunk.body(length)?, compressed)?);
                 }
                 b"SSND" => {
-                    let chunk = bytes
-                        .get(body..body.saturating_add(SOUND_HEADER_SIZE))
-                        .ok_or(Error::Incomplete)?;
-                    let data_offset = read_u32(&chunk[0..4]) as usize;
+                    let header = chunk.body(SOUND_HEADER_SIZE)?;
+                    let data_offset = read_u32(&header[0..4]) as usize;
                     let data_size = size
                         .checked_sub(SOUND_HEADER_SIZE)
                         .and_then(|size| size.checked_sub(data_offset))
                         .ok_or(Error::InvalidHeader)?;
 
-                    let start = (body + SOUND_HEADER_SIZE)
+                    let start = (chunk.offset + SOUND_HEADER_SIZE)
                         .checked_add(data_offset)
                         .ok_or(Error::InvalidHeader)?;
 
@@ -123,10 +109,11 @@ impl AiffHeader {
                 _ => {}
             }
 
-            offset = size
-                .checked_add(size & 1)
-                .and_then(|padded| body.checked_add(padded))
-                .ok_or(Error::InvalidHeader)?;
+            chunks.position().ok_or(Error::InvalidHeader)?;
+
+            if let (Some(common), Some((data_offset, size))) = (common, sound) {
+                return Ok(Self::new(common, data_offset, size));
+            }
         }
     }
 
