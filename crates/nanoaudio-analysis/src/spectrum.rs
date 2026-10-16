@@ -223,7 +223,7 @@ where
     fn refresh(&mut self) {
         let time = self.averaging.as_secs_f64() * self.sample_rate as f64;
         let weight = if time > 0.0 {
-            1.0 - math::exp(-(self.hop as f64) / time)
+            1.0 - libm::exp(-(self.hop as f64) / time)
         } else {
             1.0
         };
@@ -278,7 +278,9 @@ where
         let highest = (highest as f64).clamp(lowest, nyquist);
         let octaves = math::log2(highest / lowest);
         let last = N / 2;
-        let boundary = |index: usize| lowest * math::exp2(octaves * index as f64 / B.max(1) as f64);
+        let boundary = |index: usize| {
+            lowest * libm::exp(octaves * index as f64 / B.max(1) as f64 * core::f64::consts::LN_2)
+        };
 
         let ranges = core::array::from_fn(|index| {
             let (low, high) = (
@@ -294,7 +296,7 @@ where
             let (start, end) = if end > start {
                 (start, end)
             } else {
-                let centre = math::round(math::square_root(low * high)) as usize;
+                let centre = math::round(libm::sqrt(low * high)) as usize;
 
                 (centre, centre + 1)
             };
@@ -464,7 +466,7 @@ where
     Points<N>: Size,
 {
     fn magnitude(power: f32) -> f32 {
-        math::square_root_f32(power)
+        libm::sqrtf(power)
     }
 
     fn decibel(power: f32) -> f32 {

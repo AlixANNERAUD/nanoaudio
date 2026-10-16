@@ -232,28 +232,6 @@ pub const fn log2_f32(value: f32) -> f32 {
 }
 
 #[inline]
-pub const fn square_root_f32(value: f32) -> f32 {
-    if !(value > 0.0 && value < f32::INFINITY) {
-        return if value < 0.0 { f32::NAN } else { value };
-    }
-
-    let (value, scale) = if value < f32::MIN_POSITIVE {
-        (value * (1u64 << 32) as f32, 1.0 / (1u32 << 16) as f32)
-    } else {
-        (value, 1.0)
-    };
-    let mut root = f32::from_bits((value.to_bits() >> 1) + 0x1FBD_1DF5);
-    let mut index = 0;
-
-    while index < 3 {
-        root = 0.5 * (root + value / root);
-        index += 1;
-    }
-
-    root * scale
-}
-
-#[inline]
 pub const fn power_decibels(power: f32) -> f32 {
     DECIBELS_PER_OCTAVE_F32 * log2_f32(power)
 }
@@ -359,7 +337,7 @@ mod tests {
 
     #[test]
     fn constants() {
-        assert!((DECIBELS_PER_OCTAVE - 10.0 * 2f64.log10()).abs() < 1e-15);
+        assert_eq!(DECIBELS_PER_OCTAVE, 10.0 * core::f64::consts::LOG10_2);
         assert_eq!(DECIBELS_PER_OCTAVE_F32, 3.010_3);
         assert_eq!(round(-2.5), -3);
         assert_eq!(round(2.5), 3);
@@ -455,17 +433,12 @@ mod tests {
                     && ulps_f32(log2_f32(value), expected as f32) <= 5 + slack(),
                 "{value}"
             );
-            assert!(
-                ulps_f32(square_root_f32(value), value.sqrt()) <= 1 + slack(),
-                "{value}"
-            );
         }
 
         for index in 1..2000 {
             let value = (1.000_37f64.powi(index * 37) * 1e-30) as f32;
             let exact = (value as f64).log2();
             assert!((log2_f32(value) as f64 - exact).abs() < 1e-6 + exact.abs() * 6e-8);
-            assert!((square_root_f32(value) as f64 / (value as f64).sqrt() - 1.0).abs() < 2e-7);
         }
 
         for value in [
@@ -494,10 +467,6 @@ mod tests {
                 (log2_f32(value) as f64 - (value as f64).log2()).abs() < 8e-6,
                 "{value}"
             );
-            assert!(
-                ulps_f32(square_root_f32(value), value.sqrt()) <= 1 + slack(),
-                "{value}"
-            );
         }
 
         assert_eq!(log2(1.0), 0.0);
@@ -515,10 +484,6 @@ mod tests {
         assert_eq!(log2_f32(f32::INFINITY), f32::INFINITY);
         assert!(log2_f32(-1.0).is_nan());
         assert!(log2_f32(f32::NAN).is_nan());
-        assert_eq!(square_root_f32(0.0), 0.0);
-        assert_eq!(square_root_f32(f32::INFINITY), f32::INFINITY);
-        assert!(square_root_f32(-1.0).is_nan());
-        assert!(square_root_f32(f32::NAN).is_nan());
     }
 
     #[test]

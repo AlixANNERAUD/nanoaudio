@@ -1,6 +1,6 @@
 use nanoaudio_dsp::{Analyzer, RepresentationKind};
 
-use crate::{Measure, math};
+use crate::Measure;
 
 /// Tells when the signal goes silent and when the sound comes back.
 ///
@@ -140,7 +140,7 @@ fn linear<R: Measure>(decibels: f32) -> R::Value {
         return R::SILENCE;
     }
 
-    let value = math::exp2(decibels as f64 * core::f64::consts::LOG2_10 / 20.0);
+    let value = libm::exp(decibels as f64 * core::f64::consts::LN_10 / 20.0);
 
     match R::KIND {
         RepresentationKind::Fixed => R::from_sample((value * 2147483648.0 + 0.5) as i32),

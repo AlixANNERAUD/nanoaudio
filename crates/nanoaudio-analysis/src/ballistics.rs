@@ -4,7 +4,7 @@ use core::time::Duration;
 use nanoaudio_core::MAXIMUM_CHANNELS;
 use nanoaudio_dsp::{Analyzer, Fixed, Float};
 
-use crate::{Level, LevelMeter, Power, math, sealed};
+use crate::{Level, LevelMeter, Power, sealed};
 
 const NEPERS_TO_DECIBELS: f64 = 8.685_889_638_065_035;
 const BURST_TO_TIME_CONSTANT: f64 = 0.632_321_591_075_894_3;
@@ -88,7 +88,7 @@ fn exponential(exponent: f64) -> f64 {
         return 0.0;
     }
 
-    math::exp(-exponent.max(0.0))
+    libm::exp(-exponent.max(0.0))
 }
 
 /// A representation whose levels a [`BallisticMeter`] can smooth, [`Fixed`] or [`Float`].
@@ -192,7 +192,7 @@ impl Smooth for Float {
     fn linear(state: f32, detector: Detector) -> f32 {
         match detector {
             Detector::Peak => state,
-            Detector::Rms => math::square_root_f32(state),
+            Detector::Rms => libm::sqrtf(state),
         }
     }
 

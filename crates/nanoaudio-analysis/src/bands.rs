@@ -510,7 +510,7 @@ impl<const N: usize> BandAnalyzer<Float, N> {
     /// Returns the level of each band, 1.0 for a full-scale sine at its centre.
     pub fn levels(&self) -> [f32; N] {
         core::array::from_fn(|index| {
-            math::square_root((self.levels[index] * self.bands[index].gain) as f64) as f32
+            libm::sqrt((self.levels[index] * self.bands[index].gain) as f64) as f32
         })
     }
 

@@ -144,7 +144,7 @@ impl Correlate for Float {
             return 0.0;
         }
 
-        (product / largest / math::square_root_f32(norm)).clamp(-1.0, 1.0)
+        (product / largest / libm::sqrtf(norm)).clamp(-1.0, 1.0)
     }
 
     fn to_f32(sum: f32) -> f32 {

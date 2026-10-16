@@ -250,7 +250,7 @@ impl<const F: usize> Goertzel<Float, F> {
         let divisor = self.divisor();
 
         core::array::from_fn(|index| {
-            (2.0 * math::square_root(positive(self.power(index))) / divisor) as f32
+            (2.0 * libm::sqrt(positive(self.power(index))) / divisor) as f32
         })
     }
 

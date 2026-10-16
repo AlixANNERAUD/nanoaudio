@@ -18,6 +18,7 @@ all-features = true
 [dependencies]
 nanoaudio-core.workspace = true
 nanoaudio-dsp.workspace = true
+libm = "0.2"
 microfft = { version = "0.6", default-features = false, features = ["size-1024"], optional = true }
 
 [features]

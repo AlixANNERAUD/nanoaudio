@@ -140,7 +140,7 @@ impl Power for Float {
     }
 
     fn root_mean_square(sum: FloatSum, frames: u32) -> f32 {
-        math::square_root_f32(Self::mean_square(sum, frames))
+        libm::sqrtf(Self::mean_square(sum, frames))
     }
 
     fn power_decibels(sum: FloatSum, frames: u32) -> f32 {
