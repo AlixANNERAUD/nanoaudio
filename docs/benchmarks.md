@@ -207,9 +207,9 @@ Lossless compression depends on the material: the noise bursts in this signal ca
 
 The same inputs decoded or processed by nanoaudio and by other crates, to the same output format. These numbers come from `python3 tools/bench/compare.py`, which builds `tools/bench` with its `compare` feature, so the published crates gain no dependency, and rewrites only this section.
 
-- Commit: `33c89ec`, 2026-10-16.
+- Commit: `c236e07`, 2026-10-16.
 - Host: Apple M2 Pro, macOS-27.0.1 (`aarch64-apple-darwin`), rustc 1.99.0 (b940084d7 2026-09-28).
-- Method: the median of 11 runs of at least 40 ms each, one pass; the whole run took 54 s. The load average was 3.4 on 12 cores at the start, so treat differences under 5 % as noise.
+- Method: the median of 11 runs of at least 40 ms each, one pass; the whole run took 81 s. The load average was 4.4 on 12 cores at the start, so treat differences under 5 % as noise.
 - Every decoder starts from the encoded file in memory, parses its container, and writes interleaved `i16`. Within a format, the time of every library is divided by the number of samples nanoaudio produces.
 
 ### Decoding
@@ -218,22 +218,22 @@ Nanoseconds per sample. `State` is `size_of` the decoder, for the libraries whos
 
 | Format | Library | ns/sample | Time vs first row | Memory | Output |
 | --- | --- | --- | --- | --- | --- |
-| MP3, 44.1 kHz stereo, 128 kbit/s CBR | nanoaudio-mp3 | 8.47 | 1.00× | 23.2 KiB state | reference |
-|  | nanomp3 0.2 (frame decoder) | 8.54 | 1.01× | 22.3 KiB state | bit-exact |
-|  | minimp3 (C, through minimp3 0.6) | 4.37 | 0.52× | 6.5 KiB state | off by up to 1 LSB, SNR 109 dB |
-|  | symphonia 0.6 | 6.22 | 0.73× | 464.0 KiB heap | off by up to 1 LSB, SNR 74 dB |
+| MP3, 44.1 kHz stereo, 128 kbit/s CBR | nanoaudio-mp3 | 8.57 | 1.00× | 23.2 KiB state | reference |
+|  | nanomp3 0.2 (frame decoder) | 8.54 | 1.00× | 22.3 KiB state | bit-exact |
+|  | minimp3 (C, through minimp3 0.6) | 4.30 | 0.50× | 6.5 KiB state | off by up to 1 LSB, SNR 109 dB |
+|  | symphonia 0.6 | 6.21 | 0.72× | 464.0 KiB heap | off by up to 1 LSB, SNR 74 dB |
 | FLAC, 44.1 kHz stereo 16-bit, level 5 | nanoaudio-flac | 12.6 | 1.00× | 36.7 KiB state | bit-exact |
-|  | claxon 0.4 | 9.10 | 0.72× | 34.0 KiB heap | bit-exact |
-|  | symphonia 0.6 | 6.42 | 0.51× | 131.8 KiB heap | bit-exact |
-| WAV, 44.1 kHz stereo 16-bit PCM | nanoaudio-wav | 0.88 | 1.00× | 72 B state | bit-exact |
-|  | hound 3.5 | 2.36 | 2.67× | none | bit-exact |
-|  | symphonia 0.6 | 1.13 | 1.28× | 73.8 KiB heap | bit-exact |
-| QOA, 44.1 kHz stereo | nanoaudio-qoa | 2.49 | 1.00× | 296 B state | reference |
-|  | qoaudio 0.7 | 7.43 | 2.98× | 96 B state, 208 B heap | bit-exact |
-| IMA ADPCM, WAV, 44.1 kHz stereo, 2048-byte blocks | nanoaudio-wav | 2.36 | 1.00× | 72 B state | reference |
-|  | symphonia 0.6 | 3.91 | 1.66× | 82.7 KiB heap | off by up to 82 LSB, SNR 47 dB |
-| MS ADPCM, WAV, 44.1 kHz stereo, 2048-byte blocks | nanoaudio-wav | 2.02 | 1.00× | 72 B state | reference |
-|  | symphonia 0.6 | 1.96 | 0.97× | 82.7 KiB heap | off by up to 719 LSB, SNR 25 dB |
+|  | claxon 0.4 | 9.04 | 0.72× | 34.0 KiB heap | bit-exact |
+|  | symphonia 0.6 | 6.55 | 0.52× | 131.8 KiB heap | bit-exact |
+| WAV, 44.1 kHz stereo 16-bit PCM | nanoaudio-wav | 0.90 | 1.00× | 72 B state | bit-exact |
+|  | hound 3.5 | 2.35 | 2.62× | none | bit-exact |
+|  | symphonia 0.6 | 1.15 | 1.28× | 73.8 KiB heap | bit-exact |
+| QOA, 44.1 kHz stereo | nanoaudio-qoa | 2.57 | 1.00× | 296 B state | reference |
+|  | qoaudio 0.7 | 7.59 | 2.95× | 96 B state, 208 B heap | bit-exact |
+| IMA ADPCM, WAV, 44.1 kHz stereo, 2048-byte blocks | nanoaudio-wav | 2.35 | 1.00× | 72 B state | reference |
+|  | symphonia 0.6 | 3.82 | 1.62× | 82.7 KiB heap | off by up to 82 LSB, SNR 47 dB |
+| MS ADPCM, WAV, 44.1 kHz stereo, 2048-byte blocks | nanoaudio-wav | 2.00 | 1.00× | 72 B state | reference |
+|  | symphonia 0.6 | 1.99 | 1.00× | 82.7 KiB heap | off by up to 719 LSB, SNR 25 dB |
 
 - MP3: minimp3 is C, with its own SSE and NEON code. nanoaudio-mp3 is built on nanomp3, a safe Rust port of minimp3, and gives the same output; minimp3 rounds some negative samples differently, which nanomp3 fixes on purpose.
 - ADPCM: nanoaudio's output matches libsndfile 1.2.2 bit for bit on both files (checked by hand with `soundfile`); symphonia's does not.
@@ -246,17 +246,17 @@ The quality columns use sines at half full scale. `Stop-band` is the loudest out
 
 | Library | Setting | 44.1 → 48 kHz | 48 → 44.1 kHz | Stop-band | Flat to | -3 dB at | Residual | State |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| nanoaudio-dsp | `Sinc`, `Float` | 13.7 | 27.2 | -101 dB | 18.3 kHz | 19.4 kHz | -105 dB | 4.1 KiB |
-| nanoaudio-dsp | `Sinc`, `Fixed`, i16 in and out | 27.1 | 47.8 | -78 dB | 18.3 kHz | 19.4 kHz | -81 dB | 2.1 KiB |
-| nanoaudio-dsp | `Linear`, `Float` | 1.93 | 1.59 | -5 dB | < 10 kHz | 14.6 kHz | -22 dB | 52 B |
-| rubato 5.0 | `Async` sinc, 96 taps, Blackman2, cutoff 0.9, cubic | 32.4 | 27.0 | -103 dB | 18.5 kHz | 19.5 kHz | -138 dB | 147.0 KiB |
-| rubato 5.0 | `Async` sinc, 64 taps, BlackmanHarris2, cubic | 24.4 | 20.7 | -127 dB | 15.0 kHz | 16.8 kHz | -141 dB | 99.0 KiB |
-| rubato 5.0 | `Async` sinc, 256 taps, BlackmanHarris2, cubic (default) | 74.2 | 62.9 | -136 dB | 20.2 kHz | 20.7 kHz | -134 dB | 387.0 KiB |
-| rubato 5.0 | `Fft`, 1024-frame chunks | 12.2 | 11.2 | -139 dB | 21.6 kHz | 21.7 kHz | -135 dB | 115.4 KiB |
-| rubato 5.0 | `Async` polynomial, linear | 2.35 | 2.01 | -5 dB | < 10 kHz | 14.6 kHz | -22 dB | 8.3 KiB |
-| rubato 5.0 | `Async` polynomial, cubic | 2.81 | 2.41 | -4 dB | < 10 kHz | 17.6 kHz | -31 dB | 8.3 KiB |
-| dasp 0.11 | `Linear` | 1.12 | 1.04 | -5 dB | < 10 kHz | 14.6 kHz | -22 dB | 8 B |
-| dasp 0.11 | `Sinc`, 64 frames | 294 | 252 | -2 dB | < 10 kHz | 13.0 kHz | -4 dB | 528 B |
+| nanoaudio-dsp | `Sinc`, `Float` | 13.8 | 27.3 | -101 dB | 18.3 kHz | 19.4 kHz | -105 dB | 4.1 KiB |
+| nanoaudio-dsp | `Sinc`, `Fixed`, i16 in and out | 26.8 | 46.9 | -78 dB | 18.3 kHz | 19.4 kHz | -81 dB | 2.1 KiB |
+| nanoaudio-dsp | `Linear`, `Float` | 1.96 | 1.60 | -5 dB | < 10 kHz | 14.6 kHz | -22 dB | 52 B |
+| rubato 5.0 | `Async` sinc, 96 taps, Blackman2, cutoff 0.9, cubic | 32.0 | 27.0 | -103 dB | 18.5 kHz | 19.5 kHz | -138 dB | 147.0 KiB |
+| rubato 5.0 | `Async` sinc, 64 taps, BlackmanHarris2, cubic | 24.4 | 20.6 | -127 dB | 15.0 kHz | 16.8 kHz | -141 dB | 99.0 KiB |
+| rubato 5.0 | `Async` sinc, 256 taps, BlackmanHarris2, cubic (default) | 73.0 | 61.6 | -136 dB | 20.2 kHz | 20.7 kHz | -134 dB | 387.0 KiB |
+| rubato 5.0 | `Fft`, 1024-frame chunks | 12.4 | 11.2 | -139 dB | 21.6 kHz | 21.7 kHz | -135 dB | 115.4 KiB |
+| rubato 5.0 | `Async` polynomial, linear | 2.34 | 2.04 | -5 dB | < 10 kHz | 14.6 kHz | -22 dB | 8.3 KiB |
+| rubato 5.0 | `Async` polynomial, cubic | 2.83 | 2.44 | -4 dB | < 10 kHz | 17.6 kHz | -31 dB | 8.3 KiB |
+| dasp 0.11 | `Linear` | 1.10 | 1.01 | -5 dB | < 10 kHz | 14.6 kHz | -22 dB | 8 B |
+| dasp 0.11 | `Sinc`, 64 frames | 293 | 248 | -2 dB | < 10 kHz | 13.0 kHz | -4 dB | 528 B |
 
 - The rubato 96-tap row has its window and cutoff chosen to match the stop-band and pass band of `Sinc`: it is the like-for-like comparison. The 64-tap row has the same length as `Sinc` and rubato's automatic cutoff.
 - rubato's default and its `Fft` resampler have a deeper stop-band and a wider pass band than `Sinc`. `Fft` only handles fixed ratios, adds a chunk of latency and allocates, but it is the fastest high-quality option on this host, downsampling included.
@@ -269,11 +269,11 @@ Nanoseconds per transform of a mono 44.1 kHz `i16` signal: a Hann window, the re
 
 | Library | 256 points | 1024 points |
 | --- | --- | --- |
-| nanoaudio-analysis `Spectrum`, `Fixed` | 1,489 | 6,632 |
-| nanoaudio-analysis `Spectrum`, `Float` | 991 | 4,323 |
-| realfft 3.5 | 249 | 1,119 |
-| microfft 0.6, the FFT inside `Float` | 448 | 2,088 |
-| rustfft 6.4 (complex FFT of the real block) | 378 | 1,815 |
+| nanoaudio-analysis `Spectrum`, `Fixed` | 1,483 | 6,620 |
+| nanoaudio-analysis `Spectrum`, `Float` | 988 | 4,340 |
+| realfft 3.5 | 251 | 1,117 |
+| microfft 0.6, the FFT inside `Float` | 447 | 2,102 |
+| rustfft 6.4 (complex FFT of the real block) | 377 | 1,810 |
 
 realfft and rustfft use NEON here; microfft, which `Float` is built on, does not.
 
@@ -283,7 +283,7 @@ The DSP operations of the section above, against dasp's per-sample `Sample` meth
 
 | Operation | Library | ns/sample |
 | --- | --- | --- |
-| Volume, i16 slice | nanoaudio-dsp, `Fixed` | 0.11 |
+| Volume, i16 slice | nanoaudio-dsp, `Fixed` | 0.09 |
 |  | nanoaudio-dsp, `Float` | 0.13 |
 |  | dasp 0.11, `mul_amp` | 0.10 |
 | Mix, i16 slice, second input at 80 % (includes a copy to reset the output) | nanoaudio-dsp, `Fixed` | 0.12 |
@@ -292,7 +292,7 @@ The DSP operations of the section above, against dasp's per-sample `Sample` meth
 | i16 slice to f32 slice | nanoaudio-dsp `convert` | 0.06 |
 |  | dasp 0.11, `to_sample` | 0.06 |
 | f32 slice to i16 slice | nanoaudio-dsp `convert` | 0.07 |
-|  | dasp 0.11, `to_sample` | 0.05 |
+|  | dasp 0.11, `to_sample` | 0.06 |
 
 dasp's `f32` to `i16` conversion truncates toward zero, while nanoaudio rounds to the nearest value, and dasp's `add_amp` wraps around on overflow where nanoaudio saturates.
 
@@ -305,7 +305,7 @@ Instructions per unit from `tools/emu`, for the other crates that build for thes
 | MP3 decode, 128 kbit/s | frame (1152) | nanoaudio-mp3 | 15,486,569 | 414,978 | 413,798 | 9,115,359 |
 | MP3 decode, 128 kbit/s | frame (1152) | nanomp3-core 0.2 | 15,478,994 | 412,706 | 411,525 | 9,112,653 |
 | Spectrum, 1024 points | block (1024) | nanoaudio-analysis `Spectrum`, `Float` | 3,726,506 | 90,875 | 90,873 | 2,198,929 |
-| Spectrum, 1024 points | block (1024) | microfft 0.6 alone, same window and power | 3,440,665 | 67,081 | 67,081 | 2,044,021 |
+| Spectrum, 1024 points | block (1024) | microfft 0.6 alone, same window and power | 3,440,408 | 67,084 | 67,084 | 2,044,021 |
 
 The other crates do not run on these targets: symphonia, claxon, hound, qoaudio, rubato, rustfft and realfft need `std`, minimp3 is C, and dasp needs a nightly compiler without `std`.
 
