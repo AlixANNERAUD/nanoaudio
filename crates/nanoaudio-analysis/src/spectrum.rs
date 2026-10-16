@@ -5,15 +5,7 @@ use core::time::Duration;
 use microfft::Complex32;
 use nanoaudio_dsp::{Analyzer, Fixed, Float, Representation};
 
-mod sealed {
-    pub trait Sealed {}
-
-    impl Sealed for nanoaudio_dsp::Fixed {}
-    impl Sealed for nanoaudio_dsp::Float {}
-    impl Sealed for super::Points<256> {}
-    impl Sealed for super::Points<512> {}
-    impl Sealed for super::Points<1024> {}
-}
+use crate::{math, sealed};
 
 /// The size of a [`Spectrum`] transform, in points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +26,8 @@ pub trait Size: sealed::Sealed {
 macro_rules! sizes {
     ($($points:literal => $transform:ident,)*) => {
         $(
+            impl sealed::Sealed for Points<$points> {}
+
             impl Size for Points<$points> {
                 type Bins<T: Copy + PartialEq + Debug> = [T; $points / 2 + 1];
 
@@ -229,7 +223,7 @@ where
     fn refresh(&mut self) {
         let time = self.averaging.as_secs_f64() * self.sample_rate as f64;
         let weight = if time > 0.0 {
-            1.0 - math::exp2(-(self.hop as f64) / time / core::f64::consts::LN_2)
+            1.0 - libm::exp(-(self.hop as f64) / time)
         } else {
             1.0
         };
@@ -284,23 +278,25 @@ where
         let highest = (highest as f64).clamp(lowest, nyquist);
         let octaves = math::log2(highest / lowest);
         let last = N / 2;
-        let boundary = |index: usize| lowest * math::exp2(octaves * index as f64 / B.max(1) as f64);
+        let boundary = |index: usize| {
+            lowest * libm::exp(octaves * index as f64 / B.max(1) as f64 * core::f64::consts::LN_2)
+        };
 
         let ranges = core::array::from_fn(|index| {
             let (low, high) = (
                 boundary(index) / resolution,
                 boundary(index + 1) / resolution,
             );
-            let start = math::ceiling(low - 1e-9);
+            let start = ceiling(low - 1e-9);
             let end = if index + 1 == B {
-                math::floor(high + 1e-9) + 1
+                floor(high + 1e-9) + 1
             } else {
-                math::ceiling(high - 1e-9)
+                ceiling(high - 1e-9)
             };
             let (start, end) = if end > start {
                 (start, end)
             } else {
-                let centre = math::round(math::square_root(low * high)) as usize;
+                let centre = math::round(math::sqrt(low * high)) as usize;
 
                 (centre, centre + 1)
             };
@@ -395,7 +391,7 @@ where
     }
 
     fn magnitude(&self, power: u64, edge: bool) -> i32 {
-        let root = math::root(power);
+        let root = root(power);
         let scale = self.scale(edge);
         let mixed = self.mixed();
         let (quotient, remainder) = (root / mixed, root % mixed);
@@ -409,7 +405,7 @@ where
         let scale =
             2.0 * self.scale(edge) as f32 - 2.0 * math::log2_f32(self.mixed() as f32) - 62.0;
 
-        DECIBELS_PER_OCTAVE * (math::log2_f32(power as f32) + scale)
+        math::DECIBELS_PER_OCTAVE_F32 * (math::log2_f32(power as f32) + scale)
     }
 
     /// Returns the amplitude of each bin in the last spectrum, `i32::MAX` for a full-scale sine at its centre.
@@ -470,11 +466,11 @@ where
     Points<N>: Size,
 {
     fn magnitude(power: f32) -> f32 {
-        math::square_root_f32(power)
+        math::sqrtf(power)
     }
 
     fn decibel(power: f32) -> f32 {
-        DECIBELS_PER_OCTAVE * math::log2_f32(power)
+        math::power_decibels(power)
     }
 
     /// Returns the amplitude of each bin in the last spectrum, 1.0 for a full-scale sine at its centre.
@@ -570,8 +566,6 @@ where
     }
 }
 
-const DECIBELS_PER_OCTAVE: f32 = 3.010_3;
-
 const ONE: f32 = (1u32 << 30) as f32;
 
 const TABLE: usize = 1024;
@@ -627,7 +621,7 @@ fn window_fixed(buffer: &mut [i32], window: Window) {
     match window {
         Window::Rectangular => buffer.iter_mut().for_each(|value| *value >>= 2),
         Window::Hann => windowed(buffer, |value, weight| {
-            *value = ((fixed::wide(*value, weight) + (1 << 31)) >> 32) as i32;
+            *value = ((math::wide(*value, weight) + (1 << 31)) >> 32) as i32;
         }),
     }
 }
@@ -649,7 +643,7 @@ fn rotate<T: Copy>(output: &mut [T], ring: &[T], position: usize) {
 fn store_fixed(bins: &mut [u64], spectrum: &[i32], shift: u8, first: bool) {
     let points = spectrum.len();
     let power = |real: i32, imaginary: i32| {
-        fixed::wide(real, real) as u64 + fixed::wide(imaginary, imaginary) as u64
+        math::wide(real, real) as u64 + math::wide(imaginary, imaginary) as u64
     };
     let update = |bin: &mut u64, power: u64| {
         *bin = if first {
@@ -692,11 +686,9 @@ fn store_float(bins: &mut [f32], spectrum: &[Complex32], scale: f32, weight: f32
     }
 }
 
-const MIX_SHIFTS: [u8; 9] = [0, 0, 1, 2, 2, 3, 3, 3, 3];
-
 #[inline]
 fn mix_shift(channels: usize) -> u32 {
-    match MIX_SHIFTS.get(channels) {
+    match math::MIX_SHIFTS.get(channels) {
         Some(shift) => *shift as u32,
         None => usize::BITS - (channels - 1).leading_zeros(),
     }
@@ -713,43 +705,7 @@ fn mix(frame: &[i32]) -> i32 {
 
 mod fixed {
     use super::{SINE, TABLE};
-
-    #[cfg(not(all(target_arch = "arm", not(target_has_atomic = "32"))))]
-    #[inline(always)]
-    pub fn wide(left: i32, right: i32) -> i64 {
-        left as i64 * right as i64
-    }
-
-    #[cfg(any(test, all(target_arch = "arm", not(target_has_atomic = "32"))))]
-    #[inline(always)]
-    pub fn wide_split(left: i32, right: i32) -> i64 {
-        let (unsigned_left, unsigned_right) = (left as u32, right as u32);
-        let (left_low, left_high) = (unsigned_left & 0xFFFF, unsigned_left >> 16);
-        let (right_low, right_high) = (unsigned_right & 0xFFFF, unsigned_right >> 16);
-        let low = left_low * right_low;
-        let cross_left = left_high * right_low;
-        let cross_right = left_low * right_high;
-        let middle = (low >> 16) + (cross_left & 0xFFFF) + (cross_right & 0xFFFF);
-        let low = (low & 0xFFFF) | (middle << 16);
-        let mut high =
-            left_high * right_high + (cross_left >> 16) + (cross_right >> 16) + (middle >> 16);
-
-        if left < 0 {
-            high = high.wrapping_sub(unsigned_right);
-        }
-
-        if right < 0 {
-            high = high.wrapping_sub(unsigned_left);
-        }
-
-        (((high as u64) << 32) | low as u64) as i64
-    }
-
-    #[cfg(all(target_arch = "arm", not(target_has_atomic = "32")))]
-    #[inline(always)]
-    pub fn wide(left: i32, right: i32) -> i64 {
-        wide_split(left, right)
-    }
+    use crate::math::wide;
 
     #[inline(always)]
     fn high(product: i64) -> i32 {
@@ -866,218 +822,40 @@ mod fixed {
     }
 }
 
-mod math {
-    pub fn root(value: u64) -> u32 {
-        let mut remainder = value;
-        let mut root = 0u64;
-        let mut bit = 1u64 << 62;
+fn root(value: u64) -> u32 {
+    let mut remainder = value;
+    let mut root = 0u64;
+    let mut bit = 1u64 << 62;
 
-        while bit > remainder {
-            bit >>= 2;
-        }
-
-        while bit != 0 {
-            if remainder >= root + bit {
-                remainder -= root + bit;
-                root = (root >> 1) + bit;
-            } else {
-                root >>= 1;
-            }
-
-            bit >>= 2;
-        }
-
-        root as u32
+    while bit > remainder {
+        bit >>= 2;
     }
 
-    pub const fn round(value: f64) -> i64 {
-        if value >= 0.0 {
-            (value + 0.5) as i64
+    while bit != 0 {
+        if remainder >= root + bit {
+            remainder -= root + bit;
+            root = (root >> 1) + bit;
         } else {
-            (value - 0.5) as i64
+            root >>= 1;
         }
+
+        bit >>= 2;
     }
 
-    pub fn floor(value: f64) -> usize {
-        if value <= 0.0 { 0 } else { value as usize }
-    }
+    root as u32
+}
 
-    pub fn ceiling(value: f64) -> usize {
-        let floor = floor(value);
+fn floor(value: f64) -> usize {
+    if value <= 0.0 { 0 } else { value as usize }
+}
 
-        if (floor as f64) < value {
-            floor + 1
-        } else {
-            floor
-        }
-    }
+fn ceiling(value: f64) -> usize {
+    let floor = floor(value);
 
-    pub const fn cosine(angle: f64) -> f64 {
-        let half = core::f64::consts::FRAC_PI_2;
-
-        if angle > half {
-            return -cosine(core::f64::consts::PI - angle);
-        }
-
-        let square = angle * angle;
-        let mut term = 1.0;
-        let mut sum = 1.0;
-        let mut index = 1;
-
-        while index <= 14 {
-            term = -term * square / ((2 * index - 1) * (2 * index)) as f64;
-            sum += term;
-            index += 1;
-        }
-
-        sum
-    }
-
-    pub fn square_root(value: f64) -> f64 {
-        if value.is_nan() || value <= 0.0 || value == f64::INFINITY {
-            return if value < 0.0 { f64::NAN } else { value };
-        }
-
-        if value < f64::MIN_POSITIVE {
-            return square_root(value * (1u128 << 64) as f64) / (1u64 << 32) as f64;
-        }
-
-        let mut root = f64::from_bits((value.to_bits() >> 1) + 0x1FF8_0000_0000_0000);
-
-        for _ in 0..6 {
-            root = 0.5 * (root + value / root);
-        }
-
-        root
-    }
-
-    pub fn exp2(value: f64) -> f64 {
-        if value < -1000.0 {
-            return 0.0;
-        }
-
-        let whole = value as i64 - (value < (value as i64) as f64) as i64;
-        let fraction = (value - whole as f64) * core::f64::consts::LN_2;
-        let mut term = 1.0;
-        let mut sum = 1.0;
-        let mut index = 1;
-
-        while index <= 18 {
-            term *= fraction / index as f64;
-            sum += term;
-            index += 1;
-        }
-
-        let mut scale = 1.0;
-        let mut exponent = whole;
-
-        while exponent > 0 {
-            scale *= 2.0;
-            exponent -= 1;
-        }
-
-        while exponent < 0 {
-            scale *= 0.5;
-            exponent += 1;
-        }
-
-        sum * scale
-    }
-
-    pub fn log2(value: f64) -> f64 {
-        if value.is_nan() || value <= 0.0 {
-            return if value == 0.0 {
-                f64::NEG_INFINITY
-            } else {
-                f64::NAN
-            };
-        }
-
-        if value == f64::INFINITY {
-            return value;
-        }
-
-        let (value, offset) = if value < f64::MIN_POSITIVE {
-            (value * (1u128 << 64) as f64, -64.0)
-        } else {
-            (value, 0.0)
-        };
-        let bits = value.to_bits();
-        let mut exponent = ((bits >> 52) & 0x7FF) as i64 - 1023;
-        let mut mantissa = f64::from_bits((bits & ((1 << 52) - 1)) | (1023 << 52));
-
-        if mantissa > core::f64::consts::SQRT_2 {
-            mantissa /= 2.0;
-            exponent += 1;
-        }
-
-        let ratio = (mantissa - 1.0) / (mantissa + 1.0);
-        let square = ratio * ratio;
-        let mut term = ratio;
-        let mut sum = 0.0;
-        let mut index = 0;
-
-        while index < 10 {
-            sum += term / (2 * index + 1) as f64;
-            term *= square;
-            index += 1;
-        }
-
-        exponent as f64 + offset + 2.0 * sum / core::f64::consts::LN_2
-    }
-
-    pub fn log2_f32(value: f32) -> f32 {
-        if value.is_nan() || value <= 0.0 {
-            return if value == 0.0 {
-                f32::NEG_INFINITY
-            } else {
-                f32::NAN
-            };
-        }
-
-        if value == f32::INFINITY {
-            return value;
-        }
-
-        let (value, offset) = if value < f32::MIN_POSITIVE {
-            (value * (1u64 << 32) as f32, -32.0)
-        } else {
-            (value, 0.0)
-        };
-        let bits = value.to_bits();
-        let mut exponent = ((bits >> 23) & 0xFF) as i32 - 127;
-        let mut mantissa = f32::from_bits((bits & ((1 << 23) - 1)) | (127 << 23));
-
-        if mantissa > core::f32::consts::SQRT_2 {
-            mantissa *= 0.5;
-            exponent += 1;
-        }
-
-        let ratio = (mantissa - 1.0) / (mantissa + 1.0);
-        let square = ratio * ratio;
-        let series =
-            ratio * (1.0 + square * (1.0 / 3.0 + square * (1.0 / 5.0 + square * (1.0 / 7.0))));
-
-        exponent as f32 + offset + series * (2.0 / core::f32::consts::LN_2)
-    }
-
-    pub fn square_root_f32(value: f32) -> f32 {
-        if value.is_nan() || value <= 0.0 || value == f32::INFINITY {
-            return if value < 0.0 { f32::NAN } else { value };
-        }
-
-        let (value, scale) = if value < f32::MIN_POSITIVE {
-            (value * (1u64 << 32) as f32, 1.0 / (1u32 << 16) as f32)
-        } else {
-            (value, 1.0)
-        };
-        let mut root = f32::from_bits((value.to_bits() >> 1) + 0x1FC0_0000);
-
-        for _ in 0..4 {
-            root = 0.5 * (root + value / root);
-        }
-
-        root * scale
+    if (floor as f64) < value {
+        floor + 1
+    } else {
+        floor
     }
 }
 
@@ -1914,37 +1692,7 @@ mod tests {
     }
 
     #[test]
-    fn split_multiply_is_exact() {
-        let mut random = Random(1);
-        let edges = [
-            0,
-            1,
-            -1,
-            i32::MAX,
-            i32::MIN,
-            1 << 30,
-            -(1 << 30),
-            0xFFFF,
-            -0x10000,
-        ];
-        let count = if cfg!(miri) { 1000 } else { 1_000_000 };
-
-        for left in edges {
-            for right in edges {
-                assert_eq!(fixed::wide_split(left, right), left as i64 * right as i64);
-            }
-        }
-
-        for _ in 0..count {
-            let left = (random.next() * FULL) as i32;
-            let right = (random.next() * FULL) as i32;
-
-            assert_eq!(fixed::wide_split(left, right), left as i64 * right as i64);
-        }
-    }
-
-    #[test]
-    fn tables_and_math_match_the_standard_library() {
+    fn tables_and_helpers_match_the_standard_library() {
         for (index, value) in WINDOW.iter().enumerate() {
             let expected = hann(index, TABLE) * (1u32 << 30) as f64;
             assert!((*value as f64 - expected).abs() <= 0.5 + 1e-6);
@@ -1954,30 +1702,6 @@ mod tests {
             let expected =
                 ((2.0 * PI * index as f64 / TABLE as f64).sin() * FULL).min(i32::MAX as f64);
             assert!((*value as f64 - expected).abs() <= 0.5 + 1e-6);
-        }
-
-        for value in [
-            1e-30f64, 1e-5, 0.1, 0.5, 1.0, 1.5, 2.0, 3.7, 1e3, 1e30, 5e-310,
-        ] {
-            assert!((math::log2(value) - value.log2()).abs() < 1e-12 * value.log2().abs().max(1.0));
-            assert!(
-                (math::square_root(value) - value.sqrt()).abs() <= 1e-15 * value.sqrt(),
-                "{value}: {}",
-                math::square_root(value)
-            );
-        }
-
-        for value in [-30.0f64, -1.5, -0.2, 0.0, 0.3, 1.0, 7.9, 40.0] {
-            assert!((math::exp2(value) - value.exp2()).abs() <= 1e-14 * value.exp2());
-        }
-
-        for value in [
-            1e-40f32, 1e-30, 1e-5, 0.1, 0.5, 1.0, 1.42, 1.5, 2.0, 3.7, 1e3, 1e30,
-        ] {
-            assert!(
-                (math::log2_f32(value) - value.log2()).abs() < 2e-6 * value.log2().abs().max(1.0)
-            );
-            assert!((math::square_root_f32(value) - value.sqrt()).abs() <= 2e-7 * value.sqrt());
         }
 
         let mut random = Random(3);
@@ -1996,28 +1720,17 @@ mod tests {
             (1 << 62) - 1,
             u64::MAX,
         ] {
-            assert_eq!(math::root(value) as u64, value.isqrt());
+            assert_eq!(root(value) as u64, value.isqrt());
         }
 
         for _ in 0..if cfg!(miri) { 100 } else { 100_000 } {
             let value = ((random.next() + 1.0) * (1u64 << 62) as f64) as u64
                 >> (random.next().abs() * 62.0) as u32;
-            assert_eq!(math::root(value) as u64, value.isqrt());
+            assert_eq!(root(value) as u64, value.isqrt());
         }
 
-        assert_eq!(math::log2_f32(0.0), f32::NEG_INFINITY);
-        assert_eq!(math::log2_f32(f32::INFINITY), f32::INFINITY);
-        assert!(math::log2_f32(-1.0).is_nan());
-        assert!(math::log2_f32(f32::NAN).is_nan());
-        assert_eq!(math::square_root_f32(0.0), 0.0);
-        assert_eq!(math::square_root_f32(f32::INFINITY), f32::INFINITY);
-        assert!(math::square_root_f32(-1.0).is_nan());
-        assert!(math::square_root_f32(f32::NAN).is_nan());
-        assert_eq!(math::log2(0.0), f64::NEG_INFINITY);
-        assert!(math::log2(-1.0).is_nan());
-        assert_eq!(math::exp2(-2000.0), 0.0);
-        assert_eq!(math::ceiling(2.0), 2);
-        assert_eq!(math::ceiling(2.1), 3);
-        assert_eq!(math::floor(-3.0), 0);
+        assert_eq!(ceiling(2.0), 2);
+        assert_eq!(ceiling(2.1), 3);
+        assert_eq!(floor(-3.0), 0);
     }
 }

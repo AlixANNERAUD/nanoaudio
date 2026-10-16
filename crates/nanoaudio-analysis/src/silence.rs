@@ -140,23 +140,7 @@ fn linear<R: Measure>(decibels: f32) -> R::Value {
         return R::SILENCE;
     }
 
-    let exponent = decibels as f64 * core::f64::consts::LOG2_10 / 20.0;
-    let mut whole = exponent as i32;
-
-    if (whole as f64) > exponent {
-        whole -= 1;
-    }
-
-    let fraction = (exponent - whole as f64) * core::f64::consts::LN_2;
-    let mut term = 1.0;
-    let mut sum = 1.0;
-
-    for index in 1..18 {
-        term *= fraction / index as f64;
-        sum += term;
-    }
-
-    let value = sum * f64::from_bits(((whole + 1023) as u64) << 52);
+    let value = libm::exp(decibels as f64 * core::f64::consts::LN_10 / 20.0);
 
     match R::KIND {
         RepresentationKind::Fixed => R::from_sample((value * 2147483648.0 + 0.5) as i32),

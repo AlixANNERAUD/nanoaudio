@@ -4,14 +4,10 @@ use core::time::Duration;
 use nanoaudio_core::MAXIMUM_CHANNELS;
 use nanoaudio_dsp::{Analyzer, Fixed, Float, Representation};
 
-use crate::Power;
+use crate::math::{self, wide};
+use crate::{Power, sealed};
 
-mod sealed {
-    pub trait Sealed {}
-
-    impl Sealed for nanoaudio_dsp::Fixed {}
-    impl Sealed for nanoaudio_dsp::Float {}
-
+mod state {
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct FixedBand {
         pub(super) b0: i32,
@@ -39,7 +35,7 @@ mod sealed {
     }
 }
 
-use sealed::{FixedBand, FloatBand};
+use state::{FixedBand, FloatBand};
 
 /// A representation a [`BandAnalyzer`] can filter, [`Fixed`] or [`Float`].
 pub trait Filterable: Representation + Debug + Copy + PartialEq + sealed::Sealed {
@@ -264,7 +260,7 @@ const fn spaced<const N: usize>(sample_rate: u32, lowest: f32, highest: f32) -> 
     let mut index = 0;
 
     while index < N {
-        centres[index] = (lowest * math::exp(step * index as f64 * core::f64::consts::LN_2)) as f32;
+        centres[index] = (lowest * math::exp2(step * index as f64)) as f32;
         index += 1;
     }
 
@@ -278,7 +274,7 @@ const fn standard<const N: usize>(per_octave: i32, reference: i32) -> [f32; N] {
     while index < N {
         let exponent = (index as i32 - reference) as f64 / per_octave as f64;
 
-        centres[index] = (1000.0 * math::exp(exponent * core::f64::consts::LN_2)) as f32;
+        centres[index] = (1000.0 * math::exp2(exponent)) as f32;
         index += 1;
     }
 
@@ -514,7 +510,7 @@ impl<const N: usize> BandAnalyzer<Float, N> {
     /// Returns the level of each band, 1.0 for a full-scale sine at its centre.
     pub fn levels(&self) -> [f32; N] {
         core::array::from_fn(|index| {
-            math::square_root((self.levels[index] * self.bands[index].gain) as f64) as f32
+            math::sqrt((self.levels[index] * self.bands[index].gain) as f64) as f32
         })
     }
 
@@ -598,43 +594,6 @@ fn scale(difference: i64, coefficient: i32) -> i64 {
     let low = (difference & 0x7FFF_FFFF) as i32;
 
     wide(high, coefficient) + (wide(low, coefficient) >> 31)
-}
-
-#[cfg(not(all(target_arch = "arm", not(target_has_atomic = "32"))))]
-#[inline(always)]
-fn wide(left: i32, right: i32) -> i64 {
-    left as i64 * right as i64
-}
-
-#[cfg(any(test, all(target_arch = "arm", not(target_has_atomic = "32"))))]
-#[inline(always)]
-fn wide_split(left: i32, right: i32) -> i64 {
-    let (first, second) = (left as u32, right as u32);
-    let (first_low, first_high) = (first & 0xFFFF, first >> 16);
-    let (second_low, second_high) = (second & 0xFFFF, second >> 16);
-    let low = first_low * second_low;
-    let cross_first = first_high * second_low;
-    let cross_second = first_low * second_high;
-    let middle = (low >> 16) + (cross_first & 0xFFFF) + (cross_second & 0xFFFF);
-    let low = (low & 0xFFFF) | (middle << 16);
-    let mut high =
-        first_high * second_high + (cross_first >> 16) + (cross_second >> 16) + (middle >> 16);
-
-    if left < 0 {
-        high = high.wrapping_sub(second);
-    }
-
-    if right < 0 {
-        high = high.wrapping_sub(first);
-    }
-
-    (((high as u64) << 32) | low as u64) as i64
-}
-
-#[cfg(all(target_arch = "arm", not(target_has_atomic = "32")))]
-#[inline(always)]
-fn wide(left: i32, right: i32) -> i64 {
-    wide_split(left, right)
 }
 
 #[cfg(not(all(target_arch = "arm", not(target_has_atomic = "32"))))]
@@ -748,120 +707,6 @@ const RECIPROCALS: [f32; MAXIMUM_CHANNELS + 1] = {
 
     table
 };
-
-mod math {
-    pub const fn round(value: f64) -> i64 {
-        if value >= 0.0 {
-            (value + 0.5) as i64
-        } else {
-            (value - 0.5) as i64
-        }
-    }
-
-    pub const fn sine(angle: f64) -> f64 {
-        let angle = if angle > core::f64::consts::FRAC_PI_2 {
-            core::f64::consts::PI - angle
-        } else {
-            angle
-        };
-        let square = angle * angle;
-        let mut term = angle;
-        let mut sum = angle;
-        let mut index = 1;
-
-        while index <= 12 {
-            term = -term * square / ((2 * index) * (2 * index + 1)) as f64;
-            sum += term;
-            index += 1;
-        }
-
-        sum
-    }
-
-    pub const fn cosine(angle: f64) -> f64 {
-        if angle > core::f64::consts::FRAC_PI_2 {
-            return -cosine(core::f64::consts::PI - angle);
-        }
-
-        let square = angle * angle;
-        let mut term = 1.0;
-        let mut sum = 1.0;
-        let mut index = 1;
-
-        while index <= 12 {
-            term = -term * square / ((2 * index - 1) * (2 * index)) as f64;
-            sum += term;
-            index += 1;
-        }
-
-        sum
-    }
-
-    pub const fn exp(value: f64) -> f64 {
-        if value < -700.0 {
-            return 0.0;
-        }
-
-        let exponent = round(value / core::f64::consts::LN_2);
-        let rest = value - exponent as f64 * core::f64::consts::LN_2;
-        let mut term = 1.0;
-        let mut sum = 1.0;
-        let mut index = 1;
-
-        while index <= 18 {
-            term = term * rest / index as f64;
-            sum += term;
-            index += 1;
-        }
-
-        sum * f64::from_bits(((exponent + 1023) as u64) << 52)
-    }
-
-    pub const fn sinh(value: f64) -> f64 {
-        (exp(value) - exp(-value)) / 2.0
-    }
-
-    pub const fn log2(value: f64) -> f64 {
-        let bits = value.to_bits();
-        let mut exponent = ((bits >> 52) & 0x7FF) as i64 - 1023;
-        let mut mantissa = f64::from_bits((bits & ((1 << 52) - 1)) | (1023 << 52));
-
-        if mantissa > core::f64::consts::SQRT_2 {
-            mantissa /= 2.0;
-            exponent += 1;
-        }
-
-        let ratio = (mantissa - 1.0) / (mantissa + 1.0);
-        let square = ratio * ratio;
-        let mut term = ratio;
-        let mut sum = 0.0;
-        let mut index = 0;
-
-        while index < 20 {
-            sum += term / (2 * index + 1) as f64;
-            term *= square;
-            index += 1;
-        }
-
-        exponent as f64 + 2.0 * sum / core::f64::consts::LN_2
-    }
-
-    pub const fn square_root(value: f64) -> f64 {
-        if value.is_nan() || value <= 0.0 || value == f64::INFINITY {
-            return value;
-        }
-
-        let mut root = f64::from_bits((value.to_bits() >> 1) + 0x1FF8_0000_0000_0000);
-        let mut index = 0;
-
-        while index < 6 {
-            root = 0.5 * (root + value / root);
-            index += 1;
-        }
-
-        root
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -1726,7 +1571,6 @@ mod tests {
 
         for left in &values {
             for right in &values {
-                assert_eq!(wide_split(*left, *right), *left as i64 * *right as i64);
                 assert_eq!(wide(*left, *right), *left as i64 * *right as i64);
             }
         }
@@ -1761,33 +1605,7 @@ mod tests {
     }
 
     #[test]
-    fn math() {
-        let mut angle = 0.0;
-        while angle <= PI {
-            assert!((math::sine(angle) - angle.sin()).abs() < 1e-14);
-            assert!((math::cosine(angle) - angle.cos()).abs() < 1e-14);
-            angle += 0.01;
-        }
-
-        for value in [-800.0, -40.0, -1.0, -1e-3, 0.0, 1e-3, 0.5, 1.0, 10.0, 40.0] {
-            let expected = f64::exp(value);
-            assert!(
-                (math::exp(value) - expected).abs() <= expected * 1e-14,
-                "{value}"
-            );
-            assert!(
-                (math::sinh(value) - value.sinh()).abs() <= value.sinh().abs() * 1e-12 + 1e-300
-            );
-        }
-
-        for value in [1e-9, 0.3, 1.0, 2.0, 3.0, 1e5, 1.7e300] {
-            assert!((math::log2(value) - value.log2()).abs() < 1e-12, "{value}");
-            assert!((math::square_root(value) - value.sqrt()).abs() <= value.sqrt() * 1e-15);
-        }
-
-        assert_eq!(math::square_root(0.0), 0.0);
-        assert!(math::square_root(f64::NAN).is_nan());
-        assert_eq!(math::round(-2.5), -3);
+    fn helpers() {
         assert_eq!(power_of_two(0), 1.0);
         assert_eq!(power_of_two(40), 1.0 / (1u64 << 40) as f32);
         assert_eq!(integration(Duration::ZERO, 48_000), 0);
