@@ -591,7 +591,9 @@ mod tests {
 
     #[test]
     fn comparison_matches_division() {
-        for delta in 1..=i16::MAX as i32 {
+        let step = if cfg!(miri) { 997 } else { 1 };
+
+        for delta in (1..=i16::MAX as i32).step_by(step) {
             let half = delta / 2;
             let steps = (-17..=17).flat_map(|step| [step * delta, step * delta + half]);
 
