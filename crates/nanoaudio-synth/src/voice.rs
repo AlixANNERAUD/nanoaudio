@@ -202,12 +202,38 @@ impl<R: Synthesis> Voice<R> {
 
     #[inline]
     pub(crate) fn add_to(&mut self, output: &mut [R::Value]) {
+        if self.filtered {
+            self.add_with::<true>(output);
+        } else {
+            self.add_with::<false>(output);
+        }
+    }
+
+    #[inline(always)]
+    fn add_with<const FILTERED: bool>(&mut self, output: &mut [R::Value]) {
+        let mut oscillator = self.oscillator.clone();
+        let mut envelope = self.envelope.clone();
+        let mut filter = self.filter.clone();
+        let gain = self.gain;
+
         for value in output {
-            if self.envelope.is_idle() {
+            if envelope.is_idle() {
                 break;
             }
 
-            *value = R::add(*value, self.compute());
+            let amplitude = (envelope.next_level() * gain) >> 15;
+            let sample = oscillator.next_sample();
+            let voice = if FILTERED {
+                filter.process_scaled(R::from_oscillator(sample), amplitude)
+            } else {
+                R::amplify_oscillator(sample, amplitude)
+            };
+
+            *value = R::add(*value, voice);
         }
+
+        self.oscillator = oscillator;
+        self.envelope = envelope;
+        self.filter = filter;
     }
 }

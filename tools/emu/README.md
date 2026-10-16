@@ -1,6 +1,6 @@
 # Instruction counts
 
-Runs the codecs and the DSP and analysis paths on emulated microcontrollers, with [Unicorn](https://www.unicorn-engine.org/), and counts the instructions they execute per frame or per block. It catches what static instruction counts miss: library calls inside loops (software division, soft float, `memcpy`), and paths that only run on real data.
+Runs the codecs, the DSP and analysis paths and the synthesizer on emulated microcontrollers, with [Unicorn](https://www.unicorn-engine.org/), and counts the instructions they execute per frame or per block. It catches what static instruction counts miss: library calls inside loops (software division, soft float, `memcpy`), and paths that only run on real data.
 
 The counts are not cycles: there are no wait states, caches or pipeline stalls, and a multiply or a division counts as one instruction like an addition. They are good for comparing two versions of the code on one target, or for a first estimate of the clock a codec needs.
 
@@ -25,7 +25,7 @@ The Rust targets must be installed: `thumbv6m-none-eabi`, `thumbv7em-none-eabihf
 Options:
 
 - `--targets m0plus,m4f`: only some targets, out of `m0plus`, `m4f`, `m33` and `rv32imc`.
-- `--filter sbc`: only the cases whose group (`codec`, `dsp`, `analysis`, `compare`) or name contains the text.
+- `--filter sbc`: only the cases whose group (`codec`, `dsp`, `analysis`, `compare`, `synth`) or name contains the text.
 - `--opt-level s`: builds with another optimization level, `3` by default.
 - `--functions 5`: also lists, for each case and target, the 5 functions that execute the most instructions. With LTO most code is inlined into its caller, so a codec often shows up under the harness function that calls it.
 - `--no-build`: reuses the binaries from the last build, in `target/emu`.
@@ -58,5 +58,7 @@ Codecs encode a generated signal (chords with harmonics and a little noise) and 
 DSP and analysis cases run on 44.1 kHz stereo 16-bit audio, in fixed point and in floating point. Floating point on the M0+ and RV32IMC goes through software routines, which is where most of their cost comes from.
 
 The `compare` cases run the MP3 frame decoder and the FFT that nanoaudio is built on, nanomp3-core and microfft, without nanoaudio around them, for `tools/bench/compare.py`.
+
+Synthesizer cases render 44.1 kHz mono: one sawtooth voice, with and without its filter, and an eight-note chord of filtered voices, rendered to values or streamed to 16-bit samples.
 
 Only the code between the `begin` and `end` calls in `src/main.rs` is counted. To add a case, add an arm to `run` in `src/main.rs` and a `Case` with the same number to `CASES` in `run.py`.

@@ -21,6 +21,7 @@ use nanoaudio_g722::{G722BitRate, G722Decoder, G722Encoder};
 use nanoaudio_mp3::Mp3Decoder;
 use nanoaudio_qoa::{QoaDecoder, QoaEncoder};
 use nanoaudio_sbc::{SbcDecoder, SbcEncoder, SbcParameters};
+use nanoaudio_synth::{Adsr, FilterSettings, Patch, Synth, Synthesis, Waveform};
 
 const INPUT_SIZE: usize = 96 * 1024;
 const OUTPUT_SIZE: usize = 192 * 1024;
@@ -300,6 +301,40 @@ fn cosine(turns: f32) -> f32 {
     -(1.0 - x2 * (19.739_21 - x2 * (64.939_39 - x2 * (85.456_68 - x2 * 60.244_64))))
 }
 
+const CHORD: [u8; 8] = [36, 48, 55, 60, 64, 67, 71, 74];
+
+fn synth<R: Synthesis, const VOICES: usize>(filtered: bool, stream: bool) -> usize {
+    let frames = input_samples().len();
+    let mut synth = Synth::<R, VOICES>::new(44_100);
+    let mut patch = Patch::new(Waveform::Saw, Adsr::new(441, 4_410, 40_000, 4_410));
+
+    if filtered {
+        patch.filter = Some(FilterSettings::low_pass(1_500.0, 0.5));
+    }
+
+    for note in &CHORD[..VOICES] {
+        synth.note_on(0, *note, 64, &patch);
+    }
+
+    let values = unsafe {
+        core::slice::from_raw_parts_mut(
+            (&raw mut SCRATCH).cast::<R::Value>(),
+            frames.min(SCRATCH_SIZE / 4),
+        )
+    };
+    let output = &mut output_samples()[..values.len()];
+
+    begin();
+    if stream {
+        black_box(synth.write_samples(black_box(output)));
+    } else {
+        synth.render(black_box(values));
+    }
+    end();
+
+    values.len() * 2
+}
+
 fn run(case: u32) -> usize {
     let encoded = black_box(unsafe { LENGTH }) / 4;
     match case {
@@ -359,6 +394,14 @@ fn run(case: u32) -> usize {
         78 => analyze::<Float, _>(Spectrum::<Float, 256>::new(44_100)),
         96 => nanomp3_decode(),
         97 => microfft_spectrum(),
+        112 => synth::<Fixed, 1>(false, false),
+        113 => synth::<Float, 1>(false, false),
+        114 => synth::<Fixed, 1>(true, false),
+        115 => synth::<Float, 1>(true, false),
+        116 => synth::<Fixed, 8>(true, false),
+        117 => synth::<Float, 8>(true, false),
+        118 => synth::<Fixed, 8>(true, true),
+        119 => synth::<Float, 8>(true, true),
         _ => FAILED as usize,
     }
 }

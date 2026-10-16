@@ -176,6 +176,14 @@ CASES = [
     Case(78, "analysis", "Spectrum, 256 points, float", "block (256)", 256, 44_100, 2, ("signal", 44_100, 2, 1_024)),
     Case(96, "compare", "MP3 decode, nanomp3-core frame decoder", "frame (1152)", 1_152, 44_100, 2, ("mp3", "nanoaudio-mp3", "gapless_cbr.mp3", 6)),
     Case(97, "compare", "Spectrum, 1024 points, microfft alone", "block (1024)", 1_024, 44_100, 2, ("signal", 44_100, 2, 2_048)),
+    Case(112, "synth", "Saw voice, fixed", "frame", 1, 44_100, 1, ("signal", 44_100, 1, 1_024)),
+    Case(113, "synth", "Saw voice, float", "frame", 1, 44_100, 1, ("signal", 44_100, 1, 1_024)),
+    Case(114, "synth", "Filtered saw voice, fixed", "frame", 1, 44_100, 1, ("signal", 44_100, 1, 1_024)),
+    Case(115, "synth", "Filtered saw voice, float", "frame", 1, 44_100, 1, ("signal", 44_100, 1, 1_024)),
+    Case(116, "synth", "8 filtered voices, render, fixed", "frame", 1, 44_100, 1, ("signal", 44_100, 1, 1_024)),
+    Case(117, "synth", "8 filtered voices, render, float", "frame", 1, 44_100, 1, ("signal", 44_100, 1, 1_024)),
+    Case(118, "synth", "8 filtered voices, stream to i16, fixed", "frame", 1, 44_100, 1, ("signal", 44_100, 1, 1_024)),
+    Case(119, "synth", "8 filtered voices, stream to i16, float", "frame", 1, 44_100, 1, ("signal", 44_100, 1, 1_024)),
 ]
 
 
