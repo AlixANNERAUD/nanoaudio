@@ -196,6 +196,28 @@ pub const fn square_root(value: f64) -> f64 {
     root * scale
 }
 
+#[cfg(not(miri))]
+#[inline]
+pub fn sqrt(value: f64) -> f64 {
+    libm::sqrt(value)
+}
+
+#[cfg(miri)]
+pub fn sqrt(value: f64) -> f64 {
+    square_root(value)
+}
+
+#[cfg(not(miri))]
+#[inline]
+pub fn sqrtf(value: f32) -> f32 {
+    libm::sqrtf(value)
+}
+
+#[cfg(miri)]
+pub fn sqrtf(value: f32) -> f32 {
+    square_root(value as f64) as f32
+}
+
 #[inline]
 pub const fn log2_f32(value: f32) -> f32 {
     if value.is_nan() || value <= 0.0 {

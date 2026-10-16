@@ -4,7 +4,7 @@ use core::time::Duration;
 use nanoaudio_core::MAXIMUM_CHANNELS;
 use nanoaudio_dsp::{Analyzer, Fixed, Float};
 
-use crate::{Level, LevelMeter, Power, sealed};
+use crate::{Level, LevelMeter, Power, math, sealed};
 
 const NEPERS_TO_DECIBELS: f64 = 8.685_889_638_065_035;
 const BURST_TO_TIME_CONSTANT: f64 = 0.632_321_591_075_894_3;
@@ -192,7 +192,7 @@ impl Smooth for Float {
     fn linear(state: f32, detector: Detector) -> f32 {
         match detector {
             Detector::Peak => state,
-            Detector::Rms => libm::sqrtf(state),
+            Detector::Rms => math::sqrtf(state),
         }
     }
 

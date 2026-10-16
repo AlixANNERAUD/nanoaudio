@@ -296,7 +296,7 @@ where
             let (start, end) = if end > start {
                 (start, end)
             } else {
-                let centre = math::round(libm::sqrt(low * high)) as usize;
+                let centre = math::round(math::sqrt(low * high)) as usize;
 
                 (centre, centre + 1)
             };
@@ -466,7 +466,7 @@ where
     Points<N>: Size,
 {
     fn magnitude(power: f32) -> f32 {
-        libm::sqrtf(power)
+        math::sqrtf(power)
     }
 
     fn decibel(power: f32) -> f32 {
