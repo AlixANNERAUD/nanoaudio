@@ -1,4 +1,6 @@
 mod codecs;
+#[cfg(feature = "compare")]
+mod compare;
 mod dsp;
 mod harness;
 mod memory;
@@ -10,6 +12,10 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use harness::{Measurement, Settings, measure};
+
+#[cfg(feature = "compare")]
+#[global_allocator]
+static ALLOCATOR: compare::Counting = compare::Counting;
 
 enum Value {
     Text(String),
@@ -280,6 +286,14 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "quality" => parse(rest).map(|options| quality(&options)),
         "memory" => parse(rest).map(|options| memory(&options)),
         "dsp" => parse(rest).map(|options| dsp(&options)),
+        #[cfg(feature = "compare")]
+        "compare" => parse(rest).map(|options| {
+            compare::run(
+                options.settings,
+                options.data.as_deref(),
+                options.filter.as_deref(),
+            )
+        }),
         _ => Err(format!("unknown command {command}")),
     }
 }

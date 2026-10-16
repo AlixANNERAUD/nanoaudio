@@ -241,6 +241,65 @@ fn analyze<R: Representation, A: nanoaudio_dsp::Analyzer<R>>(mut analyzer: A) ->
     }
 }
 
+fn nanomp3_decode() -> usize {
+    let input = input();
+    let output = output_samples();
+    let mut decoder = nanomp3_core::Decoder::new();
+    let mut consumed = 0;
+    let mut produced = 0;
+
+    begin();
+    while consumed < input.len() {
+        let (bytes, result) = decoder.decode::<i16>(&input[consumed..], &mut output[produced..]);
+
+        if bytes == 0 {
+            break;
+        }
+
+        consumed += bytes;
+
+        if let Ok(info) = result {
+            produced += info.samples_produced * info.channels.num() as usize;
+        }
+    }
+    end();
+
+    produced * 2
+}
+
+fn microfft_spectrum() -> usize {
+    let input = input_samples();
+    let mut power = [0f32; 513];
+    let mut blocks = 0;
+    let window: [f32; 1_024] =
+        core::array::from_fn(|index| (0.5 - 0.5 * cosine(index as f32 / 1_024.0)) / 32_768.0);
+    let window = black_box(window);
+
+    begin();
+    for block in input.chunks_exact(2_048) {
+        let mut buffer = [0f32; 1_024];
+        for (index, target) in buffer.iter_mut().enumerate() {
+            let mixed = (block[index * 2] as f32 + block[index * 2 + 1] as f32) * 0.5;
+            *target = mixed * window[index];
+        }
+        let spectrum = microfft::real::rfft_1024(&mut buffer);
+        for (target, value) in power.iter_mut().zip(spectrum.iter()) {
+            *target = value.norm_sqr();
+        }
+        black_box(&power);
+        blocks += 1;
+    }
+    end();
+
+    blocks * 1_024
+}
+
+fn cosine(turns: f32) -> f32 {
+    let x = turns - 0.5;
+    let x2 = x * x;
+    -(1.0 - x2 * (19.739_21 - x2 * (64.939_39 - x2 * (85.456_68 - x2 * 60.244_64))))
+}
+
 fn run(case: u32) -> usize {
     let encoded = black_box(unsafe { LENGTH }) / 4;
     match case {
@@ -298,6 +357,8 @@ fn run(case: u32) -> usize {
         76 => analyze::<Float, _>(Spectrum::<Float, 1024>::new(44_100)),
         77 => analyze::<Fixed, _>(Spectrum::<Fixed, 256>::new(44_100)),
         78 => analyze::<Float, _>(Spectrum::<Float, 256>::new(44_100)),
+        96 => nanomp3_decode(),
+        97 => microfft_spectrum(),
         _ => FAILED as usize,
     }
 }

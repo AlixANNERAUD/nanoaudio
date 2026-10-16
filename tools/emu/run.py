@@ -174,6 +174,8 @@ CASES = [
     Case(76, "analysis", "Spectrum, 1024 points, float", "block (1024)", 1_024, 44_100, 2, ("signal", 44_100, 2, 2_048)),
     Case(77, "analysis", "Spectrum, 256 points, fixed", "block (256)", 256, 44_100, 2, ("signal", 44_100, 2, 1_024)),
     Case(78, "analysis", "Spectrum, 256 points, float", "block (256)", 256, 44_100, 2, ("signal", 44_100, 2, 1_024)),
+    Case(96, "compare", "MP3 decode, nanomp3-core frame decoder", "frame (1152)", 1_152, 44_100, 2, ("mp3", "nanoaudio-mp3", "gapless_cbr.mp3", 6)),
+    Case(97, "compare", "Spectrum, 1024 points, microfft alone", "block (1024)", 1_024, 44_100, 2, ("signal", 44_100, 2, 2_048)),
 ]
 
 
