@@ -426,6 +426,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nanoaudio-synth"
+version = "0.1.0"
+dependencies = [
+ "nanoaudio-core",
+ "nanoaudio-dsp",
+]
+
+[[package]]
 name = "nanoaudio-wav"
 version = "0.1.1"
 dependencies = [

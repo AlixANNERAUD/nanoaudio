@@ -1,0 +1,20 @@
+[package]
+name = "nanoaudio-synth"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Allocation-free oscillators, envelopes, filters and polyphonic voices for nanoaudio pipelines."
+documentation = "https://docs.rs/nanoaudio-synth"
+readme = "README.md"
+keywords = ["audio", "no-std", "embedded", "synthesizer", "oscillator"]
+categories = ["multimedia::audio", "embedded", "no-std", "no-std::no-alloc"]
+
+[dependencies]
+nanoaudio-core.workspace = true
+nanoaudio-dsp.workspace = true
+
+[lints]
+workspace = true
