@@ -324,6 +324,7 @@ def execute(binary, case, payload, profile):
             total[0] += binary.instructions(memory, address, size)
 
     handle = machine.hook_add(UC_HOOK_BLOCK, hook)
+    machine.ctl_flush_tb()
     run(begin, end)
     machine.hook_del(handle)
     run(end, finished)
