@@ -220,7 +220,7 @@ fn quantize_by_comparison(difference: i32, delta: i32) -> u8 {
 
 /// A Microsoft ADPCM encoder and decoder with the WAV block layout.
 ///
-/// Each block starts with a 7-byte header per channel, holding the coefficient index, the step and the first two samples, followed by 4 bits per sample, interleaved. Mono or stereo at any sample rate; the blocks store neither, so they come from the container, like the block size. The encoder tries every coefficient pair for each block, so it takes about 20 times longer than the decoder.
+/// Each block starts with a 7-byte header per channel, holding the coefficient index, the step and the first two samples, followed by 4 bits per sample, interleaved. Mono or stereo at any sample rate; the blocks store neither, so they come from the container, like the block size. The encoder tries every coefficient pair for each block, so it takes 10 to 30 times longer than the decoder.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MsAdpcm {
     sample_rate: u32,
