@@ -16,10 +16,38 @@ nanoaudio-flac = { path = "../../crates/nanoaudio-flac" }
 nanoaudio-g722 = { path = "../../crates/nanoaudio-g722" }
 nanoaudio-sbc = { path = "../../crates/nanoaudio-sbc" }
 nanoaudio-mp3 = { path = "../../crates/nanoaudio-mp3", default-features = false }
+nanoaudio-wav = { path = "../../crates/nanoaudio-wav", optional = true }
+nanoaudio-analysis = { path = "../../crates/nanoaudio-analysis", features = ["fft"], optional = true }
+symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac", "wav", "pcm", "adpcm"], optional = true }
+minimp3 = { version = "0.6.1", optional = true }
+nanomp3 = { version = "0.2.0", optional = true }
+claxon = { version = "0.4.3", optional = true }
+hound = { version = "3.5.1", optional = true }
+qoaudio = { version = "0.7.0", optional = true }
+rubato = { version = "5.0.1", optional = true }
+dasp = { version = "0.11.0", features = ["signal", "interpolate", "interpolate-linear", "interpolate-sinc", "ring_buffer", "slice"], optional = true }
+rustfft = { version = "6.4.1", optional = true }
+realfft = { version = "3.5.0", optional = true }
+microfft = { version = "0.6.0", default-features = false, features = ["size-1024"], optional = true }
 
 [features]
 default = ["mp3-simd"]
 mp3-simd = ["nanoaudio-mp3/simd"]
+compare = [
+    "dep:nanoaudio-wav",
+    "dep:nanoaudio-analysis",
+    "dep:symphonia",
+    "dep:minimp3",
+    "dep:nanomp3",
+    "dep:claxon",
+    "dep:hound",
+    "dep:qoaudio",
+    "dep:rubato",
+    "dep:dasp",
+    "dep:rustfft",
+    "dep:realfft",
+    "dep:microfft",
+]
 
 [profile.release]
 codegen-units = 1
