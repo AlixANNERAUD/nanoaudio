@@ -54,17 +54,17 @@ impl<R: Measure> ClipCounter<R> {
     }
 
     /// Returns the magnitude at and above which a sample is clipped.
-    pub fn threshold(&self) -> R::Value {
+    pub const fn threshold(&self) -> R::Value {
         self.threshold
     }
 
     /// Returns the number of consecutive clipped samples that make a run.
-    pub fn run_length(&self) -> u32 {
+    pub const fn run_length(&self) -> u32 {
         self.run_length
     }
 
     /// Returns the number of channels of the last frame, or 0 before the first one.
-    pub fn channels(&self) -> u8 {
+    pub const fn channels(&self) -> u8 {
         self.channels
     }
 
@@ -155,12 +155,12 @@ impl<R: Representation> DcOffset<R> {
     }
 
     /// Returns the time constant in frames.
-    pub fn time_constant(&self) -> u32 {
+    pub const fn time_constant(&self) -> u32 {
         1 << self.shift
     }
 
     /// Returns the number of channels of the last frame, or 0 before the first one.
-    pub fn channels(&self) -> u8 {
+    pub const fn channels(&self) -> u8 {
         self.channels
     }
 
@@ -243,12 +243,12 @@ impl<R: Measure> CrestFactor<R> {
     }
 
     /// Returns the window length in frames.
-    pub fn window(&self) -> u32 {
+    pub const fn window(&self) -> u32 {
         self.window
     }
 
     /// Returns the number of channels of the last frame, or 0 before the first one.
-    pub fn channels(&self) -> u8 {
+    pub const fn channels(&self) -> u8 {
         self.channels
     }
 
