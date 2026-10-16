@@ -207,7 +207,7 @@ Lossless compression depends on the material: the noise bursts in this signal ca
 
 The same inputs decoded or processed by nanoaudio and by other crates, to the same output format. These numbers come from `python3 tools/bench/compare.py`, which builds `tools/bench` with its `compare` feature, so the published crates gain no dependency, and rewrites only this section.
 
-- Commit: `c236e07`, 2026-10-16.
+- Commit: `66dc8fc`, 2026-10-16.
 - Host: Apple M2 Pro, macOS-27.0.1 (`aarch64-apple-darwin`), rustc 1.99.0 (b940084d7 2026-09-28).
 - Method: the median of 11 runs of at least 40 ms each, one pass; the whole run took 81 s. The load average was 4.4 on 12 cores at the start, so treat differences under 5 % as noise.
 - Every decoder starts from the encoded file in memory, parses its container, and writes interleaved `i16`. Within a format, the time of every library is divided by the number of samples nanoaudio produces.
