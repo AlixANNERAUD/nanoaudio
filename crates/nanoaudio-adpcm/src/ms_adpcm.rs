@@ -142,12 +142,7 @@ impl MsAdpcmState {
     pub fn encode(&mut self, sample: i16) -> u8 {
         let delta = (self.delta as i32).max(1);
         let difference = sample as i32 - self.prediction();
-        let bias = if difference >= 0 {
-            delta / 2
-        } else {
-            -delta / 2
-        };
-        let nibble = ((difference + bias) / delta).clamp(-8, 7) as u8 & 0x0F;
+        let nibble = quantize(difference, delta);
 
         self.decode(nibble);
 
@@ -155,9 +150,77 @@ impl MsAdpcmState {
     }
 }
 
+const DIVISION: bool = cfg!(any(
+    all(target_arch = "arm", not(nanoaudio_no_division)),
+    all(
+        any(target_arch = "riscv32", target_arch = "riscv64"),
+        target_feature = "m"
+    ),
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "arm64ec",
+    target_arch = "wasm32",
+    target_arch = "wasm64",
+    target_arch = "loongarch64",
+    target_arch = "mips",
+    target_arch = "mips64",
+    target_arch = "powerpc",
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+));
+
+fn quantize(difference: i32, delta: i32) -> u8 {
+    if DIVISION {
+        quantize_by_division(difference, delta)
+    } else {
+        quantize_by_comparison(difference, delta)
+    }
+}
+
+fn quantize_by_division(difference: i32, delta: i32) -> u8 {
+    let bias = if difference >= 0 {
+        delta / 2
+    } else {
+        -delta / 2
+    };
+
+    ((difference + bias) / delta).clamp(-8, 7) as u8 & 0x0F
+}
+
+fn quantize_by_comparison(difference: i32, delta: i32) -> u8 {
+    let mut remainder = difference.unsigned_abs() + (delta >> 1) as u32;
+    let delta = delta as u32;
+    let mut quotient = 0u8;
+
+    if remainder >= delta << 3 {
+        quotient = 8;
+    } else {
+        if remainder >= delta << 2 {
+            remainder -= delta << 2;
+            quotient = 4;
+        }
+
+        if remainder >= delta << 1 {
+            remainder -= delta << 1;
+            quotient |= 2;
+        }
+
+        if remainder >= delta {
+            quotient |= 1;
+        }
+    }
+
+    if difference < 0 {
+        quotient.wrapping_neg() & 0x0F
+    } else {
+        quotient.min(7)
+    }
+}
+
 /// A Microsoft ADPCM encoder and decoder with the WAV block layout.
 ///
-/// Each block starts with a 7-byte header per channel, holding the coefficient index, the step and the first two samples, followed by 4 bits per sample, interleaved. Mono or stereo at any sample rate; the blocks store neither, so they come from the container, like the block size. The encoder tries every coefficient pair for each block, so it takes about 20 times longer than the decoder.
+/// Each block starts with a 7-byte header per channel, holding the coefficient index, the step and the first two samples, followed by 4 bits per sample, interleaved. Mono or stereo at any sample rate; the blocks store neither, so they come from the container, like the block size. The encoder tries every coefficient pair for each block, so it takes 10 to 30 times longer than the decoder.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MsAdpcm {
     sample_rate: u32,
@@ -304,14 +367,24 @@ impl MsAdpcm {
             output[channels + channel] = state.previous.convert();
         }
 
-        let nibbles = data.iter().flat_map(|byte| [byte >> 4, byte & 0x0F]);
+        let samples = &mut output[HEADER_SAMPLES * channels..self.block_samples()];
+        let (pairs, last) = samples.as_chunks_mut::<2>();
+        let [left, right] = &mut states;
 
-        for (index, (output, nibble)) in output[HEADER_SAMPLES * channels..self.block_samples()]
-            .iter_mut()
-            .zip(nibbles)
-            .enumerate()
-        {
-            *output = states[index % channels].decode(nibble).convert();
+        if channels == 1 {
+            for ([high, low], byte) in pairs.iter_mut().zip(data) {
+                *high = left.decode(byte >> 4).convert();
+                *low = left.decode(byte & 0x0F).convert();
+            }
+        } else {
+            for ([high, low], byte) in pairs.iter_mut().zip(data) {
+                *high = left.decode(byte >> 4).convert();
+                *low = right.decode(byte & 0x0F).convert();
+            }
+        }
+
+        if let ([last], Some(byte)) = (last, data.get(pairs.len())) {
+            *last = left.decode(byte >> 4).convert();
         }
 
         Ok(())
@@ -330,7 +403,7 @@ impl MsAdpcm {
         for frame in HEADER_SAMPLES..self.samples_per_block() {
             let sample = input[frame * channels + channel];
             let nibble = state.encode(sample);
-            let difference = sample as i64 - state.previous as i64;
+            let difference = (sample as i32 - state.previous as i32).unsigned_abs();
 
             error += (difference * difference) as u64;
 
@@ -509,5 +582,30 @@ impl Encoder for MsAdpcm {
         }
 
         Ok(progress)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn comparison_matches_division() {
+        let step = if cfg!(miri) { 997 } else { 1 };
+
+        for delta in (1..=i16::MAX as i32).step_by(step) {
+            let half = delta / 2;
+            let steps = (-17..=17).flat_map(|step| [step * delta, step * delta + half]);
+
+            for base in steps.chain([-140_000, 140_000]) {
+                for difference in base - 2..=base + 2 {
+                    assert_eq!(
+                        quantize_by_comparison(difference, delta),
+                        quantize_by_division(difference, delta),
+                        "{difference} / {delta}"
+                    );
+                }
+            }
+        }
     }
 }

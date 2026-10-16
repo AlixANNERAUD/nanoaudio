@@ -151,7 +151,7 @@ fn decode_wav(file: &[u8]) -> Result<Vec<i16>, Error> {
 - For lossless audio use FLAC, if you can spare around 50 KiB of RAM; set its maximum block size to the one your files use.
 - For Bluetooth use SBC (A2DP, or mSBC for hands-free), and for wideband voice over IP use G.722.
 - For music files use MP3, preferably on a core with an FPU, since it decodes in floating point.
-- If the device encodes, prefer G.711 or IMA ADPCM: the MS ADPCM and QOA encoders search for the best parameters and take 15 to 20 times longer than their decoders.
+- If the device encodes, prefer G.711 or IMA ADPCM: the MS ADPCM and QOA encoders search for the best parameters and take 10 to 30 times longer than their decoders.
 
 Flash is `.text` and `.rodata` for decoding only at `opt-level = "s"`, and RAM includes the decoder and the smallest input and output buffers on a 32-bit target. The full numbers, for more targets and configurations, are in [docs/benchmarks.md](https://github.com/AlixANNERAUD/nanoaudio/blob/main/docs/benchmarks.md).
 
