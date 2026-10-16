@@ -13,6 +13,7 @@ nanoaudio-dsp = { path = "../../crates/nanoaudio-dsp" }
 nanoaudio-g711 = { path = "../../crates/nanoaudio-g711" }
 nanoaudio-qoa = { path = "../../crates/nanoaudio-qoa" }
 nanoaudio-sbc = { path = "../../crates/nanoaudio-sbc" }
+nanoaudio-synth = { path = "../../crates/nanoaudio-synth" }
 
 [profile.release]
 codegen-units = 1

@@ -21,6 +21,8 @@ pub use nanoaudio_buffer::*;
 pub use nanoaudio_dsp::*;
 #[cfg(feature = "metadata")]
 pub use nanoaudio_metadata as metadata;
+#[cfg(feature = "synth")]
+pub use nanoaudio_synth as synth;
 #[cfg(feature = "wav")]
 pub use nanoaudio_wav::{Encoding, WavHeader};
 

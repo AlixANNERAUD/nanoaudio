@@ -5,6 +5,7 @@ mod dsp;
 mod harness;
 mod memory;
 mod signal;
+mod synth;
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -234,7 +235,10 @@ fn memory(options: &Options) {
 fn dsp(options: &Options) {
     let data = dsp::Data::new();
 
-    for (representation, operations) in dsp::representations(&data) {
+    for (representation, operations) in dsp::representations(&data)
+        .into_iter()
+        .chain(synth::representations(data.samples()))
+    {
         for mut operation in operations {
             let measurement = measure(options.settings, &mut operation.run);
             let mut fields = vec![

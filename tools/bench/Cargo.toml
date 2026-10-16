@@ -15,6 +15,7 @@ nanoaudio-qoa = { path = "../../crates/nanoaudio-qoa" }
 nanoaudio-flac = { path = "../../crates/nanoaudio-flac" }
 nanoaudio-g722 = { path = "../../crates/nanoaudio-g722" }
 nanoaudio-sbc = { path = "../../crates/nanoaudio-sbc" }
+nanoaudio-synth = { path = "../../crates/nanoaudio-synth" }
 nanoaudio-mp3 = { path = "../../crates/nanoaudio-mp3", default-features = false }
 nanoaudio-wav = { path = "../../crates/nanoaudio-wav", optional = true }
 nanoaudio-analysis = { path = "../../crates/nanoaudio-analysis", features = ["fft"], optional = true }

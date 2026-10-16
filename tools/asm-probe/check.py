@@ -99,6 +99,14 @@ NO_DIVISION_IN_INNER_LOOPS = [
     "probe_ms_adpcm_encode",
 ]
 
+SYNTH_FIXED = [
+    "probe_synth_fixed_render",
+]
+
+SYNTH_FLOAT = [
+    "probe_synth_float_render",
+]
+
 SCALAR = [
     "probe_qoa_decode",
     "probe_qoa_encode",
@@ -111,6 +119,7 @@ WIDE_MULTIPLY = re.compile(r"__aeabi_lmul|__muldi3")
 WIDE_PRODUCT = re.compile(r"__aeabi_lmul|__muldi3|^(smull|umull|smlal|umlal|mulh|mulhu|mulhsu)\s")
 WIDE_DIVISION = re.compile(r"__aeabi_ldivmod|__aeabi_uldivmod|__divdi3|__udivdi3|__moddi3|__umoddi3|__divmoddi4|__udivmoddi4")
 DIVISION = re.compile(r"__aeabi_u?idiv|__aeabi_u?ldivmod|__u?(div|mod)[sd]i3|__u?divmod[sd]i4|div_rem")
+MEMORY = re.compile(r"__aeabi_mem|memset|memcpy|memmove")
 CALL = re.compile(r"^(bl|blx|call|jal|jalr|tail)$")
 LABEL = re.compile(r"^(\.L\w+):")
 BRANCH_TARGET = re.compile(r"^\.LBB\w+$")
@@ -300,6 +309,7 @@ def analyse(name, assembly, opt_level):
         CALL_FREE + HELIUM + FIXED_I24 + FLAT + INLINED + SCALAR + NO_WIDE_MULTIPLY_IN_LOOPS
         + NO_WIDE_MULTIPLY_IN_STAGE_LOOPS + NO_WIDE_DIVISION_IN_LOOPS + NO_DIVISION_IN_LOOPS
         + NO_DIVISION_IN_INNER_LOOPS
+        + SYNTH_FIXED + SYNTH_FLOAT
     )
     for function in sorted(expected - set(probes)):
         failures.append(name + ": missing " + function)
@@ -341,6 +351,16 @@ def analyse(name, assembly, opt_level):
                 for call in calls(body):
                     if DIVISION.search(call):
                         failures.append(name + ": division call in an inner loop of " + function + ": " + call)
+    for function in SYNTH_FIXED + SYNTH_FLOAT:
+        if function in SYNTH_FLOAT and name not in HARD_FLOAT:
+            continue
+        lines = [line for member in closure(bodies, function) for line in instructions(bodies[member])]
+        for call in calls(lines):
+            inside = opt_level in ("s", "z") and "15nanoaudio_synth" in call
+            if not MEMORY.search(call) and not inside:
+                failures.append(name + ": call in " + function + ": " + call)
+        if name in SPLIT_GAIN[:2] and any(WIDE_PRODUCT.search(line) for line in lines):
+            failures.append(name + ": 64-bit multiply in " + function)
     for function in FLAT:
         for member in closure(bodies, function):
             if nested(bodies[member]):

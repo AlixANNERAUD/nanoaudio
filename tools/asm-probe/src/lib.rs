@@ -11,6 +11,7 @@ use nanoaudio_dsp::{
 use nanoaudio_g711::{Law, G711};
 use nanoaudio_qoa::{QoaDecoder, QoaEncoder};
 use nanoaudio_sbc::{SbcDecoder, SbcEncoder};
+use nanoaudio_synth::Synth;
 
 #[inline(never)]
 #[no_mangle]
@@ -305,4 +306,16 @@ pub fn probe_ms_adpcm_encode(codec: &mut MsAdpcm, input: &[i16], output: &mut [u
     codec
         .encode(input, output)
         .map_or(0, |progress| progress.produced)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_synth_fixed_render(synth: &mut Synth<Fixed, 8>, output: &mut [i32]) {
+    synth.render(output);
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_synth_float_render(synth: &mut Synth<Float, 8>, output: &mut [f32]) {
+    synth.render(output);
 }
