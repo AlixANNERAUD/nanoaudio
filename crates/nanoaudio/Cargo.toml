@@ -13,7 +13,7 @@ keywords = ["audio", "no-std", "embedded", "pcm", "mixer"]
 categories = ["multimedia::audio", "embedded", "no-std", "no-std::no-alloc", "multimedia::encoding"]
 
 [package.metadata.docs.rs]
-features = ["mp3"]
+features = ["mp3", "synth"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
@@ -21,6 +21,7 @@ nanoaudio-core.workspace = true
 nanoaudio-buffer = { workspace = true, optional = true }
 nanoaudio-dsp = { workspace = true, optional = true }
 nanoaudio-analysis = { workspace = true, optional = true }
+nanoaudio-synth = { workspace = true, optional = true }
 nanoaudio-g711 = { workspace = true, optional = true }
 nanoaudio-adpcm = { workspace = true, optional = true }
 nanoaudio-qoa = { workspace = true, optional = true }
@@ -38,6 +39,7 @@ buffer = ["dep:nanoaudio-buffer"]
 dsp = ["dep:nanoaudio-dsp"]
 analysis = ["dsp", "dep:nanoaudio-analysis"]
 analysis-fft = ["analysis", "nanoaudio-analysis/fft"]
+synth = ["dsp", "dep:nanoaudio-synth"]
 fixed = ["dsp", "nanoaudio-dsp/fixed"]
 float = ["dsp", "nanoaudio-dsp/float"]
 g711 = ["dep:nanoaudio-g711"]

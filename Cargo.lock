@@ -319,6 +319,7 @@ dependencies = [
  "nanoaudio-mp3",
  "nanoaudio-qoa",
  "nanoaudio-sbc",
+ "nanoaudio-synth",
  "nanoaudio-wav",
 ]
 

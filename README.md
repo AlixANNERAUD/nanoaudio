@@ -34,13 +34,14 @@ or in `Cargo.toml`:
 nanoaudio = "0.1"
 ```
 
-Every feature except MP3 is enabled by default. With `default-features = false`, only the types from `nanoaudio-core` remain, and you pick what you need:
+Every feature except MP3, `analysis-fft` and `synth` is enabled by default. With `default-features = false`, only the types from `nanoaudio-core` remain, and you pick what you need:
 
 | Feature        | Enables                                                                                                   |
 | -------------- | --------------------------------------------------------------------------------------------------------- |
 | `dsp`          | Conversion, volume, mixing and pipelines (`nanoaudio-dsp`).                                                |
 | `analysis`     | The `analysis` module of analyzers for `tap` (`nanoaudio-analysis`). Implies `dsp`.                     |
 | `analysis-fft` | `analysis::Spectrum`, an FFT spectrum analyzer with [`microfft`](https://crates.io/crates/microfft). Implies `analysis`. Not default. |
+| `synth`        | The `synth` module: oscillators, envelopes, a filter and a polyphonic `Synth` source for pipelines (`nanoaudio-synth`). Implies `dsp`. Not default. |
 | `buffer`       | `RingBuffer`, `Producer` and `Consumer` (`nanoaudio-buffer`).                                              |
 | `g711`         | `codec::G711` and the A-law and µ-law functions (`nanoaudio-g711`).                                        |
 | `adpcm`        | `codec::ImaAdpcm` and `codec::MsAdpcm` (`nanoaudio-adpcm`).                                                |
@@ -57,7 +58,7 @@ Every feature except MP3 is enabled by default. With `default-features = false`,
 | `fixed`        | Forces fixed-point processing by default. See [Integer or Floating Point](#integer-or-floating-point).    |
 | `float`        | Forces floating-point processing by default. If `fixed` is also enabled, `fixed` takes precedence.        |
 
-`nanoaudio` re-exports a set of smaller crates, one per codec or building block, which can also be used on their own: [`nanoaudio-core`](https://crates.io/crates/nanoaudio-core), [`nanoaudio-dsp`](https://crates.io/crates/nanoaudio-dsp), [`nanoaudio-analysis`](https://crates.io/crates/nanoaudio-analysis), [`nanoaudio-buffer`](https://crates.io/crates/nanoaudio-buffer), [`nanoaudio-g711`](https://crates.io/crates/nanoaudio-g711), [`nanoaudio-adpcm`](https://crates.io/crates/nanoaudio-adpcm), [`nanoaudio-qoa`](https://crates.io/crates/nanoaudio-qoa), [`nanoaudio-flac`](https://crates.io/crates/nanoaudio-flac), [`nanoaudio-g722`](https://crates.io/crates/nanoaudio-g722), [`nanoaudio-sbc`](https://crates.io/crates/nanoaudio-sbc), [`nanoaudio-mp3`](https://crates.io/crates/nanoaudio-mp3), [`nanoaudio-wav`](https://crates.io/crates/nanoaudio-wav), [`nanoaudio-aiff`](https://crates.io/crates/nanoaudio-aiff) and [`nanoaudio-metadata`](https://crates.io/crates/nanoaudio-metadata).
+`nanoaudio` re-exports a set of smaller crates, one per codec or building block, which can also be used on their own: [`nanoaudio-core`](https://crates.io/crates/nanoaudio-core), [`nanoaudio-dsp`](https://crates.io/crates/nanoaudio-dsp), [`nanoaudio-analysis`](https://crates.io/crates/nanoaudio-analysis), [`nanoaudio-synth`](https://crates.io/crates/nanoaudio-synth), [`nanoaudio-buffer`](https://crates.io/crates/nanoaudio-buffer), [`nanoaudio-g711`](https://crates.io/crates/nanoaudio-g711), [`nanoaudio-adpcm`](https://crates.io/crates/nanoaudio-adpcm), [`nanoaudio-qoa`](https://crates.io/crates/nanoaudio-qoa), [`nanoaudio-flac`](https://crates.io/crates/nanoaudio-flac), [`nanoaudio-g722`](https://crates.io/crates/nanoaudio-g722), [`nanoaudio-sbc`](https://crates.io/crates/nanoaudio-sbc), [`nanoaudio-mp3`](https://crates.io/crates/nanoaudio-mp3), [`nanoaudio-wav`](https://crates.io/crates/nanoaudio-wav), [`nanoaudio-aiff`](https://crates.io/crates/nanoaudio-aiff) and [`nanoaudio-metadata`](https://crates.io/crates/nanoaudio-metadata).
 
 ## Quick Start
 
