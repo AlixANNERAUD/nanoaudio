@@ -7,6 +7,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+nanoaudio-adpcm = { path = "../../crates/nanoaudio-adpcm" }
 nanoaudio-core = { path = "../../crates/nanoaudio-core" }
 nanoaudio-dsp = { path = "../../crates/nanoaudio-dsp" }
 nanoaudio-g711 = { path = "../../crates/nanoaudio-g711" }

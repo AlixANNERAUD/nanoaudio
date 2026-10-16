@@ -1,5 +1,6 @@
 #![no_std]
 
+use nanoaudio_adpcm::MsAdpcm;
 use nanoaudio_core::codec::{Decoder, Encoder};
 use nanoaudio_core::Format;
 use nanoaudio_core::I24;
@@ -288,4 +289,20 @@ pub fn probe_fixed_stream_dither_i16(input: &[i32], output: &mut [i16], seed: u3
         Ok(stream) => stream.dither(Format::I16, seed).write_samples(output),
         Err(_) => 0,
     }
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_ms_adpcm_decode(codec: &mut MsAdpcm, input: &[u8], output: &mut [i16]) -> usize {
+    codec
+        .decode(input, output)
+        .map_or(0, |progress| progress.produced)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub fn probe_ms_adpcm_encode(codec: &mut MsAdpcm, input: &[i16], output: &mut [u8]) -> usize {
+    codec
+        .encode(input, output)
+        .map_or(0, |progress| progress.produced)
 }
