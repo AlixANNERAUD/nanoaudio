@@ -25,7 +25,7 @@ The Rust targets must be installed: `thumbv6m-none-eabi`, `thumbv7em-none-eabihf
 Options:
 
 - `--targets m0plus,m4f`: only some targets, out of `m0plus`, `m4f`, `m33` and `rv32imc`.
-- `--filter sbc`: only the cases whose group (`codec`, `dsp`, `analysis`) or name contains the text.
+- `--filter sbc`: only the cases whose group (`codec`, `dsp`, `analysis`, `compare`) or name contains the text.
 - `--opt-level s`: builds with another optimization level, `3` by default.
 - `--functions 5`: also lists, for each case and target, the 5 functions that execute the most instructions. With LTO most code is inlined into its caller, so a codec often shows up under the harness function that calls it.
 - `--no-build`: reuses the binaries from the last build, in `target/emu`.
@@ -56,5 +56,7 @@ An instruction skipped by an IT block counts as executed, since the core still i
 Codecs encode a generated signal (chords with harmonics and a little noise) and decode what they encoded on the same target, except G.722, SBC, FLAC and MP3, which decode the fixtures in `crates/*/tests/data`. Inputs are short, a few frames each, to keep a run fast: the numbers are averages over those frames, setup excluded.
 
 DSP and analysis cases run on 44.1 kHz stereo 16-bit audio, in fixed point and in floating point. Floating point on the M0+ and RV32IMC goes through software routines, which is where most of their cost comes from.
+
+The `compare` cases run the MP3 frame decoder and the FFT that nanoaudio is built on, nanomp3-core and microfft, without nanoaudio around them, for `tools/bench/compare.py`.
 
 Only the code between the `begin` and `end` calls in `src/main.rs` is counted. To add a case, add an arm to `run` in `src/main.rs` and a `Case` with the same number to `CASES` in `run.py`.

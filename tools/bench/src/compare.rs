@@ -20,8 +20,8 @@ use nanoaudio_wav::{WavDecoder, WavHeader};
 use realfft::RealFftPlanner;
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{
-    Async, Fft, FixedAsync, FixedSync, PolynomialDegree,
-    SincInterpolationParameters, WindowFunction,
+    Async, Fft, FixedAsync, FixedSync, PolynomialDegree, SincInterpolationParameters,
+    WindowFunction,
 };
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
@@ -138,23 +138,27 @@ fn agreement(reference: &[i16], other: &[i16], channels: usize) -> (String, Opti
         (format!("bit-exact{offset}"), None)
     } else {
         let snr = 10.0 * (signal / noise).log10();
-        (
-            format!("off by up to {largest} LSB{offset}"),
-            Some(snr),
-        )
+        (format!("off by up to {largest} LSB{offset}"), Some(snr))
     }
 }
 
-fn run_decoders(
-    settings: Settings,
-    group: &str,
-    configuration: &str,
-    encoded: &[u8],
-    reference: &[i16],
-    exact_reference: bool,
-    channels: usize,
-    libraries: Vec<Library>,
-) {
+struct Group<'a> {
+    name: &'a str,
+    configuration: &'a str,
+    encoded: &'a [u8],
+    reference: &'a [i16],
+    exact: bool,
+}
+
+fn run_decoders(settings: Settings, group: Group, libraries: Vec<Library>) {
+    let Group {
+        name: group,
+        configuration,
+        encoded,
+        reference,
+        exact: exact_reference,
+    } = group;
+    let channels = 2;
     let samples = reference.len();
     let mut output = vec![0i16; samples * 2 + 65_536];
     let mut first: Option<Vec<i16>> = None;
@@ -187,7 +191,7 @@ fn run_decoders(
             ("state_bytes", library.state.into()),
             ("heap_bytes", heap.into()),
             ("agreement", agreement.into()),
-            ("snr_db", snr.map_or(f64::NAN, |value| value).into()),
+            ("snr_db", snr.unwrap_or(f64::NAN).into()),
         ]);
     }
 }
@@ -365,7 +369,16 @@ fn bytes(samples: &[i16]) -> Vec<u8> {
         .collect()
 }
 
-fn wav(format: u16, channels: u16, sample_rate: u32, block_align: u16, bits: u16, extra: &[u8], fact: Option<u32>, data: &[u8]) -> Vec<u8> {
+fn wav(
+    format: u16,
+    block_align: u16,
+    bits: u16,
+    extra: &[u8],
+    fact: Option<u32>,
+    data: &[u8],
+) -> Vec<u8> {
+    let channels = 2u16;
+    let sample_rate = 44_100u32;
     let mut chunk = Vec::new();
     let bytes_per_second = match format {
         1 => sample_rate * block_align as u32,
@@ -412,78 +425,81 @@ fn decoders(settings: Settings, data: Option<&Path>, filter: Option<&str>) {
     let wanted = |key: &str| filter.is_none_or(|filter| filter.split(',').any(|item| item == key));
 
     if let Some(data) = data {
-        if wanted("mp3") {
-            if let Ok(encoded) = std::fs::read(data.join("signal.mp3")) {
-                let reference = {
-                    let mut output = vec![0i16; source.len() * 2];
-                    let produced = (nanoaudio(Mp3Decoder::<i16>::new))(&encoded, &mut output);
-                    output.truncate(produced);
-                    output
-                };
-                run_decoders(
-                    settings,
-                    "MP3",
-                    "44.1 kHz stereo, 128 kbit/s CBR",
-                    &encoded,
-                    &reference,
-                    false,
-                    2,
-                    vec![
-                        library(
-                            "nanoaudio-mp3",
-                            Some(size_of::<Mp3Decoder<i16>>()),
-                            nanoaudio(Mp3Decoder::<i16>::new),
-                        ),
-                        library(
-                            "nanomp3 0.2 (frame decoder)",
-                            Some(size_of::<nanomp3::Decoder>()),
-                            nanomp3_raw(),
-                        ),
-                        library(
-                            "minimp3 (C, through minimp3 0.6)",
-                            Some(size_of::<minimp3::ffi::mp3dec_t>()),
-                            minimp3_raw(),
-                        ),
-                        library("symphonia 0.6", None, symphonia("mp3")),
-                    ],
-                );
-            }
+        if wanted("mp3")
+            && let Ok(encoded) = std::fs::read(data.join("signal.mp3"))
+        {
+            let reference = {
+                let mut output = vec![0i16; source.len() * 2];
+                let produced = (nanoaudio(Mp3Decoder::<i16>::new))(&encoded, &mut output);
+                output.truncate(produced);
+                output
+            };
+            run_decoders(
+                settings,
+                Group {
+                    name: "MP3",
+                    configuration: "44.1 kHz stereo, 128 kbit/s CBR",
+                    encoded: &encoded,
+                    reference: &reference,
+                    exact: false,
+                },
+                vec![
+                    library(
+                        "nanoaudio-mp3",
+                        Some(size_of::<Mp3Decoder<i16>>()),
+                        nanoaudio(Mp3Decoder::<i16>::new),
+                    ),
+                    library(
+                        "nanomp3 0.2 (frame decoder)",
+                        Some(size_of::<nanomp3::Decoder>()),
+                        nanomp3_raw(),
+                    ),
+                    library(
+                        "minimp3 (C, through minimp3 0.6)",
+                        Some(size_of::<minimp3::ffi::mp3dec_t>()),
+                        minimp3_raw(),
+                    ),
+                    library("symphonia 0.6", None, symphonia("mp3")),
+                ],
+            );
         }
 
-        if wanted("flac") {
-            if let Ok(encoded) = std::fs::read(data.join("signal.flac")) {
-                run_decoders(
-                    settings,
-                    "FLAC",
-                    "44.1 kHz stereo 16-bit, level 5",
-                    &encoded,
-                    &source,
-                    true,
-                    2,
-                    vec![
-                        library(
-                            "nanoaudio-flac",
-                            Some(size_of::<FlacDecoder<i16>>()),
-                            nanoaudio(FlacDecoder::<i16>::new),
-                        ),
-                        library("claxon 0.4", None, claxon()),
-                        library("symphonia 0.6", None, symphonia("flac")),
-                    ],
-                );
-            }
+        if wanted("flac")
+            && let Ok(encoded) = std::fs::read(data.join("signal.flac"))
+        {
+            run_decoders(
+                settings,
+                Group {
+                    name: "FLAC",
+                    configuration: "44.1 kHz stereo 16-bit, level 5",
+                    encoded: &encoded,
+                    reference: &source,
+                    exact: true,
+                },
+                vec![
+                    library(
+                        "nanoaudio-flac",
+                        Some(size_of::<FlacDecoder<i16>>()),
+                        nanoaudio(FlacDecoder::<i16>::new),
+                    ),
+                    library("claxon 0.4", None, claxon()),
+                    library("symphonia 0.6", None, symphonia("flac")),
+                ],
+            );
         }
     }
 
     if wanted("wav") {
-        let file = wav(1, 2, 44_100, 4, 16, &[], None, &bytes(&source));
+        let file = wav(1, 4, 16, &[], None, &bytes(&source));
         run_decoders(
             settings,
-            "WAV",
-            "44.1 kHz stereo 16-bit PCM",
-            &file,
-            &source,
-            true,
-            2,
+            Group {
+                name: "WAV",
+                configuration: "44.1 kHz stereo 16-bit PCM",
+                encoded: &file,
+                reference: &source,
+                exact: true,
+            },
             vec![
                 library(
                     "nanoaudio-wav",
@@ -512,12 +528,13 @@ fn decoders(settings: Settings, data: Option<&Path>, filter: Option<&str>) {
         };
         run_decoders(
             settings,
-            "QOA",
-            "44.1 kHz stereo",
-            &encoded,
-            &reference,
-            false,
-            2,
+            Group {
+                name: "QOA",
+                configuration: "44.1 kHz stereo",
+                encoded: &encoded,
+                reference: &reference,
+                exact: false,
+            },
             vec![
                 library(
                     "nanoaudio-qoa",
@@ -543,8 +560,6 @@ fn decoders(settings: Settings, data: Option<&Path>, filter: Option<&str>) {
         encoded.truncate(length);
         let file = wav(
             0x11,
-            2,
-            44_100,
             2_048,
             4,
             &(frames_per_block as u16).to_le_bytes(),
@@ -559,12 +574,13 @@ fn decoders(settings: Settings, data: Option<&Path>, filter: Option<&str>) {
         };
         run_decoders(
             settings,
-            "IMA ADPCM",
-            "WAV, 44.1 kHz stereo, 2048-byte blocks",
-            &file,
-            &reference,
-            false,
-            2,
+            Group {
+                name: "IMA ADPCM",
+                configuration: "WAV, 44.1 kHz stereo, 2048-byte blocks",
+                encoded: &file,
+                reference: &reference,
+                exact: false,
+            },
             vec![
                 library(
                     "nanoaudio-wav",
@@ -594,8 +610,6 @@ fn decoders(settings: Settings, data: Option<&Path>, filter: Option<&str>) {
 
         let file = wav(
             0x02,
-            2,
-            44_100,
             2_048,
             4,
             &extra,
@@ -610,12 +624,13 @@ fn decoders(settings: Settings, data: Option<&Path>, filter: Option<&str>) {
         };
         run_decoders(
             settings,
-            "MS ADPCM",
-            "WAV, 44.1 kHz stereo, 2048-byte blocks",
-            &file,
-            &reference,
-            false,
-            2,
+            Group {
+                name: "MS ADPCM",
+                configuration: "WAV, 44.1 kHz stereo, 2048-byte blocks",
+                encoded: &file,
+                reference: &reference,
+                exact: false,
+            },
             vec![
                 library(
                     "nanoaudio-wav",
@@ -629,6 +644,8 @@ fn decoders(settings: Settings, data: Option<&Path>, filter: Option<&str>) {
 }
 
 type Process = Box<dyn FnMut(&[f32], &mut [f32]) -> usize>;
+type Native = Box<dyn FnMut(&[i16], &mut [i16]) -> usize>;
+type Run = Box<dyn FnMut() -> usize>;
 
 struct Converter {
     library: &'static str,
@@ -666,7 +683,7 @@ fn ours_fixed<K: Interpolation<Fixed, 2> + 'static>(input_rate: u32, output_rate
 fn ours_fixed_native<K: Interpolation<Fixed, 2> + 'static>(
     input_rate: u32,
     output_rate: u32,
-) -> Box<dyn FnMut(&[i16], &mut [i16]) -> usize> {
+) -> Native {
     let mut resampler = Resampler::<K, Fixed>::new(2, input_rate, output_rate).unwrap();
 
     Box::new(move |input, output| {
@@ -745,14 +762,19 @@ fn rubato_fft() -> Box<dyn Fn(u32, u32) -> Process> {
 }
 
 fn dasp_frames(input: &[f32]) -> impl Signal<Frame = [f32; 2]> + '_ {
-    dasp::signal::from_iter(input.chunks_exact(2).map(|pair| [pair[0], pair[1]]))
+    dasp::signal::from_iter(input.as_chunks::<2>().0.iter().copied())
 }
 
 fn dasp_write<S: Signal<Frame = [f32; 2]>>(signal: S, output: &mut [f32], frames: usize) -> usize {
     let mut produced = 0;
 
-    for (target, frame) in output.chunks_exact_mut(2).zip(signal.take(frames)) {
-        target.copy_from_slice(&frame);
+    for (target, frame) in output
+        .as_chunks_mut::<2>()
+        .0
+        .iter_mut()
+        .zip(signal.take(frames))
+    {
+        *target = frame;
         produced += 2;
     }
 
@@ -1081,7 +1103,7 @@ fn transforms(settings: Settings) {
     for points in [256usize, 1_024] {
         let blocks = voice.len() / points;
         let window = hann(points);
-        let mut rows: Vec<(&str, Box<dyn FnMut() -> usize>)> = Vec::new();
+        let mut rows: Vec<(&str, Run)> = Vec::new();
         let input = voice.clone();
 
         if points == 256 {
@@ -1209,9 +1231,9 @@ fn sample_operations(settings: Settings) {
     let mut floats = vec![0f32; music.len()];
     convert::<i16, f32>(&music, &mut floats);
     let samples = music.len();
-    let mut rows: Vec<(&str, &str, Box<dyn FnMut() -> usize>)> = Vec::new();
+    let mut rows: Vec<(&str, &str, Run)> = Vec::new();
 
-    fn volume<R: Representation + 'static>(music: &[i16]) -> Box<dyn FnMut() -> usize> {
+    fn volume<R: Representation + 'static>(music: &[i16]) -> Run {
         let mut buffer = music.to_vec();
         let mut toggle = false;
         Box::new(move || {
@@ -1226,7 +1248,7 @@ fn sample_operations(settings: Settings) {
         })
     }
 
-    fn mix<R: Representation + 'static>(music: &[i16], reversed: &[i16]) -> Box<dyn FnMut() -> usize> {
+    fn mix<R: Representation + 'static>(music: &[i16], reversed: &[i16]) -> Run {
         let base = music.to_vec();
         let mut buffer = music.to_vec();
         let input = reversed.to_vec();
@@ -1236,8 +1258,16 @@ fn sample_operations(settings: Settings) {
         })
     }
 
-    rows.push(("Volume, i16 slice", "nanoaudio-dsp, `Fixed`", volume::<Fixed>(&music)));
-    rows.push(("Volume, i16 slice", "nanoaudio-dsp, `Float`", volume::<Float>(&music)));
+    rows.push((
+        "Volume, i16 slice",
+        "nanoaudio-dsp, `Fixed`",
+        volume::<Fixed>(&music),
+    ));
+    rows.push((
+        "Volume, i16 slice",
+        "nanoaudio-dsp, `Float`",
+        volume::<Float>(&music),
+    ));
     {
         let mut buffer = music.clone();
         let mut toggle = false;

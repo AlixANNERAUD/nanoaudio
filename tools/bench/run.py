@@ -304,6 +304,17 @@ def ordered(table):
     return seen
 
 
+def kept_section():
+    if not OUTPUT.exists():
+        return None
+    text = OUTPUT.read_text()
+    start = text.find("\n## Other Rust crates\n")
+    if start < 0:
+        return None
+    end = text.find("\n## ", start + 1)
+    return text[start + 1 : end + 1 if end >= 0 else len(text)]
+
+
 def write(info, notes, speeds, memory, dsp, quality, flash, host, arguments):
     native = speed_table(speeds["native"])
     noise_spread = statistics.median(entry["spread"] for entry in native.values())
@@ -483,6 +494,10 @@ def write(info, notes, speeds, memory, dsp, quality, flash, host, arguments):
     add("")
     add("Lossless compression depends on the material: the noise bursts in this signal cannot be predicted, so FLAC does worse here than on most music.")
     add("")
+    comparison = kept_section()
+    if comparison:
+        add(comparison.rstrip("\n"))
+        add("")
     add("## Reproducing")
     add("")
     add("```sh")

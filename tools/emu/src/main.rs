@@ -276,7 +276,7 @@ fn microfft_spectrum() -> usize {
     let window = black_box(window);
 
     begin();
-    for block in input.chunks_exact(2_048) {
+    for block in input.as_chunks::<2_048>().0 {
         let mut buffer = [0f32; 1_024];
         for (index, target) in buffer.iter_mut().enumerate() {
             let mixed = (block[index * 2] as f32 + block[index * 2 + 1] as f32) * 0.5;

@@ -362,8 +362,13 @@ jobs:
       - name: Build the Flash Probes
         run: cargo build --release --manifest-path tools/bench/flash/Cargo.toml --target thumbv6m-none-eabi
 
-      - name: Check the Script
-        run: python3 -m py_compile tools/bench/run.py
+      - name: Build and Smoke-Test the Comparisons
+        run: |
+          cargo build --release --manifest-path tools/bench/Cargo.toml --features compare
+          cargo run --release --manifest-path tools/bench/Cargo.toml --features compare -- compare --runs 1 --target-ms 1 --filter wav,qoa,adpcm
+
+      - name: Check the Scripts
+        run: python3 -m py_compile tools/bench/run.py tools/bench/compare.py
 
   emu:
     needs: changes
