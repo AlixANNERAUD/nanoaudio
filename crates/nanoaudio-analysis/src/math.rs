@@ -321,6 +321,10 @@ mod tests {
         }
     }
 
+    fn slack() -> u64 {
+        if cfg!(miri) { 64 } else { 0 }
+    }
+
     fn count() -> usize {
         if cfg!(miri) { 200 } else { 200_000 }
     }
@@ -378,8 +382,10 @@ mod tests {
                 PI * random.unit()
             };
 
-            assert!((cosine(angle) - angle.cos()).abs() < 5e-16, "{angle}");
-            assert!((sine(angle) - angle.sin()).abs() < 5e-16, "{angle}");
+            let bound = 5e-16 + slack() as f64 * 1e-15;
+
+            assert!((cosine(angle) - angle.cos()).abs() < bound, "{angle}");
+            assert!((sine(angle) - angle.sin()).abs() < bound, "{angle}");
         }
 
         assert_eq!(cosine(0.0), 1.0);
@@ -393,25 +399,31 @@ mod tests {
 
         for _ in 0..count() {
             let value = random.unit() * 1400.0 - 1100.0;
-            assert!(ulps(exp2(value), value.exp2()) <= 2, "{value}");
+            assert!(ulps(exp2(value), value.exp2()) <= 2 + slack(), "{value}");
 
             let value = random.unit() * 1400.0 - 760.0;
-            assert!(ulps(exp(value), value.exp()) <= 2, "{value}");
+            assert!(ulps(exp(value), value.exp()) <= 2 + slack(), "{value}");
 
             let value = random.unit() * 40.0 - 20.0;
-            assert!(ulps(sinh(value), value.sinh()) <= 4, "{value}");
+            assert!(ulps(sinh(value), value.sinh()) <= 4 + slack(), "{value}");
         }
 
         for value in [-1100.0, -1074.0, -1022.5, -0.5, 0.0, 0.5, 1.0, 10.0, 1023.0] {
-            assert!(ulps(exp2(value), f64::exp2(value)) <= 1, "{value}");
+            assert!(
+                ulps(exp2(value), f64::exp2(value)) <= 1 + slack(),
+                "{value}"
+            );
         }
 
         for value in [-760.0, -745.0, -708.5, -1.0, 0.0, 1e-300, 1.0, 709.0] {
-            assert!(ulps(exp(value), f64::exp(value)) <= 1, "{value}");
+            assert!(ulps(exp(value), f64::exp(value)) <= 1 + slack(), "{value}");
         }
 
         for value in [-1.0, -1e-3, -1e-300, 0.0, 1e-9, 0.25, 1.0, 1.5] {
-            assert!(ulps(sinh(value), f64::sinh(value)) <= 2, "{value}");
+            assert!(
+                ulps(sinh(value), f64::sinh(value)) <= 2 + slack(),
+                "{value}"
+            );
         }
 
         assert_eq!(exp2(0.0), 1.0);
@@ -430,18 +442,21 @@ mod tests {
 
         for _ in 0..count() {
             let value = f64::from_bits(random.next() % f64::INFINITY.to_bits());
-            assert!(ulps(log2(value), value.log2()) <= 4, "{value}");
-            assert!(ulps(square_root(value), value.sqrt()) <= 1, "{value}");
+            assert!(ulps(log2(value), value.log2()) <= 4 + slack(), "{value}");
+            assert!(
+                ulps(square_root(value), value.sqrt()) <= 1 + slack(),
+                "{value}"
+            );
 
             let value = f32::from_bits(random.next() as u32 % f32::INFINITY.to_bits());
             let expected = (value as f64).log2();
             assert!(
                 (log2_f32(value) as f64 - expected).abs() < 8e-6
-                    && ulps_f32(log2_f32(value), expected as f32) <= 5,
+                    && ulps_f32(log2_f32(value), expected as f32) <= 5 + slack(),
                 "{value}"
             );
             assert!(
-                ulps_f32(square_root_f32(value), value.sqrt()) <= 1,
+                ulps_f32(square_root_f32(value), value.sqrt()) <= 1 + slack(),
                 "{value}"
             );
         }
@@ -456,8 +471,11 @@ mod tests {
         for value in [
             5e-324, 1e-310, 1e-300, 0.3, 1.0, 1.5, 2.0, 3.0, 1e10, 1.7e308,
         ] {
-            assert!(ulps(log2(value), value.log2()) <= 4, "{value}");
-            assert!(ulps(square_root(value), value.sqrt()) <= 1, "{value}");
+            assert!(ulps(log2(value), value.log2()) <= 4 + slack(), "{value}");
+            assert!(
+                ulps(square_root(value), value.sqrt()) <= 1 + slack(),
+                "{value}"
+            );
         }
 
         for value in [
@@ -472,9 +490,12 @@ mod tests {
             1e30,
             f32::MAX,
         ] {
-            assert!((log2_f32(value) - value.log2()).abs() < 8e-6, "{value}");
             assert!(
-                ulps_f32(square_root_f32(value), value.sqrt()) <= 1,
+                (log2_f32(value) as f64 - (value as f64).log2()).abs() < 8e-6,
+                "{value}"
+            );
+            assert!(
+                ulps_f32(square_root_f32(value), value.sqrt()) <= 1 + slack(),
                 "{value}"
             );
         }
