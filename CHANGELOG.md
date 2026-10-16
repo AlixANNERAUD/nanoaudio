@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2](https://github.com/AlixANNERAUD/nanoaudio/compare/v0.2.1...v0.2.2) - 2026-10-16
+
+### Added
+
+- *(analysis)* add an FFT spectrum analyzer ([#131](https://github.com/AlixANNERAUD/nanoaudio/pull/131))
+- *(synth)* add a synthesizer crate ([#150](https://github.com/AlixANNERAUD/nanoaudio/pull/150))
+
+### Changed
+
+- *(g711)* drop the dead target-feature check in the build script ([#134](https://github.com/AlixANNERAUD/nanoaudio/pull/134))
+- *(analysis)* share the math helpers between analyzers ([#149](https://github.com/AlixANNERAUD/nanoaudio/pull/149))
+
+### Performance
+
+- *(adpcm)* avoid software division in MS ADPCM decode and encode ([#140](https://github.com/AlixANNERAUD/nanoaudio/pull/140))
+- *(flac)* store blocks as i16 for streams of up to 16 bits ([#136](https://github.com/AlixANNERAUD/nanoaudio/pull/136))
+
 ## [0.2.1](https://github.com/AlixANNERAUD/nanoaudio/compare/v0.2.0...v0.2.1) - 2026-10-15
 
 ### Added

@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1](https://github.com/AlixANNERAUD/nanoaudio/compare/nanoaudio-analysis-v0.1.0...nanoaudio-analysis-v0.1.1) - 2026-10-16
+
+### Added
+
+- *(analysis)* add an FFT spectrum analyzer ([#131](https://github.com/AlixANNERAUD/nanoaudio/pull/131))
+
+### Changed
+
+- *(analysis)* share the math helpers between analyzers ([#149](https://github.com/AlixANNERAUD/nanoaudio/pull/149))
+
 ## [0.1.0](https://github.com/AlixANNERAUD/nanoaudio/releases/tag/nanoaudio-analysis-v0.1.0) - 2026-10-15
 
 ### Added
