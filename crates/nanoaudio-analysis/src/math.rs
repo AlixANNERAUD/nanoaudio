@@ -81,7 +81,7 @@ const fn exponential_series(value: f64) -> f64 {
 
 const fn power_of_two(exponent: i64) -> f64 {
     if exponent < -1022 {
-        f64::MIN_POSITIVE * power_of_two(exponent + 1022)
+        f64::MIN_POSITIVE * f64::from_bits(((exponent + 2045) as u64) << 52)
     } else {
         f64::from_bits(((exponent + 1023) as u64) << 52)
     }
@@ -132,8 +132,30 @@ pub const fn sinh(value: f64) -> f64 {
     (exp(value) - exp(-value)) / 2.0
 }
 
-const fn logarithm(bits: u64, bias: i64) -> f64 {
-    let mut exponent = (bits >> 52) as i64 - bias;
+#[inline(always)]
+const fn pair(square: f64, index: usize) -> f64 {
+    ODD_RECIPROCALS[index] + ODD_RECIPROCALS[index + 1] * square
+}
+
+#[inline]
+pub const fn log2(value: f64) -> f64 {
+    if !(value > 0.0 && value < f64::INFINITY) {
+        return if value == 0.0 {
+            f64::NEG_INFINITY
+        } else if value == f64::INFINITY {
+            value
+        } else {
+            f64::NAN
+        };
+    }
+
+    let (value, offset) = if value < f64::MIN_POSITIVE {
+        (value * (1u128 << 64) as f64, -64.0)
+    } else {
+        (value, 0.0)
+    };
+    let bits = value.to_bits();
+    let mut exponent = (bits >> 52) as i64 - 1023;
     let mut mantissa = f64::from_bits((bits & ((1 << 52) - 1)) | (1023 << 52));
 
     if mantissa > SQRT_2 {
@@ -143,64 +165,58 @@ const fn logarithm(bits: u64, bias: i64) -> f64 {
 
     let ratio = (mantissa - 1.0) / (mantissa + 1.0);
     let square = ratio * ratio;
-    let mut index = ODD_RECIPROCALS.len() - 1;
-    let mut sum = ODD_RECIPROCALS[index];
+    let fourth = square * square;
+    let eighth = fourth * fourth;
+    let low = pair(square, 0) + pair(square, 2) * fourth;
+    let high = pair(square, 4) + pair(square, 6) * fourth;
+    let sum = low + (high + pair(square, 8) * eighth) * eighth;
 
-    while index > 0 {
-        index -= 1;
-        sum = sum * square + ODD_RECIPROCALS[index];
-    }
-
-    exponent as f64 + ratio * sum * (2.0 * LOG2_E)
+    exponent as f64 + offset + ratio * sum * (2.0 * LOG2_E)
 }
 
-pub const fn log2(value: f64) -> f64 {
-    if value.is_nan() || value < 0.0 {
-        return f64::NAN;
-    }
-
-    if value < f64::MIN_POSITIVE {
-        return if value == 0.0 {
-            f64::NEG_INFINITY
-        } else {
-            logarithm((value * (1u128 << 64) as f64).to_bits(), 1023 + 64)
-        };
-    }
-
-    if value == f64::INFINITY {
-        return value;
-    }
-
-    logarithm(value.to_bits(), 1023)
-}
-
+#[inline]
 pub const fn square_root(value: f64) -> f64 {
-    if value.is_nan() || value < 0.0 {
-        return f64::NAN;
+    if !(value > 0.0 && value < f64::INFINITY) {
+        return if value < 0.0 { f64::NAN } else { value };
     }
 
-    if value == 0.0 || value == f64::INFINITY {
-        return value;
-    }
-
-    if value < f64::MIN_POSITIVE {
-        return square_root(value * (1u128 << 64) as f64) / (1u64 << 32) as f64;
-    }
-
+    let (value, scale) = if value < f64::MIN_POSITIVE {
+        (value * (1u128 << 64) as f64, 1.0 / (1u64 << 32) as f64)
+    } else {
+        (value, 1.0)
+    };
     let mut root = f64::from_bits((value.to_bits() >> 1) + 0x1FF8_0000_0000_0000);
     let mut index = 0;
 
-    while index < 5 {
+    while index < 4 {
         root = 0.5 * (root + value / root);
         index += 1;
     }
 
-    root
+    root * scale
 }
 
 #[inline]
-const fn logarithm_f32(bits: u32, bias: i32) -> f32 {
-    let mut exponent = (bits >> 23) as i32 - bias;
+pub const fn log2_f32(value: f32) -> f32 {
+    if value.is_nan() || value <= 0.0 {
+        return if value == 0.0 {
+            f32::NEG_INFINITY
+        } else {
+            f32::NAN
+        };
+    }
+
+    if value == f32::INFINITY {
+        return value;
+    }
+
+    let (value, offset) = if value < f32::MIN_POSITIVE {
+        (value * (1u64 << 32) as f32, -32.0)
+    } else {
+        (value, 0.0)
+    };
+    let bits = value.to_bits();
+    let mut exponent = (bits >> 23) as i32 - 127;
     let mut mantissa = f32::from_bits((bits & 0x007F_FFFF) | 0x3F80_0000);
 
     if mantissa > core::f32::consts::SQRT_2 {
@@ -212,42 +228,20 @@ const fn logarithm_f32(bits: u32, bias: i32) -> f32 {
     let square = ratio * ratio;
     let series = ratio * (1.0 + square * (1.0 / 3.0 + square * (1.0 / 5.0 + square * (1.0 / 7.0))));
 
-    exponent as f32 + series * (2.0 / core::f32::consts::LN_2)
+    exponent as f32 + offset + series * (2.0 / core::f32::consts::LN_2)
 }
 
-pub const fn log2_f32(value: f32) -> f32 {
-    if value.is_nan() || value < 0.0 {
-        return f32::NAN;
-    }
-
-    if value < f32::MIN_POSITIVE {
-        return if value == 0.0 {
-            f32::NEG_INFINITY
-        } else {
-            logarithm_f32((value * (1u32 << 24) as f32).to_bits(), 127 + 24)
-        };
-    }
-
-    if value == f32::INFINITY {
-        return value;
-    }
-
-    logarithm_f32(value.to_bits(), 127)
-}
-
+#[inline]
 pub const fn square_root_f32(value: f32) -> f32 {
-    if value.is_nan() || value < 0.0 {
-        return f32::NAN;
+    if !(value > 0.0 && value < f32::INFINITY) {
+        return if value < 0.0 { f32::NAN } else { value };
     }
 
-    if value == 0.0 || value == f32::INFINITY {
-        return value;
-    }
-
-    if value < f32::MIN_POSITIVE {
-        return square_root_f32(value * (1u64 << 48) as f32) / (1u32 << 24) as f32;
-    }
-
+    let (value, scale) = if value < f32::MIN_POSITIVE {
+        (value * (1u64 << 32) as f32, 1.0 / (1u32 << 16) as f32)
+    } else {
+        (value, 1.0)
+    };
     let mut root = f32::from_bits((value.to_bits() >> 1) + 0x1FBD_1DF5);
     let mut index = 0;
 
@@ -256,13 +250,15 @@ pub const fn square_root_f32(value: f32) -> f32 {
         index += 1;
     }
 
-    root
+    root * scale
 }
 
+#[inline]
 pub const fn power_decibels(power: f32) -> f32 {
     DECIBELS_PER_OCTAVE_F32 * log2_f32(power)
 }
 
+#[inline]
 pub const fn amplitude_decibels(amplitude: f32) -> f32 {
     2.0 * DECIBELS_PER_OCTAVE_F32 * log2_f32(amplitude)
 }
