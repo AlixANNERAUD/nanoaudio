@@ -21,6 +21,16 @@ fn decode(input: &[u8], output: &mut [i16]) -> Result<usize> {
 }
 ```
 
+## Memory
+
+The decoder keeps one decoded block, so its size is set by `MAXIMUM_BLOCK_SIZE` and `MAXIMUM_CHANNELS`: about 37 KiB with the defaults (4608 samples, stereo). Lower the block size to the one your files use (most encoders write 4096 samples). For streams of up to 16 bits per sample, the fourth parameter stores the block as `i16` and halves that buffer:
+
+```rust
+use nanoaudio_flac::FlacDecoder;
+
+let decoder = FlacDecoder::<i16, 4096, 2, i16>::new();
+```
+
 ## Seeking
 
 `FlacDecoder` implements `Seek` once it has read the metadata. Byte offsets are counted from `fLaC`. Frame headers carry their sample number, so the decoder resynchronises on the next valid frame wherever it resumes and lands exactly on the requested frame.
