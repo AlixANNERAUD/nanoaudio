@@ -195,10 +195,9 @@ impl Oscillator {
         let units = blep >> 16;
 
         self.increment = increment;
-        (self.blep, self.reciprocal) = if units == 0 {
-            (0, 0)
-        } else {
-            (blep, (1 << 30) / units)
+        (self.blep, self.reciprocal) = match (1u32 << 30).checked_div(units) {
+            Some(reciprocal) => (blep, reciprocal),
+            None => (0, 0),
         };
     }
 
@@ -344,7 +343,8 @@ mod tests {
 
         for index in 0..count {
             let phase = (index as u32).wrapping_mul(0x9E37_79B9);
-            let expected = (phase as f64 / 4_294_967_296.0 * core::f64::consts::TAU).sin() * 32_767.0;
+            let expected =
+                (phase as f64 / 4_294_967_296.0 * core::f64::consts::TAU).sin() * 32_767.0;
             worst = worst.max((sine(phase) as f64 - expected).abs());
         }
 
@@ -360,7 +360,10 @@ mod tests {
             let turns = index as f32 / 4000.0;
             let expected = (turns as f64 * core::f64::consts::TAU).sin();
 
-            assert!((sine_f32(turns) as f64 - expected).abs() < 2.0e-6, "{turns}");
+            assert!(
+                (sine_f32(turns) as f64 - expected).abs() < 2.0e-6,
+                "{turns}"
+            );
         }
     }
 
@@ -400,7 +403,12 @@ mod tests {
         let sample_rate = 48_000;
         let samples = if cfg!(miri) { 4_800 } else { 480_000 };
 
-        for waveform in [Waveform::Sine, Waveform::Square, Waveform::Saw, Waveform::Triangle] {
+        for waveform in [
+            Waveform::Sine,
+            Waveform::Square,
+            Waveform::Saw,
+            Waveform::Triangle,
+        ] {
             for note in [21u8, 45, 60, 69, 93, 105] {
                 let mut oscillator = Oscillator::new(waveform);
                 oscillator.set_increment(note_increment((note as i32) << 8, sample_rate));
@@ -438,11 +446,27 @@ mod tests {
 
     #[test]
     fn extremes_stay_in_range() {
-        let increments = [0, 1, 65_535, 65_536, 1 << 24, (1 << 31) - 1, 1 << 31, u32::MAX - 1, u32::MAX];
+        let increments = [
+            0,
+            1,
+            65_535,
+            65_536,
+            1 << 24,
+            (1 << 31) - 1,
+            1 << 31,
+            u32::MAX - 1,
+            u32::MAX,
+        ];
         let widths = [0, 1, 1 << 15, u16::MAX - 1, u16::MAX];
         let samples = if cfg!(miri) { 64 } else { 4_096 };
 
-        for waveform in [Waveform::Sine, Waveform::Square, Waveform::Saw, Waveform::Triangle, Waveform::Noise] {
+        for waveform in [
+            Waveform::Sine,
+            Waveform::Square,
+            Waveform::Saw,
+            Waveform::Triangle,
+            Waveform::Noise,
+        ] {
             for increment in increments {
                 for width in widths {
                     let mut oscillator = Oscillator::new(waveform);

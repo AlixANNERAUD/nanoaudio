@@ -124,7 +124,9 @@ fn polyblep_lowers_aliasing() {
         let reference = alias_ratio(&naive(waveform, frequency), frequency as f64);
         let actual = alias_ratio(&band_limited(waveform, frequency), frequency as f64);
 
-        println!("{waveform:?} at {frequency} Hz: naive {reference:.1} dB, PolyBLEP {actual:.1} dB");
+        println!(
+            "{waveform:?} at {frequency} Hz: naive {reference:.1} dB, PolyBLEP {actual:.1} dB"
+        );
         assert!(actual < reference - gain, "{waveform:?} {frequency}");
     }
 }

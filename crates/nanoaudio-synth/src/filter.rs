@@ -125,7 +125,12 @@ impl<R: Synthesis> Filter<R> {
     /// In [`Fixed`](nanoaudio_dsp::Fixed), the output saturates at full scale, which a strong resonance can reach.
     #[inline]
     pub fn process(&mut self, value: R::Value) -> R::Value {
-        R::filter_output(R::filter(&mut self.state, &self.coefficients, value, self.mode))
+        R::filter_output(R::filter(
+            &mut self.state,
+            &self.coefficients,
+            value,
+            self.mode,
+        ))
     }
 
     #[inline(always)]
@@ -195,17 +200,35 @@ mod tests {
     #[test]
     fn fixed_does_not_overflow_at_extremes() {
         let sample_rate = 44_100;
-        let cutoffs = [0.0, 1.0, 20.0, 200.0, 2_000.0, 11_025.0, 21_000.0, 40_000.0, f32::NAN];
+        let cutoffs = [
+            0.0,
+            1.0,
+            20.0,
+            200.0,
+            2_000.0,
+            11_025.0,
+            21_000.0,
+            40_000.0,
+            f32::NAN,
+        ];
         let samples = if cfg!(miri) { 64 } else { 8_192 };
 
-        for mode in [FilterMode::LowPass, FilterMode::BandPass, FilterMode::HighPass] {
+        for mode in [
+            FilterMode::LowPass,
+            FilterMode::BandPass,
+            FilterMode::HighPass,
+        ] {
             for cutoff in cutoffs {
                 for resonance in [-1.0, 0.0, 0.5, 1.0, 2.0] {
                     for waveform in [Waveform::Square, Waveform::Saw, Waveform::Noise] {
                         let settings = FilterSettings::new(mode, cutoff, resonance);
                         let mut filter = Filter::<Fixed>::new(settings, sample_rate);
                         let mut oscillator = Oscillator::new(waveform);
-                        let frequency = if cutoff > 0.0 { cutoff.min(20_000.0) } else { 50.0 };
+                        let frequency = if cutoff > 0.0 {
+                            cutoff.min(20_000.0)
+                        } else {
+                            50.0
+                        };
                         oscillator.set_frequency(frequency, sample_rate);
 
                         for _ in 0..samples {

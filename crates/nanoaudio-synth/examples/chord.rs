@@ -23,8 +23,18 @@ fn header(data: usize) -> [u8; 44] {
     header
 }
 
+fn write(synth: &mut Synth, output: &mut [u8]) {
+    synth
+        .volume(Volume::from_percent(25))
+        .to_channels(2)
+        .unwrap()
+        .write_bytes(output, Format::I16);
+}
+
 fn main() -> std::io::Result<()> {
-    let path = std::env::args().nth(1).unwrap_or_else(|| "chord.wav".into());
+    let path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "chord.wav".into());
     let mut synth: Synth = Synth::new(SAMPLE_RATE);
     let mut patch = Patch::new(
         Waveform::Saw,
@@ -41,19 +51,9 @@ fn main() -> std::io::Result<()> {
     let mut pcm = vec![0u8; total * 4];
     let (first, second) = pcm.split_at_mut(held * 4);
 
-    let mut pipeline = (&mut synth)
-        .volume(Volume::from_percent(25))
-        .to_channels(2)
-        .unwrap();
-    pipeline.write_bytes(first, Format::I16);
-    drop(pipeline);
-
+    write(&mut synth, first);
     synth.release_all();
-    (&mut synth)
-        .volume(Volume::from_percent(25))
-        .to_channels(2)
-        .unwrap()
-        .write_bytes(second, Format::I16);
+    write(&mut synth, second);
 
     let mut file = header(pcm.len()).to_vec();
     file.extend_from_slice(&pcm);

@@ -136,12 +136,9 @@ impl Envelope {
     /// Starts the attack from the current level, which avoids a click when a playing voice is retriggered.
     pub fn trigger(&mut self) {
         let sustain = self.sustain_level();
-        let decay = self.settings.decay;
-        self.decay_step = if decay == 0 {
-            0
-        } else {
-            (FULL - sustain) / decay
-        };
+        self.decay_step = (FULL - sustain)
+            .checked_div(self.settings.decay)
+            .unwrap_or(0);
 
         match self.settings.attack {
             0 => {
@@ -264,7 +261,11 @@ mod tests {
         assert_eq!(decay[19], 16_384);
         assert_eq!(envelope.stage(), Stage::Sustain);
 
-        assert!(run(&mut envelope, 1000).iter().all(|level| *level == 16_384));
+        assert!(
+            run(&mut envelope, 1000)
+                .iter()
+                .all(|level| *level == 16_384)
+        );
 
         envelope.release();
         let release = run(&mut envelope, 30);
@@ -312,7 +313,10 @@ mod tests {
 
         let mut envelope = Envelope::new(Adsr::new(4, 0, 0x4000, 0));
         envelope.trigger();
-        assert_eq!(run(&mut envelope, 5), [8_191, 16_383, 24_575, 32_767, 8_192]);
+        assert_eq!(
+            run(&mut envelope, 5),
+            [8_191, 16_383, 24_575, 32_767, 8_192]
+        );
     }
 
     #[test]
@@ -358,6 +362,9 @@ mod tests {
             Adsr::from_millis(10, 1, 7, 1000, 44_100),
             Adsr::new(441, 44, 7, 44_100)
         );
-        assert_eq!(Adsr::from_millis(u32::MAX, 0, 0, 0, u32::MAX).attack, u32::MAX);
+        assert_eq!(
+            Adsr::from_millis(u32::MAX, 0, 0, 0, u32::MAX).attack,
+            u32::MAX
+        );
     }
 }

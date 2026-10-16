@@ -62,7 +62,7 @@ impl Scaled {
     const MAXIMUM_SHIFT: u32 = 24;
 
     fn new(value: f32) -> Self {
-        if !(value > 0.0) {
+        if value.is_nan() || value <= 0.0 {
             return Self::default();
         }
 
@@ -192,7 +192,18 @@ mod tests {
 
     #[test]
     fn split_multiply_matches_wide_multiply() {
-        let values = [i32::MIN, i32::MIN + 1, -65_537, -32_768, -1, 0, 1, 32_767, 65_536, i32::MAX];
+        let values = [
+            i32::MIN,
+            i32::MIN + 1,
+            -65_537,
+            -32_768,
+            -1,
+            0,
+            1,
+            32_767,
+            65_536,
+            i32::MAX,
+        ];
         let coefficients = [-32_767, -16_384, -1, 0, 1, 2, 16_383, 32_767];
 
         for value in values {
@@ -214,7 +225,10 @@ mod tests {
             let scaled = Scaled::new(value);
             let actual = scaled.mantissa as f32 / (1u64 << (15 + scaled.shift)) as f32;
 
-            assert!((actual - value).abs() <= value / 16_384.0, "{value} {actual}");
+            assert!(
+                (actual - value).abs() <= value / 16_384.0,
+                "{value} {actual}"
+            );
         }
 
         assert_eq!(Scaled::new(0.0), Scaled::default());

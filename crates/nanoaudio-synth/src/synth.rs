@@ -51,7 +51,9 @@ impl<R: Synthesis, const VOICES: usize> Synth<R, VOICES> {
             voice.is_active() && voice.channel() == channel && voice.note() == note
         });
 
-        if let Some(index) = playing.or_else(|| self.voices.iter().position(|voice| !voice.is_active())) {
+        if let Some(index) =
+            playing.or_else(|| self.voices.iter().position(|voice| !voice.is_active()))
+        {
             return index;
         }
 
@@ -244,7 +246,10 @@ mod tests {
 
             let (rendered, streamed) = render_both::<Float>(&patch, samples);
             assert!(
-                rendered.iter().zip(&streamed).all(|(a, b)| a.to_bits() == b.to_bits()),
+                rendered
+                    .iter()
+                    .zip(&streamed)
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
                 "{patch:?}"
             );
         }
@@ -264,7 +269,11 @@ mod tests {
             fixed_synth.render(&mut fixed);
             float_synth.render(&mut float);
 
-            let tolerance = if patch.filter.is_some() { 2.0e-4 } else { 1.0e-6 };
+            let tolerance = if patch.filter.is_some() {
+                2.0e-4
+            } else {
+                1.0e-6
+            };
             let worst = fixed
                 .iter()
                 .zip(&float)

@@ -13,8 +13,10 @@ keywords = ["audio", "no-std", "embedded", "synthesizer", "oscillator"]
 categories = ["multimedia::audio", "embedded", "no-std", "no-std::no-alloc"]
 
 [dependencies]
-nanoaudio-core.workspace = true
 nanoaudio-dsp.workspace = true
+
+[dev-dependencies]
+nanoaudio-core.workspace = true
 
 [lints]
 workspace = true

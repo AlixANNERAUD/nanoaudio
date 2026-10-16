@@ -184,7 +184,8 @@ impl<R: Synthesis> Voice<R> {
         let amplitude = (level * self.gain) >> 15;
 
         if self.filtered {
-            self.filter.process_scaled(R::from_oscillator(sample), amplitude)
+            self.filter
+                .process_scaled(R::from_oscillator(sample), amplitude)
         } else {
             R::amplify_oscillator(sample, amplitude)
         }
