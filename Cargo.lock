@@ -419,6 +419,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nanoaudio-ogg"
+version = "0.1.0"
+dependencies = [
+ "nanoaudio-core",
+]
+
+[[package]]
 name = "nanoaudio-qoa"
 version = "0.1.1"
 dependencies = [
