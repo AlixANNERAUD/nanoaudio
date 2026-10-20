@@ -71,11 +71,11 @@ fn paginate(packets: &[Vec<u8>], segments_per_page: usize, serial: u32) -> Vec<u
             .iter()
             .filter(|(_, bytes)| bytes.len() < 255)
             .map(|(index, _)| *index as u64 * 100)
-            .last()
+            .next_back()
             .unwrap_or(NO_GRANULE_POSITION);
-        let flags = u8::from(continued) * CONTINUED
-            | u8::from(sequence == 0) * BEGINNING_OF_STREAM
-            | u8::from(last) * END_OF_STREAM;
+        let flags = (u8::from(continued) * CONTINUED)
+            | (u8::from(sequence == 0) * BEGINNING_OF_STREAM)
+            | (u8::from(last) * END_OF_STREAM);
 
         stream.extend(page(
             flags,

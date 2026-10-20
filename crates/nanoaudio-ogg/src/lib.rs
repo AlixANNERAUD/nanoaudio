@@ -555,7 +555,7 @@ impl OggPacketReader {
             length,
             granule_position: match self.granule_position {
                 NO_GRANULE_POSITION => None,
-                position => Some(position).filter(|_| last),
+                position => last.then_some(position),
             },
             end_of_stream: last && self.end_of_stream,
         }))
