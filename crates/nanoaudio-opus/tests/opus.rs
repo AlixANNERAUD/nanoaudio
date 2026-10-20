@@ -74,8 +74,8 @@ fn hybrid_matches_libopus() {
         HYBRID,
         include_bytes!("data/mono_hybrid_opus_decoded.bin"),
         1,
-        30,
-        75.0,
+        1,
+        80.0,
     );
 }
 
@@ -85,8 +85,8 @@ fn mono_packets_in_stereo_stream_match_libopus() {
         LOW_BITRATE,
         include_bytes!("data/stereo_low_bitrate_opus_decoded.bin"),
         2,
-        2,
-        90.0,
+        0,
+        110.0,
     );
 }
 
@@ -202,9 +202,10 @@ fn header_information() {
 
 #[test]
 fn const_decoder_with_short_packets() {
-    static mut DECODER: OpusDecoder<i16, 960> = OpusDecoder::new();
+    static DECODER: std::sync::Mutex<OpusDecoder<i16, 960>> =
+        std::sync::Mutex::new(OpusDecoder::new());
 
-    let decoder = unsafe { &mut *(&raw mut DECODER) };
+    let mut decoder = DECODER.lock().unwrap();
     let mut output = vec![0; 4_000];
     let mut produced = Vec::new();
     let mut input = STEREO;

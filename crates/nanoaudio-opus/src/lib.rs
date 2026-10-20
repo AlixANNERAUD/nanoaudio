@@ -119,6 +119,17 @@ fn packet_frames(packet: &[u8]) -> Option<u64> {
     (frames != 0 && frames <= OPUS_DEFAULT_MAXIMUM_PACKET_FRAMES as u64).then_some(frames)
 }
 
+fn own_frames(page: &OggPage) -> u64 {
+    let count = page.packets().count();
+
+    page.packets()
+        .enumerate()
+        .filter(|&(index, _)| !(index == 0 && page.is_continued()))
+        .filter(|&(index, _)| !(index + 1 == count && page.has_unfinished_packet()))
+        .map(|(_, packet)| packet_frames(packet).unwrap_or(0))
+        .sum()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
     Head,
@@ -144,6 +155,8 @@ struct Search {
     bisect: bool,
     stretch: u32,
     rounds: u32,
+    hint: Option<u64>,
+    high_page: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -203,6 +216,8 @@ impl Status {
                 bisect: false,
                 stretch: 0,
                 rounds: 0,
+                hint: None,
+                high_page: UNKNOWN,
             },
             error: None,
         }
@@ -301,7 +316,7 @@ impl<S: Sample, const MAXIMUM_PACKET_FRAMES: usize> OpusDecoder<S, MAXIMUM_PACKE
     }
 
     fn start(&self) -> Option<u64> {
-        Some(self.status.first? + u64::from(self.status.head?.pre_skip))
+        Some(self.status.first.unwrap_or(0) + u64::from(self.status.head?.pre_skip))
     }
 
     fn channels(&self) -> usize {
@@ -375,11 +390,13 @@ impl<S: Sample, const MAXIMUM_PACKET_FRAMES: usize> OpusDecoder<S, MAXIMUM_PACKE
         }
 
         if status.position.is_some() && !lost {
-            status.last_page = Some(Point {
-                byte: start,
-                end: start + page.size() as u64,
-                granule,
-            });
+            if !page.is_end_of_stream() {
+                status.last_page = Some(Point {
+                    byte: start,
+                    end: start + page.size() as u64,
+                    granule,
+                });
+            }
 
             return;
         }
@@ -486,6 +503,7 @@ impl<S: Sample, const MAXIMUM_PACKET_FRAMES: usize> OpusDecoder<S, MAXIMUM_PACKE
                 }
 
                 self.status.state = State::Audio;
+                self.status.audio_offset = Some(self.status.offset);
             }
             _ => self.decode_packet(packet)?,
         }
@@ -610,7 +628,9 @@ impl<S: Sample, const MAXIMUM_PACKET_FRAMES: usize> OpusDecoder<S, MAXIMUM_PACKE
         let high = search.high;
         let base = low.end.max(low.byte);
         let distance = u128::from(search.aim - low.granule);
-        let probe = if high.byte == UNKNOWN {
+        let probe = if let Some(hint) = search.hint.take() {
+            u128::from(hint)
+        } else if high.byte == UNKNOWN {
             let (bytes, granules) = match low.granule > first {
                 true => (low.byte - audio_offset, low.granule - first),
                 false => (FALLBACK_BYTES_PER_SECOND, u64::from(OPUS_SAMPLE_RATE)),
@@ -686,12 +706,19 @@ impl<S: Sample, const MAXIMUM_PACKET_FRAMES: usize> OpusDecoder<S, MAXIMUM_PACKE
         }
 
         let granule = granule.unwrap_or(0);
+        let begin = granule.saturating_sub(own_frames(&page));
 
-        if granule > search.aim {
+        if begin > search.aim || page.is_end_of_stream() {
+            let next =
+                start != search.high_page && begin.saturating_sub(search.aim) <= granule - begin;
+
+            self.status.search.high_page = start;
+            self.status.search.hint = next.then(|| start.saturating_sub(2 * page.size() as u64));
+
             let high = Point {
                 byte: search.probe,
                 end: search.probe,
-                granule,
+                granule: begin,
             };
 
             return Err(self.narrow(search.low, high));
@@ -703,7 +730,7 @@ impl<S: Sample, const MAXIMUM_PACKET_FRAMES: usize> OpusDecoder<S, MAXIMUM_PACKE
             granule,
         };
 
-        if self.close(low, search.high) {
+        if granule >= search.aim || self.close(low, search.high) {
             progress.consumed += index;
             self.land(start);
 
@@ -883,6 +910,8 @@ impl<S: Sample, const MAXIMUM_PACKET_FRAMES: usize> Seek for OpusDecoder<S, MAXI
             bisect: false,
             stretch: 0,
             rounds: 0,
+            hint: None,
+            high_page: UNKNOWN,
         };
 
         if aim <= low.granule || self.close(low, high) {
