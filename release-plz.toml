@@ -34,7 +34,7 @@ commit_parsers = [
 [[package]]
 name = "nanoaudio"
 changelog_path = "./CHANGELOG.md"
-changelog_include = ["nanoaudio-core", "nanoaudio-buffer", "nanoaudio-dsp", "nanoaudio-analysis", "nanoaudio-synth", "nanoaudio-g711", "nanoaudio-adpcm", "nanoaudio-qoa", "nanoaudio-flac", "nanoaudio-g722", "nanoaudio-sbc", "nanoaudio-mp3", "nanoaudio-wav", "nanoaudio-aiff", "nanoaudio-metadata", "nanoaudio-cpal", "nanoaudio-web"]
+changelog_include = ["nanoaudio-core", "nanoaudio-buffer", "nanoaudio-dsp", "nanoaudio-analysis", "nanoaudio-synth", "nanoaudio-g711", "nanoaudio-adpcm", "nanoaudio-qoa", "nanoaudio-flac", "nanoaudio-g722", "nanoaudio-sbc", "nanoaudio-mp3", "nanoaudio-wav", "nanoaudio-aiff", "nanoaudio-metadata", "nanoaudio-ogg", "nanoaudio-opus", "nanoaudio-cpal", "nanoaudio-web"]
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
 git_release_enable = true
@@ -141,6 +141,20 @@ git_release_enable = false
 [[package]]
 name = "nanoaudio-metadata"
 changelog_path = "./crates/nanoaudio-metadata/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "nanoaudio-ogg"
+changelog_path = "./crates/nanoaudio-ogg/CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "nanoaudio-opus"
+changelog_path = "./crates/nanoaudio-opus/CHANGELOG.md"
 git_tag_enable = true
 git_tag_name = "{{ package }}-v{{ version }}"
 git_release_enable = false

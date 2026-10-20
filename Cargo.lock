@@ -323,6 +323,8 @@ dependencies = [
  "nanoaudio-g722",
  "nanoaudio-metadata",
  "nanoaudio-mp3",
+ "nanoaudio-ogg",
+ "nanoaudio-opus",
  "nanoaudio-qoa",
  "nanoaudio-sbc",
  "nanoaudio-synth",

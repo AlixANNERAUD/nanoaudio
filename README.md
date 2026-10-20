@@ -17,8 +17,8 @@ nanoaudio does not own a runtime or talk to hardware: it gives your driver, mixe
 - **Single-pass pipelines.** Chain format conversion, channel mapping, volume and mixing: the compiler fuses the chain into one loop, with no intermediate buffers, up to 2.9 times faster than running each step on its own.
 - **Integer or floating point, your call.** Processing runs in fixed point on cores without an FPU and in `f32` on cores with one, chosen from the target at build time, overridable with a feature, or selectable at run time.
 - **Made for DMA and audio callbacks.** A lock-free single-producer/single-consumer ring buffer hands out contiguous slices, and every operation is synchronous and non-blocking: it processes what fits and reports how much it did.
-- **Codecs included.** WAV (PCM, A-law, µ-law, IMA ADPCM), G.711 and IMA ADPCM encoders and decoders, bit-exact with reference implementations, and MP3 decoding behind a feature.
-- **Small and dependency-free.** No third-party dependency by default; MP3 support adds [`nanomp3-core`](https://crates.io/crates/nanomp3-core), itself `no_std` and free of `unsafe`.
+- **Codecs included.** WAV (PCM, A-law, µ-law, IMA ADPCM), G.711 and IMA ADPCM encoders and decoders, bit-exact with reference implementations, and MP3 and Opus decoding behind features.
+- **Small and dependency-free.** No third-party dependency by default; MP3 support adds [`nanomp3-core`](https://crates.io/crates/nanomp3-core), itself `no_std` and free of `unsafe`, and Opus support adds [`opus-rs`](https://crates.io/crates/opus-rs) and [`libm`](https://crates.io/crates/libm).
 - **Checked.** Tested on every combination of features, run under Miri, and built for Cortex-M0, Cortex-M4F and RISC-V in CI.
 
 ## Installation
@@ -34,7 +34,7 @@ or in `Cargo.toml`:
 nanoaudio = "0.1"
 ```
 
-Every feature except MP3, `analysis-fft` and `synth` is enabled by default. With `default-features = false`, only the types from `nanoaudio-core` remain, and you pick what you need:
+Every feature except MP3, Ogg, Opus, `analysis-fft` and `synth` is enabled by default. With `default-features = false`, only the types from `nanoaudio-core` remain, and you pick what you need:
 
 | Feature        | Enables                                                                                                   |
 | -------------- | --------------------------------------------------------------------------------------------------------- |
@@ -55,10 +55,12 @@ Every feature except MP3, `analysis-fft` and `synth` is enabled by default. With
 | `mp3`          | `codec::Mp3Decoder`, MP3 decoding with [`nanomp3-core`](https://crates.io/crates/nanomp3-core). Not default. |
 | `mp3-simd`     | SIMD in the MP3 decoder, already on with `mp3`. Implies `mp3`.                                             |
 | `mpeg-layer12` | MPEG Layer I and II (MP1, MP2) decoding. Implies `mp3`.                                                    |
+| `ogg`          | The `ogg` module, an Ogg page and packet reader (`nanoaudio-ogg`). Not default.                            |
+| `opus`         | `codec::OpusDecoder`, Ogg Opus decoding with [`opus-rs`](https://crates.io/crates/opus-rs) (`nanoaudio-opus`). Implies `ogg`. Not default. |
 | `fixed`        | Forces fixed-point processing by default. See [Integer or Floating Point](#integer-or-floating-point).    |
 | `float`        | Forces floating-point processing by default. If `fixed` is also enabled, `fixed` takes precedence.        |
 
-`nanoaudio` re-exports a set of smaller crates, one per codec or building block, which can also be used on their own: [`nanoaudio-core`](https://crates.io/crates/nanoaudio-core), [`nanoaudio-dsp`](https://crates.io/crates/nanoaudio-dsp), [`nanoaudio-analysis`](https://crates.io/crates/nanoaudio-analysis), [`nanoaudio-synth`](https://crates.io/crates/nanoaudio-synth), [`nanoaudio-buffer`](https://crates.io/crates/nanoaudio-buffer), [`nanoaudio-g711`](https://crates.io/crates/nanoaudio-g711), [`nanoaudio-adpcm`](https://crates.io/crates/nanoaudio-adpcm), [`nanoaudio-qoa`](https://crates.io/crates/nanoaudio-qoa), [`nanoaudio-flac`](https://crates.io/crates/nanoaudio-flac), [`nanoaudio-g722`](https://crates.io/crates/nanoaudio-g722), [`nanoaudio-sbc`](https://crates.io/crates/nanoaudio-sbc), [`nanoaudio-mp3`](https://crates.io/crates/nanoaudio-mp3), [`nanoaudio-wav`](https://crates.io/crates/nanoaudio-wav), [`nanoaudio-aiff`](https://crates.io/crates/nanoaudio-aiff) and [`nanoaudio-metadata`](https://crates.io/crates/nanoaudio-metadata).
+`nanoaudio` re-exports a set of smaller crates, one per codec or building block, which can also be used on their own: [`nanoaudio-core`](https://crates.io/crates/nanoaudio-core), [`nanoaudio-dsp`](https://crates.io/crates/nanoaudio-dsp), [`nanoaudio-analysis`](https://crates.io/crates/nanoaudio-analysis), [`nanoaudio-synth`](https://crates.io/crates/nanoaudio-synth), [`nanoaudio-buffer`](https://crates.io/crates/nanoaudio-buffer), [`nanoaudio-g711`](https://crates.io/crates/nanoaudio-g711), [`nanoaudio-adpcm`](https://crates.io/crates/nanoaudio-adpcm), [`nanoaudio-qoa`](https://crates.io/crates/nanoaudio-qoa), [`nanoaudio-flac`](https://crates.io/crates/nanoaudio-flac), [`nanoaudio-g722`](https://crates.io/crates/nanoaudio-g722), [`nanoaudio-sbc`](https://crates.io/crates/nanoaudio-sbc), [`nanoaudio-mp3`](https://crates.io/crates/nanoaudio-mp3), [`nanoaudio-ogg`](https://crates.io/crates/nanoaudio-ogg), [`nanoaudio-opus`](https://crates.io/crates/nanoaudio-opus), [`nanoaudio-wav`](https://crates.io/crates/nanoaudio-wav), [`nanoaudio-aiff`](https://crates.io/crates/nanoaudio-aiff) and [`nanoaudio-metadata`](https://crates.io/crates/nanoaudio-metadata).
 
 ## Quick Start
 
@@ -133,6 +135,7 @@ fn decode_wav(file: &[u8]) -> Result<Vec<i16>, Error> {
 | G.711 A-law / µ-law | `G711`, `WavDecoder`  |         | a few bytes                                               | Encoder and decoder, bit-exact with the reference implementation  |
 | IMA ADPCM           | `ImaAdpcm`, `WavDecoder` |      | 40 bytes                                                  | Encoder and decoder, WAV block layout, bit-exact sample codec     |
 | MP3                 | `Mp3Decoder`          | `mp3`   | ~23 KiB, plus 4 KiB of input and one frame of output      | MPEG-1/2/2.5 Layer III, decodes in floating point                  |
+| Opus                | `OpusDecoder`         | `opus`  | ~190 to 230 KiB, plus one Ogg page of input               | Ogg Opus, mono and stereo, gapless, decodes in floating point      |
 
 ## Choosing a Codec
 
@@ -146,12 +149,14 @@ fn decode_wav(file: &[u8]) -> Result<Vec<i16>, Error> {
 | SBC       | lossy    | 60 kbit/s (mSBC) to 330 kbit/s (A2DP)               | 1.9 KiB                                   | 8.4 KiB          | fast           | Bluetooth                               |
 | FLAC      | lossless | 50 to 70 % of PCM, by material                      | ~32 KiB for 16-bit stereo, `i16` blocks   | 13.8 KiB         | moderate       | Lossless playback                       |
 | MP3       | lossy    | 128 kbit/s                                          | ~32 KiB, less with a smaller input window | 46.7 KiB         | moderate       | Music files                             |
+| Opus      | lossy    | 6 to 510 kbit/s, 96 to 128 for music                | ~205 KiB with 20 ms packets               | 129.7 KiB        | slow           | Voice and music on large MCUs with an FPU |
 
 - For the lowest CPU and flash use G.711 at 8 kHz, or IMA ADPCM at higher sample rates.
 - On a microcontroller, QOA gives the best quality per byte: about the same signal-to-noise ratio as IMA ADPCM at 80 % of the size, in integer arithmetic and under 1 KiB of RAM.
 - For lossless audio use FLAC, if you can spare around 32 KiB of RAM for 16-bit files (`i16` blocks) or 50 KiB for deeper ones; set its maximum block size to the one your files use.
 - For Bluetooth use SBC (A2DP, or mSBC for hands-free), and for wideband voice over IP use G.722.
 - For music files use MP3, preferably on a core with an FPU, since it decodes in floating point.
+- Opus gives the best quality at low bitrates, for voice as well as music, but needs about 200 KiB of RAM and 80 million instructions per second for 48 kHz stereo on a Cortex-M4F: use it on large MCUs or when the files are already Opus.
 - If the device encodes, prefer G.711 or IMA ADPCM: the MS ADPCM and QOA encoders search for the best parameters and take 10 to 30 times longer than their decoders.
 
 Flash is `.text` and `.rodata` for decoding only at `opt-level = "s"`, and RAM includes the decoder and the smallest input and output buffers on a 32-bit target. The full numbers, for more targets and configurations, are in [docs/benchmarks.md](https://github.com/AlixANNERAUD/nanoaudio/blob/main/docs/benchmarks.md).

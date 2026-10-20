@@ -13,7 +13,7 @@ keywords = ["audio", "no-std", "embedded", "pcm", "mixer"]
 categories = ["multimedia::audio", "embedded", "no-std", "no-std::no-alloc", "multimedia::encoding"]
 
 [package.metadata.docs.rs]
-features = ["mp3", "synth"]
+features = ["mp3", "synth", "opus"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
@@ -32,6 +32,8 @@ nanoaudio-mp3 = { workspace = true, optional = true }
 nanoaudio-wav = { workspace = true, optional = true }
 nanoaudio-aiff = { workspace = true, optional = true }
 nanoaudio-metadata = { workspace = true, optional = true, features = ["core"] }
+nanoaudio-ogg = { workspace = true, optional = true }
+nanoaudio-opus = { workspace = true, optional = true }
 
 [features]
 default = ["buffer", "dsp", "analysis", "g711", "adpcm", "qoa", "flac", "g722", "sbc", "wav", "aiff", "metadata"]
@@ -54,6 +56,8 @@ metadata = ["dep:nanoaudio-metadata"]
 mp3 = ["dep:nanoaudio-mp3"]
 mp3-simd = ["mp3", "nanoaudio-mp3/simd"]
 mpeg-layer12 = ["mp3", "nanoaudio-mp3/layer12"]
+ogg = ["dep:nanoaudio-ogg"]
+opus = ["ogg", "dep:nanoaudio-opus"]
 
 [lints]
 workspace = true

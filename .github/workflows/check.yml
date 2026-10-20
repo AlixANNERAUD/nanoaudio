@@ -183,6 +183,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_THUMBV6M_NONE_EABI_RUSTFLAGS: --cfg portable_atomic_unsafe_assume_single_core
+      CARGO_TARGET_RISCV32IMC_UNKNOWN_NONE_ELF_RUSTFLAGS: --cfg portable_atomic_unsafe_assume_single_core
     steps:
       - uses: actions/checkout@v4
 
@@ -219,6 +222,9 @@ jobs:
           - thumbv7em-none-eabihf
           - riscv32imc-unknown-none-elf
           - riscv32imafc-unknown-none-elf
+    env:
+      CARGO_TARGET_THUMBV6M_NONE_EABI_RUSTFLAGS: --cfg portable_atomic_unsafe_assume_single_core
+      CARGO_TARGET_RISCV32IMC_UNKNOWN_NONE_ELF_RUSTFLAGS: --cfg portable_atomic_unsafe_assume_single_core
     steps:
       - uses: actions/checkout@v4
 
@@ -338,6 +344,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.bench == 'true'
     runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_THUMBV6M_NONE_EABI_RUSTFLAGS: --cfg portable_atomic_unsafe_assume_single_core
+      CARGO_TARGET_RISCV32IMC_UNKNOWN_NONE_ELF_RUSTFLAGS: --cfg portable_atomic_unsafe_assume_single_core
     steps:
       - uses: actions/checkout@v4
 
