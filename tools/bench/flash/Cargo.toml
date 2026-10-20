@@ -16,6 +16,7 @@ nanoaudio-flac = { path = "../../../crates/nanoaudio-flac" }
 nanoaudio-g722 = { path = "../../../crates/nanoaudio-g722" }
 nanoaudio-sbc = { path = "../../../crates/nanoaudio-sbc" }
 nanoaudio-mp3 = { path = "../../../crates/nanoaudio-mp3", default-features = false }
+nanoaudio-opus = { path = "../../../crates/nanoaudio-opus" }
 
 [profile.release]
 codegen-units = 1

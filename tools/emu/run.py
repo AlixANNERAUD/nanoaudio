@@ -145,6 +145,8 @@ CASES = [
     Case(15, "codec", "SBC decode, mSBC", "frame (120)", 120, 16_000, 1, ("file", "nanoaudio-sbc", "msbc.sbc", 57 * 8), reference=("nanoaudio-sbc", "msbc.pcm")),
     Case(16, "codec", "FLAC decode, 44.1 kHz stereo 16-bit", "block (4096)", 4_096, 44_100, 2, ("file", "nanoaudio-flac", "flac_stereo_16.flac", None), reference=("nanoaudio-flac", "flac_stereo_16.bin")),
     Case(17, "codec", "MP3 decode, 44.1 kHz stereo 128 kbit/s", "frame (1152)", 1_152, 44_100, 2, ("mp3", "nanoaudio-mp3", "gapless_cbr.mp3", 6)),
+    Case(18, "codec", "Opus decode, 48 kHz stereo CELT", "frame (960)", 960, 48_000, 2, ("file", "nanoaudio-opus", "stereo_440_1000.opus", None), reference=("nanoaudio-opus", "stereo_440_1000_opus_decoded.bin")),
+    Case(19, "codec", "Opus decode, 48 kHz mono hybrid", "frame (960)", 960, 48_000, 1, ("file", "nanoaudio-opus", "mono_hybrid.opus", None), reference=("nanoaudio-opus", "mono_hybrid_opus_decoded.bin")),
     Case(32, "dsp", "Convert i16 to f32", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
     Case(33, "dsp", "Convert f32 to i16, dithered", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
     Case(34, "dsp", "Volume, fixed", "frame", 1, 44_100, 2, ("signal", 44_100, 2, 1_024)),
@@ -211,6 +213,9 @@ def readable(name):
 
 def build(targets, opt_level):
     environment = dict(os.environ, CARGO_PROFILE_RELEASE_OPT_LEVEL=opt_level)
+    for triple in ("thumbv6m-none-eabi", "riscv32imc-unknown-none-elf"):
+        name = "CARGO_TARGET_" + triple.upper().replace("-", "_") + "_RUSTFLAGS"
+        environment.setdefault(name, "--cfg portable_atomic_unsafe_assume_single_core")
     for target in targets:
         subprocess.run(
             [

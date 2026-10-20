@@ -7,6 +7,8 @@ use nanoaudio_flac::{FlacBlockSample, FlacDecoder};
 use nanoaudio_g711::{G711, Law};
 use nanoaudio_g722::{G722BitRate, G722Decoder, G722Encoder};
 use nanoaudio_mp3::Mp3Decoder;
+use nanoaudio_ogg::{OGG_MAXIMUM_PAGE_SIZE, OggPage};
+use nanoaudio_opus::OpusDecoder;
 use nanoaudio_qoa::{QoaDecoder, QoaEncoder};
 use nanoaudio_sbc::{SbcDecoder, SbcEncoder, SbcParameters};
 
@@ -103,6 +105,20 @@ fn flac<const BLOCK: usize, const CHANNELS: usize, B: FlacBlockSample>(
     )
 }
 
+fn largest_page(file: Option<&[u8]>) -> usize {
+    let Some(mut file) = file else {
+        return OGG_MAXIMUM_PAGE_SIZE;
+    };
+    let mut largest = 0;
+
+    while let Ok(page) = OggPage::parse(file) {
+        largest = largest.max(page.size());
+        file = &file[page.size()..];
+    }
+
+    largest
+}
+
 pub fn entries(data: Option<&Path>) -> Vec<Entry> {
     let flac_file = data.and_then(|data| std::fs::read(data.join("signal.flac")).ok());
     let flac_file = flac_file.as_deref();
@@ -122,6 +138,10 @@ pub fn entries(data: Option<&Path>) -> Vec<Entry> {
     let msbc = SbcEncoder::new(SbcParameters::MSBC).unwrap();
     let sbc = SbcEncoder::new(SbcParameters::HIGH_QUALITY).unwrap();
     let mp3 = Mp3Decoder::<i16>::new();
+    let opus_file = data.and_then(|data| std::fs::read(data.join("signal.opus")).ok());
+    let opus_page = largest_page(opus_file.as_deref());
+    let opus = Box::new(OpusDecoder::<i16>::new());
+    let opus_short = Box::new(OpusDecoder::<i16, 960>::new());
 
     vec![
         decoder("G.711", "8 kHz mono", &g711, 1),
@@ -190,5 +210,7 @@ pub fn entries(data: Option<&Path>) -> Vec<Entry> {
         encoder("SBC", "mSBC", &msbc),
         encoder("SBC", "44.1 kHz joint stereo, bitpool 53", &sbc),
         decoder("MP3", "default input window", &mp3, mp3.minimum_input()),
+        decoder("Opus", "packets up to 120 ms", &*opus, opus_page),
+        decoder("Opus", "packets up to 20 ms", &*opus_short, opus_page),
     ]
 }

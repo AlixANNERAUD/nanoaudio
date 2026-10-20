@@ -19,6 +19,7 @@ use nanoaudio_flac::FlacDecoder;
 use nanoaudio_g711::{G711, Law};
 use nanoaudio_g722::{G722BitRate, G722Decoder, G722Encoder};
 use nanoaudio_mp3::Mp3Decoder;
+use nanoaudio_opus::OpusDecoder;
 use nanoaudio_qoa::{QoaDecoder, QoaEncoder};
 use nanoaudio_sbc::{SbcDecoder, SbcEncoder, SbcParameters};
 use nanoaudio_synth::{Adsr, FilterSettings, Patch, Synth, Synthesis, Waveform};
@@ -33,6 +34,8 @@ const BANDS: [f32; 10] = [
 
 #[repr(C, align(8))]
 pub struct Buffer<const SIZE: usize>([u8; SIZE]);
+
+static mut OPUS: OpusDecoder<i16, 960> = OpusDecoder::new();
 
 #[unsafe(no_mangle)]
 pub static mut CASE: u32 = 0;
@@ -94,6 +97,10 @@ fn scratch_floats() -> &'static mut [f32] {
 }
 
 fn decode<D: Decoder<Sample = i16>>(mut decoder: D) -> usize {
+    decode_in(&mut decoder)
+}
+
+fn decode_in<D: Decoder<Sample = i16>>(decoder: &mut D) -> usize {
     let input = input();
     let output = output_samples();
     let mut consumed = 0;
@@ -356,6 +363,7 @@ fn run(case: u32) -> usize {
         15 => decode(SbcDecoder::new()),
         16 => decode(FlacDecoder::<i16>::new()),
         17 => decode(Mp3Decoder::<i16>::new()),
+        18 | 19 => decode_in(unsafe { &mut *(&raw mut OPUS) }),
         32 => {
             let input = input_samples();
             let floats = &mut scratch_floats()[..input.len()];

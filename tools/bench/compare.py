@@ -15,6 +15,8 @@ EMU = run.ROOT / "tools" / "emu"
 EMU_CASES = [
     ("mp3 decode", "MP3 decode, 44.1 kHz stereo 128 kbit/s", "nanoaudio-mp3", "MP3 decode, 128 kbit/s", "frame (1152)"),
     ("mp3 decode", "MP3 decode, nanomp3-core frame decoder", "nanomp3-core 0.2", "MP3 decode, 128 kbit/s", "frame (1152)"),
+    ("opus decode", "Opus decode, 48 kHz stereo CELT", "nanoaudio-opus on opus-rs 0.1", "Opus decode, 48 kHz stereo CELT", "frame (960)"),
+    ("opus decode", "Opus decode, 48 kHz mono hybrid", "nanoaudio-opus on opus-rs 0.1", "Opus decode, 48 kHz mono hybrid", "frame (960)"),
     ("spectrum, 1024", "Spectrum, 1024 points, float", "nanoaudio-analysis `Spectrum`, `Float`", "Spectrum, 1024 points", "block (1024)"),
     ("spectrum, 1024", "Spectrum, 1024 points, microfft alone", "microfft 0.6 alone, same window and power", "Spectrum, 1024 points", "block (1024)"),
 ]
@@ -208,7 +210,7 @@ def write(info, notes, results, counts, seconds, arguments, host):
     add("### Microcontrollers")
     add("")
     if counts:
-        add("Instructions per unit from `tools/emu`, for the other crates that build for these targets on stable Rust. nanomp3-core is the frame decoder inside nanoaudio-mp3, and microfft the FFT inside `Spectrum` with `Float`: the difference is what nanoaudio adds around them.")
+        add("Instructions per unit from `tools/emu`, for the other crates that build for these targets on stable Rust. nanomp3-core is the frame decoder inside nanoaudio-mp3, opus-rs the decoder inside nanoaudio-opus, and microfft the FFT inside `Spectrum` with `Float`: the difference is what nanoaudio adds around them.")
         add("")
         targets = [label for label in ["M0+", "M4F", "M33F", "RV32IMC"] if any(label in row for row in counts.values())]
         rows = []
