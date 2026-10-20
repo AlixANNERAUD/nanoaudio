@@ -207,7 +207,12 @@ fn reads_packets_spanning_pages() {
     for segments in [1, 2, 3, 255] {
         let stream = paginate(&packets, segments, 9);
 
-        for chunk in [1, 7, stream.len()] {
+        let chunks = match cfg!(miri) {
+            true => [97, 97, stream.len()],
+            false => [1, 7, stream.len()],
+        };
+
+        for chunk in chunks {
             let (collected, result) = collect(&stream, chunk, &mut storage);
 
             assert_eq!(result, Ok(()));
@@ -298,7 +303,7 @@ fn reports_junk_and_bad_pages_as_lost() {
     junk.extend_from_slice(b"OgOggSjunk");
     junk.extend_from_slice(&stream[first..]);
 
-    let (collected, result) = collect(&junk, 5, &mut [0; 1024]);
+    let (collected, result) = collect(&junk, 13, &mut [0; 1024]);
 
     assert_eq!(result, Ok(()));
     assert_eq!(collected.lost, 1);
