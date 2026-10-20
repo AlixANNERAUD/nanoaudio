@@ -21,6 +21,8 @@ pub use nanoaudio_buffer::*;
 pub use nanoaudio_dsp::*;
 #[cfg(feature = "metadata")]
 pub use nanoaudio_metadata as metadata;
+#[cfg(feature = "ogg")]
+pub use nanoaudio_ogg as ogg;
 #[cfg(feature = "synth")]
 pub use nanoaudio_synth as synth;
 #[cfg(feature = "wav")]
@@ -42,6 +44,8 @@ pub mod codec {
     pub use nanoaudio_g722::*;
     #[cfg(feature = "mp3")]
     pub use nanoaudio_mp3::*;
+    #[cfg(feature = "opus")]
+    pub use nanoaudio_opus::*;
     #[cfg(feature = "qoa")]
     pub use nanoaudio_qoa::*;
     #[cfg(feature = "sbc")]

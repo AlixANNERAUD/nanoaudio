@@ -25,10 +25,14 @@ nanoaudio-mp3 = { version = "0.1.1", path = "crates/nanoaudio-mp3" }
 nanoaudio-wav = { version = "0.1.2", path = "crates/nanoaudio-wav" }
 nanoaudio-aiff = { version = "0.1.2", path = "crates/nanoaudio-aiff" }
 nanoaudio-metadata = { version = "0.1.1", path = "crates/nanoaudio-metadata" }
+nanoaudio-ogg = { version = "0.1.0", path = "crates/nanoaudio-ogg" }
+nanoaudio-opus = { version = "0.1.0", path = "crates/nanoaudio-opus" }
 nanoaudio-cpal = { version = "0.1.1", path = "crates/nanoaudio-cpal" }
 nanoaudio-web = { version = "0.1.1", path = "crates/nanoaudio-web" }
 nanomp3-core = { version = "0.2", default-features = false }
 wide = { version = "1.7", default-features = false }
+opus-rs = { version = "0.1.39", default-features = false, features = ["libm"] }
+libm = "0.2"
 cpal = { version = "0.18.2", default-features = false }
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4.79"

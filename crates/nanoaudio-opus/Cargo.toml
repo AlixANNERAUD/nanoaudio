@@ -1,0 +1,29 @@
+[package]
+name = "nanoaudio-opus"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Allocation-free Ogg Opus decoder for embedded Rust, built on opus-rs."
+documentation = "https://docs.rs/nanoaudio-opus"
+readme = "README.md"
+keywords = ["audio", "no-std", "embedded", "opus", "decoder"]
+categories = ["multimedia::audio", "multimedia::encoding", "embedded", "no-std", "no-std::no-alloc"]
+exclude = ["tests/data"]
+
+[dependencies]
+nanoaudio-core.workspace = true
+nanoaudio-ogg.workspace = true
+opus-rs.workspace = true
+libm.workspace = true
+
+[target.'cfg(not(target_has_atomic = "8"))'.dependencies]
+opus-rs = { workspace = true, features = ["portable-atomic"] }
+
+[features]
+portable-atomic = ["opus-rs/portable-atomic"]
+
+[lints]
+workspace = true

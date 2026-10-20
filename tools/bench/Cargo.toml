@@ -17,6 +17,8 @@ nanoaudio-g722 = { path = "../../crates/nanoaudio-g722" }
 nanoaudio-sbc = { path = "../../crates/nanoaudio-sbc" }
 nanoaudio-synth = { path = "../../crates/nanoaudio-synth" }
 nanoaudio-mp3 = { path = "../../crates/nanoaudio-mp3", default-features = false }
+nanoaudio-ogg = { path = "../../crates/nanoaudio-ogg" }
+nanoaudio-opus = { path = "../../crates/nanoaudio-opus" }
 nanoaudio-wav = { path = "../../crates/nanoaudio-wav", optional = true }
 nanoaudio-analysis = { path = "../../crates/nanoaudio-analysis", features = ["fft"], optional = true }
 symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac", "wav", "pcm", "adpcm"], optional = true }

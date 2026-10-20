@@ -6,6 +6,7 @@ use nanoaudio_flac::FlacDecoder;
 use nanoaudio_g711::{G711, Law};
 use nanoaudio_g722::{G722BitRate, G722Decoder, G722Encoder};
 use nanoaudio_mp3::Mp3Decoder;
+use nanoaudio_opus::OpusDecoder;
 use nanoaudio_qoa::{QoaDecoder, QoaEncoder};
 use nanoaudio_sbc::{SbcDecoder, SbcEncoder, SbcParameters};
 
@@ -253,13 +254,14 @@ fn sbc(parameters: SbcParameters, configuration: &str) -> Case {
 fn file_case(
     data: &Path,
     name: &str,
+    sample_rate: u32,
     codec: &'static str,
     configuration: &str,
     lossless: bool,
     decode: DecodeFunction,
 ) -> Option<Case> {
     let encoded = std::fs::read(data.join(name)).ok()?;
-    let source = std::fs::read(data.join("signal_44100_2.raw"))
+    let source = std::fs::read(data.join(format!("signal_{sample_rate}_2.raw")))
         .ok()
         .map(|bytes| {
             bytes
@@ -273,7 +275,7 @@ fn file_case(
     Some(Case {
         codec,
         configuration: configuration.to_string(),
-        sample_rate: 44_100,
+        sample_rate,
         channels: 2,
         lossless,
         source,
@@ -352,6 +354,7 @@ pub fn cases(data: Option<&Path>, filter: Option<&str>) -> Vec<Case> {
                 file_case(
                     &flac,
                     "signal.flac",
+                    44_100,
                     "FLAC",
                     "44.1 kHz stereo 16-bit, level 5",
                     true,
@@ -368,6 +371,7 @@ pub fn cases(data: Option<&Path>, filter: Option<&str>) -> Vec<Case> {
                 file_case(
                     &flac,
                     "signal.flac",
+                    44_100,
                     "FLAC",
                     "44.1 kHz stereo 16-bit, level 5, i16 blocks",
                     true,
@@ -381,12 +385,31 @@ pub fn cases(data: Option<&Path>, filter: Option<&str>) -> Vec<Case> {
                 )
             }),
         ));
+        let opus = data.clone();
+        builders.push((
+            "opus",
+            Box::new(move || {
+                file_case(
+                    &opus,
+                    "signal.opus",
+                    48_000,
+                    "Opus",
+                    "48 kHz stereo, 128 kbit/s VBR",
+                    false,
+                    Box::new(|input, output| {
+                        let mut slot = Box::new(std::mem::MaybeUninit::<OpusDecoder>::uninit());
+                        decode_all(OpusDecoder::init(&mut slot), input, output)
+                    }),
+                )
+            }),
+        ));
         builders.push((
             "mp3",
             Box::new(move || {
                 file_case(
                     &data,
                     "signal.mp3",
+                    44_100,
                     "MP3",
                     "44.1 kHz stereo, 128 kbit/s CBR",
                     false,

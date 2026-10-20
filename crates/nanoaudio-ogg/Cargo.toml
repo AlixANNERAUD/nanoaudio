@@ -1,0 +1,19 @@
+[package]
+name = "nanoaudio-ogg"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Allocation-free Ogg page and packet reader for embedded Rust."
+documentation = "https://docs.rs/nanoaudio-ogg"
+readme = "README.md"
+keywords = ["audio", "no-std", "embedded", "ogg", "demuxer"]
+categories = ["multimedia::audio", "multimedia::encoding", "embedded", "no-std", "no-std::no-alloc"]
+
+[dependencies]
+nanoaudio-core.workspace = true
+
+[lints]
+workspace = true
