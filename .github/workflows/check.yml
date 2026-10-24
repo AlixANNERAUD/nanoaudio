@@ -38,6 +38,8 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - '.github/workflows/check.yml'
+              - 'mise.toml'
+              - 'mise.*.toml'
             rust:
               - *shared
               - 'crates/**'
@@ -77,16 +79,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - uses: jdx/mise-action@v5
 
       - name: Install ALSA
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: jdx/mr-boxington-action@v1
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-key-suffix: lint
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -109,14 +109,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: jdx/mise-action@v5
 
       - name: Install ALSA
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: jdx/mr-boxington-action@v1
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-key-suffix: test
 
       - name: Test
         run: cargo test --workspace
@@ -140,18 +140,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: jdx/mise-action@v5
 
       - name: Install ALSA
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: jdx/mr-boxington-action@v1
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-key-suffix: coverage
+          github-cache-mode: objects
 
       - name: Test with all Features and Coverage
         run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
@@ -189,16 +186,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: thumbv6m-none-eabi
+      - uses: jdx/mise-action@v5
 
       - name: Install ALSA
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: jdx/mr-boxington-action@v1
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-key-suffix: crates
 
       - name: Test and build each Crate on its own
         run: |
@@ -228,14 +223,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      - uses: jdx/mise-action@v5
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: jdx/mr-boxington-action@v1
         with:
-          key: ${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-key-suffix: ${{ matrix.target }}
 
       - name: Build
         run: cargo build --workspace --exclude nanoaudio-cpal --target ${{ matrix.target }}
@@ -255,16 +247,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown, wasm32-wasip1
+      - uses: jdx/mise-action@v5
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: jdx/mr-boxington-action@v1
         with:
-          key: simd-${{ matrix.simd }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - uses: bytecodealliance/actions/wasmtime/setup@v1
+          cache-key-suffix: wasm-simd-${{ matrix.simd }}
 
       - name: Build for the browser
         run: cargo build --workspace --all-features --target wasm32-unknown-unknown
@@ -281,23 +268,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-          components: clippy
+      - uses: jdx/mise-action@v5
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: jdx/mr-boxington-action@v1
         with:
-          key: web
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-key-suffix: web
 
       - name: Read the wasm-bindgen Version
         id: wasm-bindgen
         run: echo "version=$(cargo metadata --format-version 1 --filter-platform wasm32-unknown-unknown | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')" >> "$GITHUB_OUTPUT"
-
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: wasm-bindgen@${{ steps.wasm-bindgen.outputs.version }}
 
       - name: Clippy for the Browser
         run: cargo clippy -p nanoaudio-web --all-targets --target wasm32-unknown-unknown -- -D warnings
@@ -308,9 +287,11 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
       - name: Build the Example Page
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           cargo build -p nanoaudio-web --example player --target wasm32-unknown-unknown --release
-          wasm-bindgen --target web --out-dir crates/nanoaudio-web/examples/www/pkg target/wasm32-unknown-unknown/release/examples/player.wasm
+          mise exec github:wasm-bindgen/wasm-bindgen@${{ steps.wasm-bindgen.outputs.version }} -- wasm-bindgen --target web --out-dir crates/nanoaudio-web/examples/www/pkg target/wasm32-unknown-unknown/release/examples/player.wasm
           test -f crates/nanoaudio-web/examples/www/pkg/player_bg.wasm
 
       - name: Check the Worklet Scripts
@@ -325,14 +306,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: thumbv6m-none-eabi, thumbv8m.base-none-eabi, thumbv7em-none-eabihf, riscv32imc-unknown-none-elf, thumbv8m.main-none-eabihf
+      - uses: jdx/mise-action@v5
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: jdx/mr-boxington-action@v1
         with:
-          workspaces: tools/asm-probe
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-key-suffix: asm
+          github-cache-mode: objects
 
       - name: Check Hot Loops
         run: python3 tools/asm-probe/check.py
@@ -350,16 +329,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: thumbv6m-none-eabi
+      - uses: jdx/mise-action@v5
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: jdx/mr-boxington-action@v1
         with:
-          workspaces: |
-            tools/bench
-            tools/bench/flash
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-key-suffix: bench
+          github-cache-mode: objects
 
       - name: Build the Benchmarks
         run: cargo build --release --manifest-path tools/bench/Cargo.toml
@@ -388,14 +363,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: thumbv6m-none-eabi, thumbv7em-none-eabihf, thumbv8m.main-none-eabihf, riscv32imc-unknown-none-elf
+      - uses: jdx/mise-action@v5
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: jdx/mr-boxington-action@v1
         with:
-          workspaces: tools/emu -> ../../target/emu
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-key-suffix: emu
+          github-cache-mode: objects
 
       - name: Install Unicorn
         run: |
@@ -409,14 +382,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    env:
+      MISE_ENV: miri
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: miri
-
-      - uses: taiki-e/install-action@cargo-nextest
+      - uses: jdx/mise-action@v5
 
       - name: Install ALSA
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
@@ -432,17 +403,19 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    env:
+      MISE_ENV: msrv
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.89
+      - uses: jdx/mise-action@v5
 
       - name: Install ALSA
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: jdx/mr-boxington-action@v1
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-key-suffix: msrv
 
       - name: Test
         run: cargo test --workspace
@@ -457,14 +430,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: jdx/mise-action@v5
 
       - name: Install ALSA
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: jdx/mr-boxington-action@v1
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-key-suffix: package
 
       - name: Package
         run: cargo package --workspace
@@ -480,14 +453,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      - uses: jdx/mise-action@v5
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: jdx/mr-boxington-action@v1
         with:
-          key: ${{ matrix.os }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-key-suffix: ${{ matrix.os }}
 
       - name: Clippy
         run: cargo clippy -p nanoaudio-cpal --all-targets --all-features -- -D warnings
