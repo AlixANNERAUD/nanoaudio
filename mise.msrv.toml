@@ -1,0 +1,2 @@
+[tools]
+rust = { version = "1.89", mr_boxington = true }
