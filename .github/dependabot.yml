@@ -1,0 +1,35 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directories: ["/", "/tools/asm-probe", "/tools/bench", "/tools/bench/flash", "/tools/emu"]
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      prefix-development: build
+      include: scope
+    groups:
+      cargo:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /tools/emu
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      prefix-development: build
+      include: scope
+    groups:
+      pip:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns: ["*"]
