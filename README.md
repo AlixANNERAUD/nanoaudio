@@ -4,6 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/nanoaudio)](https://docs.rs/nanoaudio)
 [![CI](https://github.com/AlixANNERAUD/nanoaudio/actions/workflows/check.yml/badge.svg)](https://github.com/AlixANNERAUD/nanoaudio/actions/workflows/check.yml)
 [![codecov](https://codecov.io/github/AlixANNERAUD/nanoaudio/graph/badge.svg)](https://codecov.io/github/AlixANNERAUD/nanoaudio)
+[![vulnerabilities](https://vulnerabilites.anneraud.fr/badges/552530413124b9646c9b29b7f917fe28.svg)](https://vulnerabilites.anneraud.fr/organizations/alix_anneraud/projects/nanoaudio)
 [![License: MIT](https://img.shields.io/crates/l/nanoaudio.svg)](https://github.com/AlixANNERAUD/nanoaudio/blob/main/LICENSE)
 [![MSRV](https://img.shields.io/crates/msrv/nanoaudio.svg)](https://github.com/AlixANNERAUD/nanoaudio/blob/main/Cargo.toml)
 
